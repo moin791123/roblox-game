@@ -102,7 +102,7 @@ export type Layout = {
 	Slots: { { X: number, Z: number } }, -- 한 층의 받침대 12개 (모든 층 같은 자리)
 	PedD: number, -- 받침대 아래판 지름
 	PedTopD: number,
-	Grid: string, -- "4x3" | "3x4" | "hex" (어떤 모양으로 놓였는지)
+	Grid: string, -- "4x3" | "3x4" | "hex" | "squeezed" (어떤 모양으로 놓였는지)
 	MinSpacing: number,
 }
 
@@ -295,6 +295,7 @@ local function compute(id: string): Layout
 	end
 	local pedD = PED_MIN_D
 	local spots: { Spot }
+	local gridName = bestGrid
 	if best then
 		-- 간격이 넓으면 받침대도 조금 크게 (그래도 들어가는지 다시 확인)
 		local d = math.clamp(bestSp - 1, PED_MIN_D, PED_MAX_D)
@@ -316,9 +317,10 @@ local function compute(id: string): Layout
 			},
 		}
 		spots = hexSpots(reg0, extras)
+		gridName = "hex"
 		if #spots < SLOTS then
 			spots = squeezedGrid(reg0)
-			bestGrid = "squeezed"
+			gridName = "squeezed"
 		end
 	end
 	sortSpots(spots)
@@ -346,7 +348,7 @@ local function compute(id: string): Layout
 		Slots = slots,
 		PedD = pedD,
 		PedTopD = pedD - PED_TOP_INSET,
-		Grid = if best then bestGrid else (if bestGrid == "squeezed" then "squeezed" else "hex"),
+		Grid = gridName,
 		MinSpacing = minDist(spots),
 	}
 end

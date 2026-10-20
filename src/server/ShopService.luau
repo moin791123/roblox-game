@@ -289,7 +289,10 @@ local function renderOne(player: Player, plot: any, fid: string, f: Furniture)
 	for _, d in m:GetDescendants() do
 		if d:IsA("BasePart") then
 			d.Anchored = true
-			d.CanTouch = false
+			-- 의자·소파·왕좌(Seat)는 닿아야 앉을 수 있어요
+			if not d:IsA("Seat") then
+				d.CanTouch = false
+			end
 		end
 	end
 	m:PivotTo(furnitureCFrame(plot.Origin, f))

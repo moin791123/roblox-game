@@ -560,6 +560,9 @@ local function makeGhost(furnId: string)
 			d.CanQuery = false
 			d.CanTouch = false
 			d.CastShadow = false
+			if d:IsA("Seat") then
+				d.Disabled = true -- 미리보기 의자에 앉지 않게
+			end
 			if d.Transparency < 1 then
 				d.Transparency = math.max(d.Transparency, 0.3)
 			end

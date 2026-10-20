@@ -1388,6 +1388,10 @@ function BagWindow.Init(gui: Instance, bagActions: Actions?)
 	end
 	window.OnClose = function()
 		closeWardrobe()
+		-- 좁은 화면에서는 다시 열면 목록부터 보이게
+		if not wide and selectedUid then
+			clearSelection()
+		end
 	end
 	setTab("All")
 

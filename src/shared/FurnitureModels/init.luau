@@ -781,11 +781,23 @@ function FurnitureModels.CreateViewport(furnId: string, parent: Instance): (View
 
 	local size = sizeOf(furnId)
 	local center = V(0, size.Y / 2, 0)
-	local radius = math.max(size.Magnitude * 0.5, 0.5)
-	local dist = radius / math.sin(math.rad(cam.FieldOfView * 0.5)) * 0.9
 	-- 러그처럼 납작하면 위에서, 아니면 앞(-Z) 오른쪽 위에서
 	local dir = if size.Y < 0.5 then V(0.3, 1.2, -0.8).Unit else V(0.5, 0.38, -1).Unit
-	cam.CFrame = CFrame.lookAt(center + dir * dist, center)
+	-- Size 상자의 꼭짓점 8개가 화면에 다 들어오는 거리
+	local look = -dir
+	local right = look:Cross(Vector3.yAxis).Unit
+	local up = right:Cross(look).Unit
+	local t = math.tan(math.rad(cam.FieldOfView * 0.5))
+	local dist = 1
+	for _, sx in SIDES do
+		for _, sy in { 0, 1 } do
+			for _, sz in SIDES do
+				local p = V(sx * size.X / 2, sy * size.Y, sz * size.Z / 2) - center
+				dist = math.max(dist, math.max(math.abs(p:Dot(right)), math.abs(p:Dot(up))) / t + p:Dot(dir))
+			end
+		end
+	end
+	cam.CFrame = CFrame.lookAt(center + dir * dist * 1.06, center)
 
 	vf.Parent = parent
 	return vf, model
