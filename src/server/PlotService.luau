@@ -1,5 +1,5 @@
--- 집(플롯): 바닥/울타리/받침대(1층 12개 + 2층 12개)/수금 패드, 수입·부화 틱, 펫 행동(PetAction) 처리.
--- (설계: docs/DESIGN.md "PlotService") ※ 집 외형은 나중에 HouseBuilder 가 대신 지어요.
+-- 집(플롯): 외형(바닥/벽/받침대/2층/간판/수금 패드)은 HouseBuilder 가 짓고, 여기서는 배정·수입/부화 틱·수금·구매(받침대/2층/테마)·펫 행동(PetAction)을 처리해요.
+-- (설계: docs/DESIGN.md "PlotService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -9,56 +9,15 @@ local Remotes = require(ReplicatedStorage.Shared.Remotes)
 local PetModels = require(ReplicatedStorage.Shared.PetModels)
 local DataService = require(script.Parent.DataService)
 local FollowService = require(script.Parent.FollowService)
+local HouseBuilder = require(script.Parent.HouseBuilder)
 
 local PlotService = {}
 
 ----------------------------------------------------------------------
--- 배치 상수 (기지 로컬 좌표. 입구 = 로컬 -Z)
+-- 상수
 ----------------------------------------------------------------------
-local SIZE = Config.Layout.PlotSize
-local HALF = SIZE / 2
-local FLOOR_TOP = 0.2 -- 땅(y=0)보다 살짝 위 (z-fighting 방지)
-local WALL_H = 3
-local GAP = 12 -- 입구 너비
-local PED_BASE_H = 0.6
-local PED_TOP_H = 1.0
-local PED_H = PED_BASE_H + PED_TOP_H -- 받침대 전체 높이 (바닥 → 윗면)
-local SLOT_COLS = { -13.5, -4.5, 4.5, 13.5 }
-local SLOT_ROWS = { -4, 4.5, 13 } -- 입구에 가까운 줄부터
+local HALF = Config.Layout.PlotSize / 2 -- 플롯 반 변 (GetPlotAt 의 사각형 판정용)
 local SLOTS_PER_FLOOR = Config.Plot.SlotsPerFloor
-local COLLECTOR_POS = Vector3.new(-12, 0, -13)
-local SPAWN_POS = Vector3.new(0, FLOOR_TOP + 0.5, -9)
-
--- 2층 (받침대 13~24). 슬래브 윗면 = 로컬 y FLOOR2_Y
-local FLOOR2_Y = 11
-local FLOOR2_THICK = 1
-local FLOOR2_SIZE = Vector3.new(36, FLOOR2_THICK, 26)
-local FLOOR2_CENTER_Z = 4.5 -- 슬래브 z 범위: -8.5 ~ 17.5 (받침대 3줄을 덮음)
-local RAMP_Z = -12 -- 경사로 중심 z (슬래브 앞, 입구 쪽)
-local RAMP_W = 4
-local RAMP_X0 = -2 -- 경사로 낮은 끝 (땅)
-local RAMP_X1 = 14 -- 경사로 높은 끝 (2층 높이) → 오른쪽 착지 발판 → 슬래브
-
-local PASTELS = {
-	Color3.fromRGB(255, 196, 222), -- 분홍
-	Color3.fromRGB(190, 236, 210), -- 민트
-	Color3.fromRGB(190, 220, 255), -- 하늘
-	Color3.fromRGB(222, 205, 255), -- 라벤더
-	Color3.fromRGB(255, 218, 190), -- 복숭아
-	Color3.fromRGB(255, 240, 175), -- 레몬
-}
-local ACCENTS = {
-	Color3.fromRGB(255, 120, 175),
-	Color3.fromRGB(80, 200, 150),
-	Color3.fromRGB(90, 160, 255),
-	Color3.fromRGB(165, 125, 255),
-	Color3.fromRGB(255, 150, 95),
-	Color3.fromRGB(245, 195, 50),
-}
-local WHITE = Color3.fromRGB(255, 252, 248)
-local LOCKED_GREY = Color3.fromRGB(165, 165, 172)
-local LOCKED_GREY_DARK = Color3.fromRGB(130, 130, 138)
-local PRICE_YELLOW = Color3.fromRGB(255, 235, 120)
 
 local CLAIM_DEBOUNCE = 1
 local ACTION_THROTTLE = 0.15
@@ -80,31 +39,17 @@ type Visual = {
 	Label: TextLabel?,
 }
 
-type Pedestal = {
-	Slot: number,
-	Top: BasePart,
-	Base: BasePart,
-	Billboard: BillboardGui,
-	Label: TextLabel,
-	BuyPrompt: ProximityPrompt,
-	State: string?,
-}
-
 export type Plot = {
 	Index: number,
 	Model: Model,
 	Owner: Player?,
 	Origin: CFrame,
-	Color: Color3,
-	Accent: Color3,
-	Floor: BasePart,
-	Collector: BasePart,
-	CollectorLabel: TextLabel,
-	SpawnPoint: BasePart,
-	SignLabels: { TextLabel },
-	Pedestals: { [number]: Pedestal }, -- 1..24 (13~24 는 2층이 지어졌을 때만 있음)
-	Floor2Parts: { BasePart }, -- 2층 슬래브/경사로/발판 (없으면 빈 표)
-	Floors: number, -- 지금 지어져 있는 층 수 (1 또는 2)
+	Handles: HouseBuilder.Handles, -- HouseBuilder.Build 결과 (House / 받침대 / Collector / SpawnPoint)
+	Collector: BasePart, -- = Handles.Collector (플롯 모델 바로 아래. 다시 지어도 재사용돼요)
+	CollectorLabel: TextLabel?, -- Collector > BillboardGui > "Amount"
+	CollectorConn: RBXScriptConnection?, -- Collector.Touched (bindCollector 가 관리)
+	SpawnPoint: BasePart, -- = Handles.SpawnPoint
+	SignLabel: TextLabel?, -- House > Sign > BillboardGui > "OwnerLabel"
 	ItemsFolder: Folder,
 	Visuals: { [string]: Visual },
 	LastClaim: number,
@@ -177,28 +122,6 @@ local function floor2StartSlots(): number
 	return n
 end
 
-local function newPart(props: { [string]: any }): Part
-	local p = Instance.new("Part")
-	p.Anchored = true
-	p.TopSurface = Enum.SurfaceType.Smooth
-	p.BottomSurface = Enum.SurfaceType.Smooth
-	p.Material = Enum.Material.SmoothPlastic
-	if props.Shape then
-		p.Shape = props.Shape -- 크기보다 먼저
-	end
-	for k, v in props do
-		if k ~= "Shape" then
-			(p :: any)[k] = v
-		end
-	end
-	return p
-end
-
--- 세로로 선 원기둥 (높이 h, 지름 d), 바닥이 bottomY
-local function cylinder(origin: CFrame, x: number, z: number, bottomY: number, h: number, d: number): (CFrame, Vector3)
-	return origin * CFrame.new(x, bottomY + h / 2, z) * CFrame.Angles(0, 0, math.pi / 2), Vector3.new(h, d, d)
-end
-
 local function makeBillboard(adornee: BasePart, offsetY: number, w: number, h: number, maxDist: number): (BillboardGui, TextLabel)
 	local bb = Instance.new("BillboardGui")
 	bb.Size = UDim2.fromScale(w, h)
@@ -246,367 +169,51 @@ local function rootPart(player: Player): BasePart?
 	return nil
 end
 
--- 받침대가 서는 바닥 위치 (로컬). Y = 그 층의 바닥 윗면
-local function slotLocalPos(slot: number): Vector3
-	local idx = (slot - 1) % SLOTS_PER_FLOOR
-	local row = math.floor(idx / #SLOT_COLS) + 1
-	local col = idx % #SLOT_COLS + 1
-	local y = if Config.SlotFloor(slot) == 2 then FLOOR2_Y else FLOOR_TOP
-	return Vector3.new(SLOT_COLS[col], y, SLOT_ROWS[row])
-end
-
--- 받침대 윗면 (아이템이 놓이는 곳)
+-- 받침대 윗면 (아이템이 놓이는 곳). 받침대 배치는 HouseBuilder 가 알아요
 local function slotCFrameOf(plot: Plot, slot: number): CFrame
-	local p = slotLocalPos(slot)
-	return plot.Origin * CFrame.new(p.X, p.Y + PED_H, p.Z)
+	return HouseBuilder.SlotCFrame(plot.Origin, slot)
 end
 
-local function themeOf(plot: Plot): any
-	local owner = plot.Owner
-	local data = owner and DataService.Get(owner)
-	if data and Config.House.Themes[data.Theme] then
-		return Config.House.Themes[data.Theme]
+-- Collector > BillboardGui > TextLabel "Amount" (HouseBuilder 가 만들어요)
+local function collectorLabelOf(collector: BasePart): TextLabel?
+	local bb = collector:FindFirstChildOfClass("BillboardGui")
+	local label = if bb then bb:FindFirstChild("Amount") else nil
+	if label and label:IsA("TextLabel") then
+		return label
 	end
 	return nil
 end
 
--- 바닥 색: 주인이 있으면 테마 바닥색, 없으면 기지 기본 파스텔
-local function floorColorOf(plot: Plot): Color3
-	local theme = themeOf(plot)
-	return if theme then theme.Floor else plot.Color
+-- House > Sign > BillboardGui > TextLabel "OwnerLabel" (HouseBuilder 가 만들어요)
+local function signLabelOf(house: Model): TextLabel?
+	local sign = house:FindFirstChild("Sign", true)
+	local bb = if sign then sign:FindFirstChildOfClass("BillboardGui") else nil
+	local label = if bb then bb:FindFirstChild("OwnerLabel") else nil
+	if label and label:IsA("TextLabel") then
+		return label
+	end
+	return nil
 end
 
 ----------------------------------------------------------------------
--- 받침대 / 2층
-----------------------------------------------------------------------
-local tryBuySlot: (player: Player) -> ()
-
-local function makePedestal(plot: Plot, slot: number): Pedestal
-	local origin = plot.Origin
-	local p = slotLocalPos(slot)
-	local cf1, s1 = cylinder(origin, p.X, p.Z, p.Y, PED_BASE_H, 5.4)
-	local base = newPart({ Name = "PedestalBase" .. slot, CFrame = cf1, Size = s1, Shape = Enum.PartType.Cylinder, Parent = plot.Model })
-	local cf2, s2 = cylinder(origin, p.X, p.Z, p.Y + PED_BASE_H, PED_TOP_H, 4.6)
-	local top = newPart({ Name = "Pedestal" .. slot, CFrame = cf2, Size = s2, Shape = Enum.PartType.Cylinder, Parent = plot.Model })
-	top:SetAttribute("Slot", slot)
-	local bb, label = makeBillboard(top, 2.2, 5, 1.6, 50)
-	bb.Enabled = false
-	local ownerId = if plot.Owner then plot.Owner.UserId else 0
-	local buy = makePrompt(top, "Owner", ownerId, "받침대 열기", "", 0.3, Enum.KeyCode.E)
-	buy.Enabled = false
-	buy.Triggered:Connect(function(player)
-		if player == plot.Owner then
-			tryBuySlot(player)
-		end
-	end)
-	local ped: Pedestal = { Slot = slot, Top = top, Base = base, Billboard = bb, Label = label, BuyPrompt = buy, State = nil }
-	plot.Pedestals[slot] = ped
-	return ped
-end
-
--- 2층 부수기 (받침대 13~24 포함)
-local function destroyFloor2(plot: Plot)
-	for slot = SLOTS_PER_FLOOR + 1, Config.Plot.TotalSlots do
-		local ped = plot.Pedestals[slot]
-		if ped then
-			plot.Pedestals[slot] = nil
-			ped.Top:Destroy()
-			ped.Base:Destroy()
-		end
-	end
-	for _, part in plot.Floor2Parts do
-		part:Destroy()
-	end
-	plot.Floor2Parts = {}
-	plot.Floors = 1
-end
-
--- 2층 짓기: 슬래브 + 경사로 + 착지 발판 + 받침대 13~24
-local function buildFloor2(plot: Plot)
-	destroyFloor2(plot)
-	local origin = plot.Origin
-	local parts = plot.Floor2Parts
-	local floorColor = floorColorOf(plot)
-
-	table.insert(
-		parts,
-		newPart({
-			Name = "Floor2",
-			Size = FLOOR2_SIZE,
-			CFrame = origin * CFrame.new(0, FLOOR2_Y - FLOOR2_THICK / 2, FLOOR2_CENTER_Z),
-			Color = floorColor,
-			Parent = plot.Model,
-		})
-	)
-
-	-- 경사로 (쐐기). 로컬 -Z 쪽이 낮아서, 90도 돌려 낮은 끝이 기지 -X 를 보게
-	local rise = FLOOR2_Y - FLOOR_TOP
-	local len = RAMP_X1 - RAMP_X0
-	local ramp = Instance.new("WedgePart")
-	ramp.Name = "Ramp"
-	ramp.Anchored = true
-	ramp.TopSurface = Enum.SurfaceType.Smooth
-	ramp.BottomSurface = Enum.SurfaceType.Smooth
-	ramp.Material = Enum.Material.SmoothPlastic
-	ramp.Size = Vector3.new(RAMP_W, rise, len)
-	ramp.CFrame = origin * CFrame.new((RAMP_X0 + RAMP_X1) / 2, FLOOR_TOP + rise / 2, RAMP_Z) * CFrame.Angles(0, math.pi / 2, 0)
-	ramp.Color = plot.Accent
-	ramp.Parent = plot.Model
-	table.insert(parts, ramp)
-
-	-- 경사로 꼭대기와 슬래브를 잇는 발판
-	local landZ0 = RAMP_Z - RAMP_W / 2
-	local landZ1 = FLOOR2_CENTER_Z - FLOOR2_SIZE.Z / 2
-	table.insert(
-		parts,
-		newPart({
-			Name = "Landing",
-			Size = Vector3.new(RAMP_W, FLOOR2_THICK, landZ1 - landZ0),
-			CFrame = origin * CFrame.new(RAMP_X1 + RAMP_W / 2, FLOOR2_Y - FLOOR2_THICK / 2, (landZ0 + landZ1) / 2),
-			Color = floorColor,
-			Parent = plot.Model,
-		})
-	)
-
-	for slot = SLOTS_PER_FLOOR + 1, Config.Plot.TotalSlots do
-		makePedestal(plot, slot)
-	end
-	plot.Floors = 2
-end
-
-----------------------------------------------------------------------
--- 기지 짓기
-----------------------------------------------------------------------
-local function buildPlot(index: number, origin: CFrame, parent: Instance): Plot
-	local color = PASTELS[(index - 1) % #PASTELS + 1]
-	local accent = ACCENTS[(index - 1) % #ACCENTS + 1]
-
-	local model = Instance.new("Model")
-	model.Name = "Plot" .. index
-	model:SetAttribute("PlotIndex", index)
-	model:SetAttribute("OwnerUserId", 0)
-	model:SetAttribute("OwnerName", "")
-	model:SetAttribute("Theme", "Basic")
-	model:SetAttribute("Floors", 1)
-
-	-- 바닥 + 테두리
-	local floor = newPart({
-		Name = "Floor",
-		Size = Vector3.new(SIZE, 1, SIZE),
-		CFrame = origin * CFrame.new(0, FLOOR_TOP - 0.5, 0),
-		Color = color,
-		Parent = model,
-	})
-	newPart({
-		Name = "FloorTrim",
-		Size = Vector3.new(SIZE + 2, 1, SIZE + 2),
-		CFrame = origin * CFrame.new(0, FLOOR_TOP / 2 - 0.5, 0),
-		Color = accent,
-		Parent = model,
-	})
-	model.PrimaryPart = floor
-
-	-- 낮은 울타리 (뒤, 왼쪽, 오른쪽, 입구 양옆)
-	local walls = {
-		{ Vector3.new(0, 0, HALF - 0.5), Vector3.new(SIZE, WALL_H, 1) },
-		{ Vector3.new(-HALF + 0.5, 0, 0), Vector3.new(1, WALL_H, SIZE) },
-		{ Vector3.new(HALF - 0.5, 0, 0), Vector3.new(1, WALL_H, SIZE) },
-	}
-	local segLen = HALF - GAP / 2
-	table.insert(walls, { Vector3.new(-(GAP / 2 + segLen / 2), 0, -HALF + 0.5), Vector3.new(segLen, WALL_H, 1) })
-	table.insert(walls, { Vector3.new(GAP / 2 + segLen / 2, 0, -HALF + 0.5), Vector3.new(segLen, WALL_H, 1) })
-	for i, w in walls do
-		local pos, size = w[1], w[2]
-		newPart({
-			Name = "Wall" .. i,
-			Size = size,
-			CFrame = origin * CFrame.new(pos.X, FLOOR_TOP + WALL_H / 2, pos.Z),
-			Color = WHITE,
-			Parent = model,
-		})
-		newPart({
-			Name = "WallCap" .. i,
-			Size = Vector3.new(size.X + 0.4, 0.5, size.Z + 0.4),
-			CFrame = origin * CFrame.new(pos.X, FLOOR_TOP + WALL_H + 0.25, pos.Z),
-			Color = accent,
-			Parent = model,
-		})
-	end
-	-- 모서리 동글 장식
-	for _, c in { Vector3.new(-1, 0, -1), Vector3.new(1, 0, -1), Vector3.new(-1, 0, 1), Vector3.new(1, 0, 1) } do
-		newPart({
-			Name = "CornerBall",
-			Shape = Enum.PartType.Ball,
-			Size = Vector3.new(2, 2, 2),
-			CFrame = origin * CFrame.new(c.X * (HALF - 0.5), FLOOR_TOP + WALL_H + 1, c.Z * (HALF - 0.5)),
-			Color = accent,
-			Parent = model,
-		})
-	end
-
-	-- 입구 기둥 + 이름 간판
-	local POST_H = 9.6
-	for _, sx in { -1, 1 } do
-		newPart({
-			Name = "GatePost",
-			Size = Vector3.new(1.2, POST_H, 1.2),
-			CFrame = origin * CFrame.new(sx * (GAP / 2 + 0.6), FLOOR_TOP + POST_H / 2, -HALF + 0.5),
-			Color = WHITE,
-			Parent = model,
-		})
-	end
-	local sign = newPart({
-		Name = "Sign",
-		Size = Vector3.new(GAP + 3.6, 2.8, 0.5),
-		CFrame = origin * CFrame.new(0, FLOOR_TOP + POST_H - 1.4, -HALF + 0.5),
-		Color = accent,
-		Parent = model,
-	})
-	local signLabels = {}
-	for _, face in { Enum.NormalId.Front, Enum.NormalId.Back } do
-		local sg = Instance.new("SurfaceGui")
-		sg.Face = face
-		sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-		sg.PixelsPerStud = 40
-		sg.LightInfluence = 0
-		local label = Instance.new("TextLabel")
-		label.Size = UDim2.fromScale(0.94, 0.86)
-		label.Position = UDim2.fromScale(0.03, 0.07)
-		label.BackgroundTransparency = 1
-		label.TextScaled = true
-		label.Font = Enum.Font.FredokaOne
-		label.TextColor3 = Color3.new(1, 1, 1)
-		label.TextStrokeTransparency = 0.3
-		label.Text = "빈 집"
-		label.Parent = sg
-		sg.Parent = sign
-		table.insert(signLabels, label)
-	end
-
-	-- 아이템 폴더 (받침대 위 알/펫 모델)
-	local items = Instance.new("Folder")
-	items.Name = "Items"
-	items.Parent = model
-
-	-- 코인 받는 패드
-	local cfR, sR = cylinder(origin, COLLECTOR_POS.X, COLLECTOR_POS.Z, FLOOR_TOP, 0.3, 7.2)
-	newPart({ Name = "CollectorRing", CFrame = cfR, Size = sR, Shape = Enum.PartType.Cylinder, Color = WHITE, Parent = model })
-	local cfC, sC = cylinder(origin, COLLECTOR_POS.X, COLLECTOR_POS.Z, FLOOR_TOP, 0.6, 6)
-	local collector = newPart({
-		Name = "Collector",
-		CFrame = cfC,
-		Size = sC,
-		Shape = Enum.PartType.Cylinder,
-		Color = Color3.fromRGB(255, 205, 60),
-		Material = Enum.Material.Neon,
-		Parent = model,
-	})
-	collector:SetAttribute("Pending", 0)
-	local _, collectorLabel = makeBillboard(collector, 3.5, 7, 1.8, 60)
-	collectorLabel.TextColor3 = PRICE_YELLOW
-	collectorLabel.Text = "💰 0 받기"
-
-	-- 스폰 위치 (보이지 않음)
-	local spawn = newPart({
-		Name = "SpawnPoint",
-		Size = Vector3.new(4, 1, 4),
-		CFrame = origin * CFrame.new(SPAWN_POS),
-		Transparency = 1,
-		CanCollide = false,
-		CanTouch = false,
-		CanQuery = false,
-		Parent = model,
-	})
-
-	model.Parent = parent
-
-	local plot: Plot = {
-		Index = index,
-		Model = model,
-		Owner = nil,
-		Origin = origin,
-		Color = color,
-		Accent = accent,
-		Floor = floor,
-		Collector = collector,
-		CollectorLabel = collectorLabel,
-		SpawnPoint = spawn,
-		SignLabels = signLabels,
-		Pedestals = {},
-		Floor2Parts = {},
-		Floors = 1,
-		ItemsFolder = items,
-		Visuals = {},
-		LastClaim = 0,
-		ShownPending = -1,
-	}
-
-	-- 1층 받침대 1~12 (2층은 주인의 Floors 가 2일 때 RebuildHouse 가 지어요)
-	for slot = 1, SLOTS_PER_FLOOR do
-		makePedestal(plot, slot)
-	end
-	return plot
-end
-
-----------------------------------------------------------------------
--- 화면 갱신
+-- 화면 갱신 (간판 / 받침대 / 수금 패드 글자)
 ----------------------------------------------------------------------
 local function setSign(plot: Plot)
-	local owner = plot.Owner
-	local text = if owner then owner.DisplayName .. "의 집" else "빈 집"
-	for _, label in plot.SignLabels do
-		label.Text = text
+	local label = plot.SignLabel
+	if not label then
+		return
 	end
+	local owner = plot.Owner
+	label.Text = if owner then owner.DisplayName .. " 님의 집" else "빈 집"
 end
 
--- 잠긴 받침대: "🔒 💰가격" (13~18번은 2층이 없으면 "🔒 2층"). 다음 받침대만 구매 프롬프트
+-- 잠긴/열린 받침대 색과 가격표 (HouseBuilder 가 그려요). 빈 집은 시작 받침대 / 1층
 local function updatePedestals(plot: Plot)
 	local owner = plot.Owner
 	local data = owner and DataService.Get(owner)
 	local unlocked = if data then data.SlotsUnlocked else Config.Plot.StartSlots
 	local floors = if data then data.Floors else 1
-	local nextPrice = if data then Config.NextSlotPrice(unlocked, floors) else nil
-	local ownerId = if owner then owner.UserId else 0
-	for slot, ped in plot.Pedestals do
-		local state: string
-		local labelText = ""
-		local canBuy = false
-		if slot <= unlocked then
-			state = "open"
-		else
-			if floors < 2 and Config.SlotFloor(slot) == 2 then
-				labelText = "🔒 2층"
-			else
-				local price = Config.Plot.SlotPrices[slot]
-				labelText = if price then "🔒 💰" .. Config.FormatNumber(price) else "🔒"
-			end
-			canBuy = data ~= nil and slot == unlocked + 1 and nextPrice ~= nil
-			state = "locked:" .. labelText .. ":" .. (if canBuy then "buy" else "no") .. ":" .. ownerId
-		end
-		ped.BuyPrompt:SetAttribute("OwnerUserId", ownerId)
-		if ped.State == state then
-			continue
-		end
-		ped.State = state
-		if state == "open" then
-			ped.Top.Color = plot.Accent
-			ped.Top.Transparency = 0
-			ped.Base.Color = WHITE
-			ped.Billboard.Enabled = false
-			ped.BuyPrompt.Enabled = false
-		else
-			ped.Top.Color = LOCKED_GREY
-			ped.Top.Transparency = 0.15
-			ped.Base.Color = LOCKED_GREY_DARK
-			ped.Billboard.Enabled = true
-			ped.Label.Text = labelText
-			ped.Label.TextColor3 = if canBuy then PRICE_YELLOW else Color3.new(1, 1, 1)
-			if canBuy and nextPrice then
-				ped.BuyPrompt.ObjectText = "💰" .. Config.FormatNumber(nextPrice)
-			end
-			ped.BuyPrompt.Enabled = canBuy
-		end
-	end
+	HouseBuilder.UpdatePedestals(plot.Handles, unlocked, floors)
 end
 
 local function updateCollector(plot: Plot)
@@ -618,7 +225,93 @@ local function updateCollector(plot: Plot)
 	end
 	plot.ShownPending = pending
 	plot.Collector:SetAttribute("Pending", pending)
-	plot.CollectorLabel.Text = "💰 " .. Config.FormatNumber(pending) .. " 받기"
+	local label = plot.CollectorLabel
+	if label then
+		label.Text = if pending > 0 then "💰 " .. Config.FormatNumber(pending) .. " 받기" else "💰 모으기"
+	end
+end
+
+----------------------------------------------------------------------
+-- 집 짓기 (외형은 HouseBuilder)
+----------------------------------------------------------------------
+local claim: (plot: Plot, player: Player) -> ()
+
+-- 수금 패드 밟기 → 수금. 집을 지을 때마다 다시 연결해요 (HouseBuilder 는 Collector 를 재사용하지만, 바뀌어도 안전하게)
+local function bindCollector(plot: Plot)
+	if plot.CollectorConn then
+		plot.CollectorConn:Disconnect()
+		plot.CollectorConn = nil
+	end
+	plot.CollectorConn = plot.Collector.Touched:Connect(function(hit)
+		local owner = plot.Owner
+		if not owner then
+			return
+		end
+		local char = hit:FindFirstAncestorOfClass("Model")
+		if not char or char ~= owner.Character then
+			return
+		end
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if not hum or hum.Health <= 0 then
+			return
+		end
+		claim(plot, owner)
+	end)
+end
+
+-- Build 결과를 플롯에 연결: 핸들, 수금 패드(+Touched), 스폰, 간판 글자, 수금 글자
+local function applyHandles(plot: Plot, handles: HouseBuilder.Handles)
+	plot.Handles = handles
+	plot.Collector = handles.Collector
+	plot.CollectorLabel = collectorLabelOf(handles.Collector)
+	plot.SpawnPoint = handles.SpawnPoint
+	plot.SignLabel = signLabelOf(handles.House)
+	bindCollector(plot)
+	setSign(plot)
+	plot.ShownPending = -1
+	updateCollector(plot)
+end
+
+-- 집을 (다시) 지어요. 받침대 위 아이템은 안 그려요 (필요하면 RefreshPlot)
+local function rebuildHouse(plot: Plot, themeId: string, floors: number, slotsUnlocked: number)
+	applyHandles(plot, HouseBuilder.Build(plot.Model, plot.Origin, themeId, floors, slotsUnlocked))
+end
+
+local function buildPlot(index: number, origin: CFrame, parent: Instance): Plot
+	local model = Instance.new("Model")
+	model.Name = "Plot" .. index
+	model:SetAttribute("PlotIndex", index)
+	model:SetAttribute("OwnerUserId", 0)
+	model:SetAttribute("OwnerName", "")
+	model:SetAttribute("Theme", "Basic")
+	model:SetAttribute("Floors", 1)
+
+	-- 아이템 폴더 (받침대 위 알/펫 모델). House 와 달리 집을 다시 지어도 남아요
+	local items = Instance.new("Folder")
+	items.Name = "Items"
+	items.Parent = model
+
+	-- 빈 집: 기본 테마, 1층, 시작 받침대만 열림
+	local handles = HouseBuilder.Build(model, origin, "Basic", 1, Config.Plot.StartSlots)
+	local plot: Plot = {
+		Index = index,
+		Model = model,
+		Owner = nil,
+		Origin = origin,
+		Handles = handles,
+		Collector = handles.Collector,
+		CollectorLabel = nil,
+		CollectorConn = nil,
+		SpawnPoint = handles.SpawnPoint,
+		SignLabel = nil,
+		ItemsFolder = items,
+		Visuals = {},
+		LastClaim = 0,
+		ShownPending = -1,
+	}
+	applyHandles(plot, handles)
+	model.Parent = parent
+	return plot
 end
 
 ----------------------------------------------------------------------
@@ -803,7 +496,7 @@ function PlotService.RefreshPlot(player: Player)
 	setSign(plot)
 end
 
--- 주인의 Theme/Floors 에 맞게 집을 다시 짓고 (2층 + 받침대 13~24) 아이템을 다시 그려요
+-- 주인의 Theme/Floors/받침대에 맞게 집을 다시 짓고 (HouseBuilder) 아이템을 다시 그려요
 function PlotService.RebuildHouse(player: Player)
 	local plot = plotByPlayer[player]
 	if not plot then
@@ -812,17 +505,10 @@ function PlotService.RebuildHouse(player: Player)
 	local data = DataService.Get(player)
 	local floors = if data then data.Floors else 1
 	local themeId = if data then data.Theme else "Basic"
+	local unlocked = if data then data.SlotsUnlocked else Config.Plot.StartSlots
 	plot.Model:SetAttribute("Theme", themeId)
 	plot.Model:SetAttribute("Floors", floors)
-	plot.Floor.Color = floorColorOf(plot)
-	if floors >= 2 then
-		buildFloor2(plot)
-	else
-		destroyFloor2(plot)
-	end
-	for _, ped in plot.Pedestals do
-		ped.State = nil
-	end
+	rebuildHouse(plot, themeId, floors, unlocked)
 	PlotService.RefreshPlot(player)
 end
 
@@ -870,12 +556,6 @@ function PlotService.GetSlotCFrame(player: Player, slot: number): CFrame
 	return slotCFrameOf(plot, math.clamp(slot, 1, Config.Plot.TotalSlots))
 end
 
-local function setPromptOwners(plot: Plot, ownerId: number)
-	for _, ped in plot.Pedestals do
-		ped.BuyPrompt:SetAttribute("OwnerUserId", ownerId)
-	end
-end
-
 function PlotService.AssignPlot(player: Player): Plot?
 	local existing = plotByPlayer[player]
 	if existing then
@@ -899,8 +579,7 @@ function PlotService.AssignPlot(player: Player): Plot?
 	p.Model:SetAttribute("OwnerUserId", player.UserId)
 	p.Model:SetAttribute("OwnerName", player.DisplayName)
 	player:SetAttribute("PlotIndex", p.Index)
-	setPromptOwners(p, player.UserId)
-	PlotService.RebuildHouse(player) -- 테마/층 반영 + 아이템 그리기
+	PlotService.RebuildHouse(player) -- 테마/층/받침대 반영 (HouseBuilder) + 아이템 그리기 + 간판
 	return p
 end
 
@@ -923,16 +602,8 @@ function PlotService.ReleasePlot(player: Player)
 	if player.Parent then
 		player:SetAttribute("PlotIndex", nil)
 	end
-	setPromptOwners(plot, 0)
-	destroyFloor2(plot)
-	plot.Floor.Color = plot.Color
-	for _, ped in plot.Pedestals do
-		ped.State = nil
-	end
-	updatePedestals(plot)
-	plot.ShownPending = -1
-	updateCollector(plot)
-	setSign(plot)
+	-- 빈 집 모양으로 되돌려요 (기본 테마, 1층, 시작 받침대). 간판 "빈 집" / 수금 패드 글자도 초기화
+	rebuildHouse(plot, "Basic", 1, Config.Plot.StartSlots)
 
 	-- 빈 집이 생겼으니 집 없이 기다리던 사람에게 바로 배정
 	for _, other in Players:GetPlayers() do
@@ -976,7 +647,7 @@ end
 ----------------------------------------------------------------------
 -- 수금 / 받침대 구매 / 2층 / 테마
 ----------------------------------------------------------------------
-local function claim(plot: Plot, player: Player)
+claim = function(plot: Plot, player: Player)
 	if plot.Owner ~= player then
 		return
 	end
@@ -1011,7 +682,7 @@ local function throttled(player: Player): boolean
 	return false
 end
 
-tryBuySlot = function(player: Player)
+local function tryBuySlot(player: Player)
 	local plot = plotByPlayer[player]
 	local data = DataService.Get(player)
 	if not plot or not data then
@@ -1033,7 +704,7 @@ tryBuySlot = function(player: Player)
 		return
 	end
 	data.SlotsUnlocked += 1
-	updatePedestals(plot)
+	HouseBuilder.UpdatePedestals(plot.Handles, data.SlotsUnlocked, data.Floors)
 	notify(player, "새 받침대가 열렸어요! 🎉", "good")
 	DataService.Sync(player)
 end
@@ -1514,25 +1185,7 @@ function PlotService.Start()
 	plotsFolder.Parent = workspace
 
 	for i, origin in Config.Layout.Plots do
-		local plot = buildPlot(i, origin, plotsFolder)
-		plots[i] = plot
-		updatePedestals(plot)
-
-		plot.Collector.Touched:Connect(function(hit)
-			local owner = plot.Owner
-			if not owner then
-				return
-			end
-			local char = hit:FindFirstAncestorOfClass("Model")
-			if not char or char ~= owner.Character then
-				return
-			end
-			local hum = char:FindFirstChildOfClass("Humanoid")
-			if not hum or hum.Health <= 0 then
-				return
-			end
-			claim(plot, owner)
-		end)
+		plots[i] = buildPlot(i, origin, plotsFolder)
 	end
 
 	Remotes.PetAction.OnServerEvent:Connect(function(player, uid, action)

@@ -8,7 +8,7 @@ local NAMES = {
 	"DataSync", -- (snapshot) 내 데이터 전체
 	"Notify", -- (text: string, kind: "info" | "good" | "warn" | "alert")
 	"HatchFx", -- (petId: string, position: Vector3, isNew: boolean, tier: number?, mode: "Hatch" | "Fuse" | nil)
-	"CoinFx", -- (amount: number, position: Vector3)
+	"CoinFx", -- (amount: number, position: Vector3, silent: boolean?) silent 면 소리 없이 숫자만
 	"CoinField", -- (op: "Reset" | "Add" | "Remove", payload) 내 들판 코인 (CoinFieldService 참고)
 	-- 클라이언트 -> 서버
 	"RequestSync", -- ()

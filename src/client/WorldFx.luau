@@ -82,7 +82,7 @@ end
 ----------------------------------------------------------------------
 local lastCoinSound = 0
 
-function WorldFx.CoinFx(amount: any, position: any)
+function WorldFx.CoinFx(amount: any, position: any, silent: any)
 	if typeof(position) ~= "Vector3" then
 		return
 	end
@@ -116,7 +116,8 @@ function WorldFx.CoinFx(amount: any, position: any)
 	end)
 	Debris:AddItem(att, 1.3)
 
-	if os.clock() - lastCoinSound > 0.09 then
+	-- 들판 코인은 자석에 끌릴 때 이미 소리를 냈으니(CoinField) 서버 확인 때는 숫자만
+	if silent ~= true and os.clock() - lastCoinSound > 0.09 then
 		lastCoinSound = os.clock()
 		UiKit.PlaySound("Coin")
 	end

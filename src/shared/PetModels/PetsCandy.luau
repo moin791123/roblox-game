@@ -116,7 +116,7 @@ return function(Kit, PET_BUILDERS, EGG_BUILDERS)
 			ell(b, "Muzzle", V(0.42, 0.32, 0.28), facing(p - n * 0.06, n), WHITE)
 		end
 		smallNose(c, -0.2, V(0.16, 0.11, 0.08), RGB(255, 130, 160), 0.04)
-		pointyEars(c, 0.55, 0.85, 0.6, 0.62, 0.16, 0.3, Cr)
+		pointyEars(c, 0.68, 0.72, 0.6, 0.62, 0.16, 0.35, Cr) -- 프로스팅 옆으로 비켜 난 귀
 		-- 주름 컵: 원기둥 + 둘레 세로 주름 8개
 		local cupH, cupR = 0.85, 1.0
 		addPart(b, "Cup", "Cyl", V(cupH, cupR * 2, cupR * 2), CFrame.new(0, cupH / 2, 0) * CFrame.Angles(0, 0, math.pi / 2), MINT)
@@ -127,9 +127,9 @@ return function(Kit, PET_BUILDERS, EGG_BUILDERS)
 		end
 		-- 프로스팅 소용돌이 (납작 공 3단) + 체리 + 꼭지
 		local top = c.H.Y + c.HS.Y
-		ell(b, "Frosting", V(1.15, 0.5, 1.15), CFrame.new(0, top - 0.05, 0), FROST)
-		ell(b, "Frosting", V(0.85, 0.44, 0.85), CFrame.new(0, top + 0.22, 0), FROST)
-		ell(b, "Frosting", V(0.55, 0.38, 0.55), CFrame.new(0, top + 0.46, 0), FROST)
+		ell(b, "Frosting", V(0.95, 0.5, 0.95), CFrame.new(0, top - 0.05, 0), FROST)
+		ell(b, "Frosting", V(0.72, 0.44, 0.72), CFrame.new(0, top + 0.22, 0), FROST)
+		ell(b, "Frosting", V(0.5, 0.38, 0.5), CFrame.new(0, top + 0.46, 0), FROST)
 		ell(b, "Cherry", V(0.32, 0.32, 0.32), CFrame.new(0, top + 0.72, 0), RGB(225, 40, 70))
 		addPart(b, "Stem", "Cyl", V(0.3, 0.06, 0.06), CFrame.new(0.05, top + 0.98, 0) * CFrame.Angles(0, 0, math.pi / 2 - 0.3), RGB(110, 70, 40))
 	end

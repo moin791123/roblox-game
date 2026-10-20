@@ -182,40 +182,40 @@ return function(Kit, PET_BUILDERS, EGG_BUILDERS)
 	PET_BUILDERS.StarSlime = function(b)
 		local ICE = RGB(150, 225, 255)
 		local G = Enum.Material.Glass
-		local C = V(0, 0.78, 0)
-		local S = V(1.1, 0.78, 1.0)
+		local C = V(0, 0.88, 0)
+		local S = V(1.2, 0.88, 1.1)
 		ell(b, "Body", S * 2, CFrame.new(C), ICE, G, 0.2)
-		ell(b, "Skirt", V(2.5, 0.8, 2.3), CFrame.new(0, 0.4, 0), ICE, G, 0.2)
-		ell(b, "Core", V(0.9, 0.9, 0.9), CFrame.new(0, 0.72, 0.1), RGB(130, 200, 255), NEON)
+		ell(b, "Skirt", V(2.6, 0.7, 2.2), CFrame.new(0, 0.35, 0), ICE, G, 0.2)
+		ell(b, "Core", V(1.0, 1.0, 1.0), CFrame.new(0, 0.8, 0.1), RGB(130, 200, 255), NEON)
 		-- 둘레 방울 + 위 혹 + 옆으로 흐르는 방울 + 팔 뭉치
-		local bumps = { V(-0.75, 0.22, -0.8), V(0.85, 0.2, -0.6), V(0.6, 0.25, 0.9), V(-0.95, 0.24, 0.4) }
+		local bumps = { V(-0.82, 0.22, -0.78), V(0.95, 0.2, -0.6), V(0.65, 0.24, 0.9), V(-1.05, 0.23, 0.4) }
 		for _, p in bumps do
 			ell(b, "Bump", V(0.46, 0.4, 0.46), CFrame.new(p), ICE, G, 0.2)
 		end
-		ell(b, "Bump", V(0.6, 0.5, 0.6), CFrame.new(-0.45, 1.4, 0.2), ICE, G, 0.2)
-		ell(b, "Drip", V(0.26, 0.5, 0.26), CFrame.new(0.95, 1.0, -0.35), ICE, G, 0.2)
+		ell(b, "Bump", V(0.6, 0.5, 0.6), CFrame.new(-0.5, 1.58, 0.2), ICE, G, 0.2)
+		ell(b, "Drip", V(0.26, 0.5, 0.26), CFrame.new(1.05, 1.1, -0.38), ICE, G, 0.2)
 		for _, sx in SIDES do
-			ell(b, "Arm", V(0.4, 0.34, 0.4), CFrame.new(sx * 1.05, 0.72, -0.4), ICE, G, 0.2)
+			ell(b, "Arm", V(0.4, 0.34, 0.4), CFrame.new(sx * 1.15, 0.8, -0.45), ICE, G, 0.2)
 		end
 		-- 큰 네온 별 (막대 3개 교차 = 6각 별 + 가운데 구슬)
-		local sc = V(0.1, 1.74, 0)
+		local sc = V(0.1, 1.95, 0)
 		local STAR = RGB(255, 235, 110)
 		for i = 0, 2 do
-			addPart(b, "Star", "Block", V(0.85, 0.2, 0.1), CFrame.new(sc) * CFrame.Angles(0, 0, math.pi / 2 + i * math.pi / 3), STAR, NEON)
+			addPart(b, "Star", "Block", V(0.9, 0.2, 0.1), CFrame.new(sc) * CFrame.Angles(0, 0, math.pi / 2 + i * math.pi / 3), STAR, NEON)
 		end
 		ell(b, "StarCore", V(0.32, 0.32, 0.14), CFrame.new(sc), STAR, NEON)
 		-- 얼굴: 큰 눈 + 볼터치 + 방긋 입
 		for _, sx in SIDES do
-			addEye(b, C, S, sx * 0.42, 0.18, V(0.42, 0.58, 0.16), 0)
+			addEye(b, C, S, sx * 0.45, 0.2, V(0.46, 0.62, 0.16), 0)
 		end
 		for _, sx in SIDES do
-			local p, n = front(C, S, sx * 0.78, -0.12)
+			local p, n = front(C, S, sx * 0.85, -0.15)
 			ell(b, "Blush", V(0.34, 0.18, 0.06), facing(p, n), BLUSH, nil, 0.1)
 		end
-		local mp, mn = front(C, S, 0, -0.2)
-		ell(b, "Mouth", V(0.36, 0.16, 0.06), facing(mp + mn * 0.01, mn), MOUTH)
+		local mp, mn = front(C, S, 0, -0.24)
+		ell(b, "Mouth", V(0.38, 0.16, 0.06), facing(mp + mn * 0.01, mn), MOUTH)
 		-- 작은 네온 반짝 점
-		for i, xy in { V(-0.55, 0.45, 0), V(0.7, 0.5, 0), V(0.25, -0.5, 0) } do
+		for i, xy in { V(-0.6, 0.5, 0), V(0.75, 0.55, 0), V(0.3, -0.35, 0) } do
 			local p, n = front(C, S, xy.X, xy.Y)
 			ell(b, "Spark", V(0.1, 0.1, 0.05), facing(p + n * 0.01, n), if i == 2 then STAR else WHITE, NEON)
 		end

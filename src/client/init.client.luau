@@ -112,8 +112,8 @@ Remotes.HatchFx.OnClientEvent:Connect(function(petId, position, isNew, tier, mod
 	HatchFx.Play(petId, position, isNew, tier, mode)
 end)
 
-Remotes.CoinFx.OnClientEvent:Connect(function(amount, position)
-	WorldFx.CoinFx(amount, position)
+Remotes.CoinFx.OnClientEvent:Connect(function(amount, position, silent)
+	WorldFx.CoinFx(amount, position, silent)
 end)
 
 -- 키보드 단축키 (PC): B = 가방, N = 도감, H = 집

@@ -305,7 +305,7 @@ local function onPickup(player: Player, coinId: any)
 
 	coin.Alive = false
 	DataService.AddCoins(player, value)
-	Remotes.CoinFx:FireClient(player, value, coin.Position)
+	Remotes.CoinFx:FireClient(player, value, coin.Position, true) -- 소리는 클라이언트가 자석 때 이미 냄
 	DataService.Sync(player)
 	Remotes.CoinField:FireClient(player, "Remove", coin.Id)
 
