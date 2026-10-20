@@ -402,7 +402,7 @@ otherwise sparkles away and appears on the pedestal. Premium eggs (top 2 rungs) 
 wobbling, moved with the egg; `BeaconSign` BillboardGui 230 × 56 px, AlwaysOnTop, MaxDistance 700, "✨ <egg name>!"); destroyed
 when bought or when the egg falls into the bin. On spawn, `Config.EggAlertKind(eggId)`: **"Top"** → always alert; **"Second"** →
 only if this belt's last alert was ≥ `EggAlert.Gap` (15) s ago (any alert resets the timer). Recipients: data loaded,
-`ZoneUnlocked(zone)`, and (standing in that zone (`Zone` attribute) **or** zone > `MaxZoneFor(rebirths) − EggAlert.ZoneWindow` (2))
+`ZoneUnlocked(zone)`, and (standing in that zone (`Zone` attribute; never counts for zone 1, where every house is) **or** zone > `MaxZoneFor(rebirths) − EggAlert.ZoneWindow` (2))
 so big kids are not spammed by low zones. `Remotes.EggAlert:FireClient(player, zone, eggId)`; **no Notify** for it.
 
 ### CoinFieldService (owner WORLD)

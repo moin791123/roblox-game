@@ -1,6 +1,7 @@
 -- 지역 클라이언트: 환생이 모자란 지역 문은 나한테만 막혀요 (분홍 보호막, 스냅샷마다 다시 확인).
 -- 지역에 들어가면 "🦆 호수에 왔어요!" 배너, 새 지역이 열리면 축하 배너, 지역마다 하늘 색을 살짝 바꿔요 (우주 = 밤).
 -- 컨베이어 줄무늬도 여기서 움직여요 (서버는 줄무늬를 안 움직여요).
+-- 순간이동하면 카메라를 캐릭터가 보는 쪽(섬 안쪽 SpawnLook)으로 돌리고, 배너는 위쪽 좋은 알 배너(Toasts)를 비켜요.
 local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -8,6 +9,7 @@ local TweenService = game:GetService("TweenService")
 
 local UiKit = require(script.Parent.UiKit)
 local State = require(script.Parent.State)
+local Toasts = require(script.Parent.Toasts)
 
 local Config = UiKit.Config
 local Make, C = UiKit.Make, UiKit.Colors
@@ -20,6 +22,8 @@ local BANNER_TIME = 2.6
 local STRIPE_DISTANCE = 240 -- 이 안의 컨베이어만 줄무늬를 움직여요
 local LOCKED_COLOR = Color3.fromRGB(255, 120, 200)
 local NIGHT_CLOCK = 22 -- 우주는 밤
+local BANNER_Y = 0.27 -- 배너 가운데 높이 (화면 비율)
+local TELEPORT_JUMP = 100 -- 한 번 확인하는 사이(0.25초)에 이보다 멀리 옮겨졌으면 순간이동한 거예요
 
 type StripeBelt = {
 	Folder: Instance,
@@ -35,6 +39,8 @@ type StripeBelt = {
 local gates: { [number]: BasePart } = {}
 local stripeBelts: { StripeBelt } = {}
 local currentZone: number? = nil
+local lastRoot: BasePart? = nil
+local lastRootPos: Vector3? = nil
 local initialized = false
 
 local bannerFrame: Frame? = nil
@@ -136,7 +142,7 @@ local function ensureBanner(gui: Instance?)
 	local frame: Frame = Make("Frame", {
 		Name = "ZoneBanner",
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.27),
+		Position = UDim2.fromScale(0.5, BANNER_Y),
 		Size = UDim2.fromScale(0.5, 0.11),
 		BackgroundColor3 = C.Cream,
 		Visible = false,
@@ -167,6 +173,33 @@ local function ensureBanner(gui: Instance?)
 	bannerFrame = frame
 end
 
+-- 위쪽 가운데의 좋은 알 배너·알림 말풍선(Toasts)과 겹치면 그 아래로 비켜요 (태블릿·PC 처럼 큰 화면에서 겹쳐요)
+-- onlyDown = 보이는 동안 다시 잴 때: 아래로만 비키고 위로는 안 돌아가요 (덜 흔들려요)
+local function placeBanner(onlyDown: boolean?)
+	local frame = bannerFrame
+	local parent = if frame then frame.Parent else nil
+	if not frame or not parent or not parent:IsA("GuiBase2d") then
+		return
+	end
+	local gh = parent.AbsoluteSize.Y
+	local pos = UDim2.fromScale(0.5, BANNER_Y)
+	local colTop, colBottom = Toasts.TopColumn()
+	if colTop and colBottom then
+		local h = math.clamp(gh * 0.11, 64, 110) -- Size 0.11 + UISizeConstraint 와 같은 값
+		local top = gh * BANNER_Y - h / 2
+		if top < colBottom + 8 and top + h > colTop then
+			pos = UDim2.new(0.5, 0, 0, math.floor(colBottom + 8 + h / 2))
+		end
+	end
+	local cur = frame.Position
+	if onlyDown and pos.Y.Scale * gh + pos.Y.Offset <= cur.Y.Scale * gh + cur.Y.Offset then
+		return
+	end
+	if cur ~= pos then
+		frame.Position = pos
+	end
+end
+
 local function showBanner(title: string, sub: string, color: Color3, sound: string?)
 	ensureBanner(nil)
 	local frame, titleLabel, subLabel = bannerFrame, bannerTitle, bannerSub
@@ -186,6 +219,7 @@ local function showBanner(title: string, sub: string, color: Color3, sound: stri
 	if titleStroke then
 		titleStroke.Color = UiKit.Darken(color, 0.35)
 	end
+	placeBanner()
 	frame.Visible = true
 	UiKit.Pop(frame, 0.4)
 	if sound then
@@ -247,13 +281,37 @@ local function onZoneChanged(zone: number, first: boolean)
 	end
 end
 
+-- 순간이동(지도·배너 "바로 가기"·떨어짐 복구) 뒤에는 카메라를 캐릭터 뒤로 돌려요.
+-- 서버가 섬 안쪽(SpawnLook)을 보게 세워 주니까, 카메라도 그쪽(컨베이어 쪽)을 보게요
+local function faceCamera(hrp: BasePart)
+	local cam = workspace.CurrentCamera
+	if not cam or cam.CameraType ~= Enum.CameraType.Custom then
+		return
+	end
+	local look = hrp.CFrame.LookVector
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if flat.Magnitude < 0.1 then
+		return
+	end
+	flat = flat.Unit
+	local dist = math.clamp((cam.CFrame.Position - cam.Focus.Position).Magnitude, 10, 40) -- 줌은 그대로
+	local target = hrp.Position + Vector3.new(0, 1.5, 0)
+	cam.CFrame = CFrame.lookAt(target - flat * dist + Vector3.new(0, dist * 0.4, 0), target)
+end
+
 local function zoneCheck()
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
 	if not (hrp and hrp:IsA("BasePart")) then
 		return
 	end
-	local z = Config.ZoneAt(hrp.Position)
+	local pos = hrp.Position
+	local prev = lastRootPos
+	if lastRoot == hrp and prev and (pos - prev).Magnitude > TELEPORT_JUMP then
+		pcall(faceCamera, hrp)
+	end
+	lastRoot, lastRootPos = hrp, pos
+	local z = Config.ZoneAt(pos)
 	if z and z ~= currentZone then
 		local first = currentZone == nil
 		currentZone = z
@@ -391,6 +449,11 @@ function ZoneClient.Init(gui: Instance?)
 			local ok, err = pcall(zoneCheck)
 			if not ok then
 				warn("[ZoneClient] 지역 확인 오류:", err)
+			end
+			-- 보이는 동안 좋은 알 배너가 새로 뜨면 비켜요
+			local frame = bannerFrame
+			if frame and frame.Visible then
+				pcall(placeBanner, true)
 			end
 		end
 	end)

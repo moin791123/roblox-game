@@ -527,6 +527,27 @@ function Toasts.SetBannerGuard(obj: GuiObject?)
 	relayoutAll()
 end
 
+-- 위쪽 가운데 줄(큰 배너 + 말풍선)이 차지한 세로 범위 (화면 픽셀: 위, 아래). 아무것도 없으면 nil
+-- ZoneClient 의 "○○에 왔어요!" 배너가 큰 화면에서 이 줄과 겹치지 않게 비킬 때 써요
+function Toasts.TopColumn(): (number?, number?)
+	local bottom: number? = nil
+	local outer = bannerOuter
+	if outer and outer.Visible then
+		bottom = TOP + bannerHeight
+	end
+	if #live > 0 then
+		local h = 0
+		for i, t in live do
+			h += t.Size.Y.Offset + (if i > 1 then 6 else 0)
+		end
+		bottom = math.max(bottom or 0, toastTop() + h)
+	end
+	if not bottom then
+		return nil, nil
+	end
+	return TOP, bottom
+end
+
 -- (검사용) 지금 보이는 배너: (Frame?, 제목, 버튼 보임?)
 function Toasts.BannerState(): (Frame?, string?, boolean)
 	local outer = bannerOuter

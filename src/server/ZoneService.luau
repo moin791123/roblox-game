@@ -53,7 +53,7 @@ local function setZone(player: Player, zone: number)
 	end
 end
 
--- 지역 스폰 자리 (+3 위, 섬 안쪽 +X 를 바라봐요)
+-- 지역 스폰 자리 (+3 위, SpawnLook = 섬 안쪽을 바라봐요. 카메라는 ZoneClient 가 따라 돌려요)
 local function zoneSpawnCFrame(zone: number): CFrame
 	local def = Config.Zones[zone] or Config.Zones[1]
 	local pos = def.Spawn + Vector3.new(0, 3, 0)

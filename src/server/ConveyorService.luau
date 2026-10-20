@@ -385,6 +385,7 @@ end
 
 -- 좋은 알 알림 보내기: 맨 위 칸은 언제나, 둘째 칸은 벨트마다 Gap 초에 한 번.
 -- 받는 사람: 그 지역이 열렸고, 그 지역이 내 열린 지역 중 위에서 ZoneWindow 개 안이거나 지금 그 지역에 있을 때
+-- (숲 마을은 모두의 집이 있는 곳이라 "거기 있음"으로 치지 않아요: 환생 많이 한 아이에게 숲 알 알림이 계속 오지 않게)
 local function sendEggAlert(belt: Belt, eggId: string, now: number)
 	local kind = Config.EggAlertKind(eggId)
 	if not kind then
@@ -399,7 +400,7 @@ local function sendEggAlert(belt: Belt, eggId: string, now: number)
 		if DataService.Get(player) then
 			local rebirths = DataService.GetRebirths(player)
 			if Config.ZoneUnlocked(belt.Zone, rebirths) then
-				local here = player:GetAttribute("Zone") == belt.Zone
+				local here = belt.Zone ~= 1 and player:GetAttribute("Zone") == belt.Zone
 				if here or belt.Zone > Config.MaxZoneFor(rebirths) - rules.ZoneWindow then
 					Remotes.EggAlert:FireClient(player, belt.Zone, eggId)
 				end
