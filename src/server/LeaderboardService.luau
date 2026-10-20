@@ -24,7 +24,7 @@ export type Board = {
 -- (추가) 클라이언트마다 붙여 보내는 "내 순위". Rank = nil 이면 몰라요 (100위 밖 / 아직 점수 없음)
 export type MineEntry = { Rank: number?, Value: number }
 
-type Live = { Income: number, Rebirths: number }
+type Live = { Income: number, Rebirths: number, CanSave: boolean } -- CanSave = false: 불러오기 실패한 판 (점수 안 써요)
 type Entry = { UserId: number, Value: number }
 type RowGui = { Frame: Frame, Name: TextLabel, Value: TextLabel }
 type BoardGui = { Model: Model, Subtitle: TextLabel, Rows: { RowGui } }
@@ -233,6 +233,7 @@ local function collectOnline(): { [number]: Live }
 			map[p.UserId] = {
 				Income = toInt(DataService.GetIncome(p)),
 				Rebirths = toInt(DataService.GetRebirths(p)),
+				CanSave = DataService.CanSave(p),
 			}
 			nameCache[p.UserId] = p.DisplayName -- 나간 뒤에도 같은 이름으로
 		end
@@ -669,7 +670,8 @@ local function refreshGlobal()
 		return
 	end
 	for _, p in Players:GetPlayers() do
-		if storesOk and p.Parent and DataService.Get(p) then
+		-- 불러오기에 실패한 사람(기본값으로 노는 중)의 점수는 절대 안 써요
+		if storesOk and p.Parent and DataService.CanSave(p) then
 			local income = toInt(DataService.GetIncome(p))
 			local rebirths = toInt(DataService.GetRebirths(p))
 			writeStat(INCOME, p.UserId, income, WRITE_EVERY - 5, WRITE_RESERVE)
@@ -718,9 +720,13 @@ local function onLeave(player: Player)
 	local userId = player.UserId
 	local live: Live? = lastLive[userId]
 	if DataService.Get(player) then
-		live = { Income = toInt(DataService.GetIncome(player)), Rebirths = toInt(DataService.GetRebirths(player)) }
+		live = {
+			Income = toInt(DataService.GetIncome(player)),
+			Rebirths = toInt(DataService.GetRebirths(player)),
+			CanSave = DataService.CanSave(player),
+		}
 	end
-	if not live or not storesOk then
+	if not live or not live.CanSave or not storesOk then
 		return
 	end
 	local income, rebirths = live.Income, live.Rebirths

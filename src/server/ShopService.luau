@@ -181,6 +181,65 @@ local function checkPlace(themeId: string, floors: number, furnId: string, floor
 	return true, nil
 end
 
+-- 빈 집 기준으로 이 가구가 들어갈 자리가 하나라도 있나? (테마·층 수만 보고, 다른 가구는 안 봐요)
+-- 결과는 (테마, 층 1~2, 가구) 별로 기억해요. 작은 집에 큰 가구를 사 놓고 못 놓는 일을 막아요
+local fitCache: { [string]: boolean } = {}
+local NO_OTHERS: { [string]: Furniture } = {}
+local function fitsInHouse(themeId: string, floors: number, furnId: string): boolean
+	local maxFloor = math.clamp(math.floor(floors), 1, 2) -- 2층부터는 모양이 같아요
+	local key = themeId .. "|" .. maxFloor .. "|" .. furnId
+	local cached = fitCache[key]
+	if cached ~= nil then
+		return cached
+	end
+	local step = math.max(DECOR.Snap, 1)
+	local found = false
+	for floor = 1, maxFloor do
+		local okB, b = pcall(HouseLayout.FloorBounds, themeId, floor)
+		if okB and type(b) == "table" then
+			local x0, x1 = snap(tonumber(b.MinX) or 0), snap(tonumber(b.MaxX) or 0)
+			local z0, z1 = snap(tonumber(b.MinZ) or 0), snap(tonumber(b.MaxZ) or 0)
+			for _, r in { 0, 90 } do
+				local x = x0
+				while x <= x1 and not found do
+					local z = z0
+					while z <= z1 do
+						if checkPlace(themeId, floors, furnId, floor, x, z, r, NO_OTHERS, nil) then
+							found = true
+							break
+						end
+						z += step
+					end
+					x += step
+				end
+				if found then
+					break
+				end
+			end
+		end
+		if found then
+			break
+		end
+	end
+	fitCache[key] = found
+	return found
+end
+
+-- 이 가구가 들어가는 가장 작은 집 테마 이름 (없으면 nil)
+local function smallestThemeFor(furnId: string, floors: number): string?
+	for _, themeId in Config.House.ThemeOrder do
+		if fitsInHouse(themeId, floors, furnId) then
+			local theme = Config.House.Themes[themeId]
+			return if theme then theme.Name else themeId
+		end
+	end
+	return nil
+end
+
+function ShopService.FitsInHouse(themeId: string, floors: number, furnId: string): boolean
+	return fitsInHouse(themeId, floors, furnId)
+end
+
 ----------------------------------------------------------------------
 -- 놓기 검사 (공개)
 ----------------------------------------------------------------------
@@ -486,6 +545,16 @@ local function onBuyFurniture(player: Player, furnId: any)
 		return
 	end
 	local def = Config.Furniture[furnId]
+	-- 지금 집에 놓을 자리가 아예 없으면 사지 않게 (사 놓고 못 놓으면 속상해요)
+	if not fitsInHouse(data.Theme, data.Floors, furnId) then
+		local better = smallestThemeFor(furnId, data.Floors)
+		if better then
+			notify(player, string.format("🏠 지금 집에는 %s 안 들어가요! '%s' 이상으로 집을 바꾸면 놓을 수 있어요", josa(def.Name, "이", "가"), better), "warn")
+		else
+			notify(player, "🏠 이 가구는 아직 놓을 수 있는 집이 없어요", "warn")
+		end
+		return
+	end
 	if (data.FurnitureInv[furnId] or 0) >= DECOR.MaxPerItem then
 		notify(player, string.format("가구 가방에 %s 최대 %d개까지예요!", josa(def.Name, "은", "는"), DECOR.MaxPerItem), "warn")
 		return

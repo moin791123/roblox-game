@@ -548,6 +548,11 @@ function DataService.Get(player: Player): Data?
 	return cache[player]
 end
 
+-- 이 사람 데이터를 저장해도 되나 (불러오기에 실패한 판은 false: 기본값으로 진짜 저장/순위를 덮지 않게)
+function DataService.CanSave(player: Player): boolean
+	return cache[player] ~= nil and not noSave[player]
+end
+
 function DataService.Save(player: Player)
 	local data = cache[player]
 	if not data or noSave[player] or storeDisabled or not store then
