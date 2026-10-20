@@ -23,6 +23,11 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 >    at the hub end (locked gates are visible from home). Lobby → any belt ≈ 10–21 s at walk speed 18.
 > 4. New Config: `Zone.Trail`, `Zone.SpawnLook`, `Egg.Rung` / `Rungs` / `Look`, `ZoneEggOrder`, `EggAlert`, `Conveyor.BeaconHeight`,
 >    helpers `ZoneEggs`, `EggRung`, `EggAlertKind` (§8). Pet ids/tiers, house/floor/furniture/accessory tables unchanged.
+> 5. **Buying a new house is easy to find again**: HouseWindow has tabs 🏡 새 집 / 🏗 층·받침대 / 🪑 꾸미기 (§10); it opens on
+>    🏡 새 집 when a bigger house is affordable, and the 🏠 집 HUD button shows a "!" badge then.
+> 6. **Furniture anywhere inside the fence**: v3 only allowed the house interior, where pedestals/stairs/elevator/entrance left
+>    almost no room ("벽 밖이에요!" everywhere). Floor 1 is now the whole yard inside the fence; walls, the gate→door path and
+>    yard decorations are blocked. One shared rule `HouseLayout.CheckPlace` is used by ShopService and DecorateMode (§8, §9, §10).
 >
 > **v3 changes** — ★ marks v3 throughout this file
 > 1. **7 tiers**: 기본 / 🥉 브론즈 / 🥈 실버 / 🥇 골드 / 🌈 레인보우 / 💎 다이아 / 🌌 갤럭시. Old saves remap 2→4, 3→5.
@@ -297,9 +302,20 @@ in Z (back-aligned recommended) is HouseLayout's choice but must leave the entra
 - `HouseLayout.SlotLocal(slot, themeId) -> CFrame`: pedestal top (item pivot) in plot space; slot s on floor ceil(s/12).
 - `HouseLayout.SlotCFrame(origin, slot, themeId) -> CFrame` = `origin * SlotLocal(...)`.
 - `HouseLayout.FloorBounds(themeId, floor) -> { MinX, MaxX, MinZ, MaxZ, Y }`: inner walkable floor area (inside walls).
-- `HouseLayout.BlockedRects(themeId, floor) -> { { MinX, MaxX, MinZ, MaxZ, Name } }`: where furniture may not go: every
+- `HouseLayout.BlockedRects(themeId, floor) -> { { MinX, MaxX, MinZ, MaxZ, Name, Kind } }`: where furniture may not go: every
   pedestal footprint (+0.5), stairs going up from this floor and the stair landing/opening arriving from below, the elevator
-  booth, and on floor 1 also the entrance corridor (doorway → inside 6 studs), Collector and SpawnPoint.
+  booth, and on floor 1 also the entrance corridor (doorway → inside 6 studs), Collector and SpawnPoint. ★v4 floor 1 also blocks
+  the house walls + corner pillars (doorway open), the gate→door path and gate, and every yard item (sign, mailbox, pet house,
+  planters, lamps, theme `DECO_YARD`). `Kind` ∈ Stand / Path / HouseWall / Deco / Hole picks the refusal text.
+- ★v4 `HouseLayout.PlaceBounds(themeId, floor)`: where furniture may go — floor 1 = inside the fence (inner face ±31.3) minus
+  `Decor.WallMargin`; upper floors = `FloorBounds` minus WallMargin. `FloorBounds` itself is unchanged (house interior).
+- ★v4 `HouseLayout.InHouse(themeId, x, z)`, `HouseLayout.PlaceY(themeId, floor, x, z)` (yard ground `YARD_Y` 0.06 outside the
+  house, `FloorY(floor)` inside; used by the server render, the ghost and the ray plane).
+- ★v4 `HouseLayout.CheckPlace(themeId, floors, furnId, floor, x, z, r, others?, ignoreFid?) -> (ok, reason?)`: the single placement
+  rule (see ShopService.CanPlace); `HouseLayout.FitsInHouse(themeId, floors, furnId)`, `HouseLayout.SmallestThemeFor(furnId, floors)`,
+  `HouseLayout.Reasons` (refusal texts), `HouseLayout.Layout.Yard` (fence, gate, sign, mailbox, pet house, planters, lamps, deco
+  spots — HouseBuilder builds from it so built and blocked never drift), constants `YARD_Y`, `FENCE`, `FENCE_T`, `GATE_HALF`,
+  `PILLAR`, `TRIM`. Assumes `Layout.PlotSize` = 64.
 - `HouseLayout.FloorSpawn(origin, themeId, floor) -> CFrame`: world CFrame to put a character on that floor (free spot by the
   elevator, facing into the house, already + 3 studs up).
 - `HouseLayout.ElevatorLocal(themeId, floor) -> CFrame` (booth centre on the floor).
@@ -412,13 +428,16 @@ send `"Add"` for coins of newly opened zones. `PickupCoin(id)`: coin exists & al
   `PlotService.OnPlotChanged` → on "Assign"/"Rebuild": `Validate(player)` then `RenderFurniture(player)`; on "Release": destroy the folder.
 - `ShopService.CanPlace(player, furnId, floor, x, z, r, ignoreFid?) -> (boolean, string?)`: furnId known; floor integer 1..Floors;
   r ∈ {0, 90, 180, 270}; x, z finite, snapped to `Decor.Snap`; footprint `Config.FurnitureFootprint(furnId, r)` centred at (x, z) lies
-  inside `HouseLayout.FloorBounds(theme, floor)` shrunk by `Decor.WallMargin`; no overlap with `HouseLayout.BlockedRects(theme, floor)`;
-  no overlap with other furniture on that floor unless either is Category "Rug"; placed count < `Decor.MaxPlaced` for new pieces.
-  Reasons: "여기에는 놓을 수 없어요!", "벽 밖이에요!", "받침대/계단 자리예요!", "다른 가구랑 겹쳐요!", "가구는 최대 80개까지예요!".
+  inside ★v4 `HouseLayout.PlaceBounds(theme, floor)` (floor 1 = the whole yard inside the fence); no overlap with
+  `HouseLayout.BlockedRects(theme, floor)`; no overlap with other furniture on that floor unless either is Category "Rug"; placed
+  count < `Decor.MaxPlaced` for new pieces. ★v4 the geometry is `HouseLayout.CheckPlace` (the client calls the same function).
+  Reasons: "여기에는 놓을 수 없어요!", "벽 밖이에요!" (upper floors), ★"울타리 밖이에요!", ★"다니는 길은 비워 둬요!", ★"집 벽 자리예요!",
+  ★"마당 장식이 있는 자리예요!", ★"바닥이 뚫린 곳이에요!", "받침대/계단 자리예요!", "다른 가구랑 겹쳐요!", "가구는 최대 80개까지예요!".
+  ★v4 every piece fits the Basic yard, so buying is never refused for space.
 - `ShopService.Validate(player)`: puts every piece that fails CanPlace (e.g. after a smaller theme) back into FurnitureInv; Notify
   "🛋 가구 N개가 집에 안 맞아서 가구 가방에 넣었어요" if any; Sync.
 - `ShopService.RenderFurniture(player)`: (re)builds `Plot<i>.Furniture`: `FurnitureModels.Build(id)`, anchor all parts,
-  `PivotTo(origin * CFrame.new(x, HouseLayout.FloorY(floor), z) * CFrame.Angles(0, math.rad(r), 0))`.
+  `PivotTo(origin * CFrame.new(x, HouseLayout.PlaceY(theme, floor, x, z), z) * CFrame.Angles(0, math.rad(r), 0))` (★v4 PlaceY).
 
 ### ★ LeaderboardService (new, owner BOARD)
 - `LeaderboardService.Start()`: builds the two boards at `Layout.Leaderboards.Income/Rebirths` (SurfaceGui, title "⚡ 초당 코인 TOP 10" /
@@ -455,17 +474,17 @@ shows snapshot data.
 | State | UI-CORE | snapshot (+ ★ CoinSync merge, `State.OnCoins(fn)`), plot lookup, ★`State.SortedItems(filter?)` (Config.CompareItems), ★`State.CountFusable(petId, tier)` (Config.CanFuseLoc), ★`State.MaxZone()`, Floors clamp to 1..MaxFloors |
 | Hud | UI-CORE | coins (animated; listens to OnCoins), "💰 +N/초", pet count, buttons: 🎒 가방 (B), 📖 도감 (N), 🏠 집 (H), 🛍 상점 (P), 🗺 지도 (M), 🏆 순위 (L), 🔄 환생 (R, shows cost) |
 | BagWindow | UI-CORE | cards sorted by `Config.CompareItems` (pets by income desc, eggs last); tabs 전체/펫/알/집; header buttons **"✨ 좋은 펫 자동 배치"** (AutoPlace) and **"📦 집 펫 모두 빼기"** (ClearBase); count "가방 n/150"; tier label + 7 tier colours; "합성 ✨" only for non-Slot pets with ≥ 3 fusable; **"👕 옷"** button → picker of owned accessories (+ "벗기기") → EquipAccessory; viewports created **lazily** (only for cards in/near the visible scroll area, ≤ ~30 alive, recycled) |
-| HouseWindow | UI-CORE | 8 theme cards (swatches, "🏠 크기 N", "+N% 수익", price/보유/적용); floor list 1..10 (✅ / 🔒 환생 N / 💰 price / "받침대를 먼저 다 열어요") + "🏗 N층 올리기"; ➕ 받침대 (next price / 최대); 🛗 floor buttons (Teleport "Floor"); AutoPlace / ClearBase; "🪑 가구 꾸미기" → `DecorateMode.Enter(floor)`; `HouseWindow.OpenFloorPicker()` (used by the elevator prompt) |
+| HouseWindow | UI-CORE | ★v4 `Open(tab?)` with tabs **🏡 새 집** (themes; default when an upgrade is affordable, via `ThemeGoal()`) / **🏗 층·받침대** / **🪑 꾸미기**, `CurrentTab()`; moving to a smaller house with furniture placed needs a two-tap confirm; `Hud.SetBadge("집", on)` "!" badge. Contents: 8 theme cards (swatches, "🏠 크기 N", "+N% 수익", price/보유/적용); floor list 1..10 (✅ / 🔒 환생 N / 💰 price / "받침대를 먼저 다 열어요") + "🏗 N층 올리기"; ➕ 받침대 (next price / 최대); 🛗 floor buttons (Teleport "Floor"); AutoPlace / ClearBase; "🪑 가구 꾸미기" → `DecorateMode.Enter(floor)`; `HouseWindow.OpenFloorPicker()` (used by the elevator prompt) |
 | IndexWindow | UI-CORE | 66 pets grouped by zone (header "🌳 숲 마을", locked zones "🔒 환생 N"), viewport at the highest tier seen + tier badge (🥉🥈🥇🌈💎🌌), silhouette "???" for undiscovered, secret hint "<알 이름>에서 아주 드물게… ✨" (derived from the eggs containing it); progress "n / 66" |
 | RebirthWindow | UI-CORE | as v2 + "다음 환생 선물: 🗺 호수 열림 / 🏗 3층 가능" (zones/floors whose MinRebirth == Rebirths + 1) |
-| HatchFx, Toasts, Tips | UI-CORE | 7-tier labels/colours; Tips mention 지도/상점/자동 배치 |
+| HatchFx, Toasts, Tips | UI-CORE | 7-tier labels/colours; Tips mention 지도/상점/자동 배치; ★v4 `Toasts.Banner(spec)` = good-egg banner on `Remotes.EggAlert(zone, eggId)` (zone + egg name, viewport, sound, "🗺 바로 가기" → Teleport("Zone", z); repeats merge ×N, queue ≤ 3, hides after 6 s, suppressed while decorating) |
 | WorldFx | UI-CORE | Owner-prompt filter; elevator prompts (`PromptAction = "Elevator"`, via `ProximityPromptService.PromptTriggered` on the client) → callback set by init.client → `HouseWindow.OpenFloorPicker()`; **pet bob**: animates Body CFrame of `Items` models with `Bob = true` within 80 studs (local only, ~30 Hz, small sine; remember the server CFrame per model); particle LOD (disable ParticleEmitters of pedestal pets beyond 70 studs); optional hue cycle for `TierCycle` models nearby; CoinFx numbers |
 | init.client | UI-CORE | requires every window below, hotkeys **B N H P M L R**, closes others on open, suppresses hotkeys while `DecorateMode.IsActive()`, wires CoinSync/LeaderboardSync to State/LeaderboardWindow |
 | CoinField | WORLD | per-zone coins (payload `Zone`), renders only within `FieldCoins.RenderDistance`, magnet as v2 |
-| ★ MapWindow | WORLD | 8 zone cards (emoji, name, palette colour, 🔒 환생 N / "이동" → Teleport("Zone", i)), "🏠 우리 집" → Teleport("Home"), current zone highlighted (player attribute `Zone`) |
+| ★ MapWindow | WORLD | 8 zone cards (emoji, name, palette colour, ★v4 the zone's egg icons, 🔒 환생 N / "이동" → Teleport("Zone", i)), "🏠 우리 집" → Teleport("Home"), current zone highlighted (player attribute `Zone`) |
 | ★ ZoneClient | WORLD | `ZoneClient.Init()`: local gate collision/visuals for locked zones (re-applied on every sync), entering-zone banner ("🦆 호수에 왔어요!"), optional local Lighting tint from `Palette.Sky` (space = night) |
 | ★ ShopWindow | UI-NEW | `Open(tab?: "Clothes" \| "Furniture")`; 👕 옷 tab: 14 accessories (viewport, name, slot icon, price / "보유 ✓", 구매); 🛋 가구 tab: categories (`Config.FurnitureCategories`), cards with viewport, price, "가방에 N개", 구매, and "🪑 꾸미러 가기" → `DecorateMode.Enter()` |
-| ★ DecorateMode | UI-NEW | `Enter(floor?)`, `Exit()`, `IsActive()`: only in my own house (teleports to the floor first if needed via Teleport "Floor"); bottom tray of FurnitureInv items; ghost model follows mouse/touch ray on the plane y = origin.Y + `HouseLayout.FloorY(floor)`, snapped to `Decor.Snap`, green/red tint from a client-side mirror of `ShopService.CanPlace` (HouseLayout + Config); tap/click places (PlaceFurniture), tapping a placed piece selects it → 🔄 회전 (MoveFurniture with r + 90), ✋ 옮기기, 📦 넣기 (PickupFurniture); keys: R rotate, X/Delete pick up, Esc/Q exit; floor ▲▼ buttons |
+| ★ DecorateMode | UI-NEW | `Enter(floor?)`, `Exit()`, `IsActive()`: only in my own house or ★v4 yard (standing anywhere on my plot ground counts as floor 1, no teleport; otherwise teleports via Teleport "Floor"); hint "🌳 울타리 안 아무 데나 놓을 수 있어요!"; bottom tray of FurnitureInv items; ghost model follows mouse/touch ray on the plane y = origin.Y + ★v4 `HouseLayout.PlaceY(...)`, snapped to `Decor.Snap`, green/red tint from ★v4 `HouseLayout.CheckPlace` (same function as the server); tap/click places (PlaceFurniture), tapping a placed piece selects it → 🔄 회전 (MoveFurniture with r + 90), ✋ 옮기기, 📦 넣기 (PickupFurniture); keys: R rotate, X/Delete pick up, Esc/Q exit; floor ▲▼ buttons |
 | ★ LeaderboardWindow | BOARD | `Init(gui)`, `Open/Close/IsOpen`, `SetBoard(board)` (from LeaderboardSync); tabs ⚡ 초당 / 🔄 환생, top 10 with 🥇🥈🥉, my row highlighted, "🌍 전체 서버" or "🏠 이 서버" |
 
 Prompt filtering: only `PromptKind = "Owner"` hiding. Keys: B bag, N index, H house, P shop, M map, L leaderboard, R rebirth.
