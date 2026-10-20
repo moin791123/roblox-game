@@ -23,6 +23,25 @@ do
 	end
 end
 
+-- FurnitureModels 도 다른 모듈이라 처음 쓸 때 pcall 로 불러요 (없으면 이모지)
+local FurnitureModels: any = nil
+local furnitureTried = false
+local function getFurnitureModels(): any
+	if not furnitureTried then
+		furnitureTried = true
+		local mod = Shared:FindFirstChild("FurnitureModels")
+		if mod and mod:IsA("ModuleScript") then
+			local ok, result = pcall(require, mod)
+			if ok then
+				FurnitureModels = result
+			else
+				warn("[UiKit] FurnitureModels 불러오기 실패:", result)
+			end
+		end
+	end
+	return FurnitureModels
+end
+
 local UiKit = {}
 UiKit.Config = Config
 UiKit.Font = Enum.Font.FredokaOne
@@ -289,7 +308,7 @@ function UiKit.RarityColor(rarity: string?): Color3
 	return if r then r.Color else C.Grey
 end
 
--- 등급(1 기본 / 2 황금 / 3 무지개) 강조색
+-- 등급(1 기본 / 2 브론즈 / 3 실버 / 4 골드 / 5 레인보우 / 6 다이아 / 7 갤럭시) 강조색
 function UiKit.TierColor(tier: number?): Color3
 	local info = Config.TierInfo(tier)
 	return if info and info.Color then info.Color else C.White
@@ -300,11 +319,139 @@ function UiKit.TierOf(tier: any): number
 	return math.clamp(math.floor(tonumber(tier) or 1), 1, Config.MaxTier)
 end
 
--- 펫/알 뷰포트. PetModels 가 없거나 실패하면 이모지로 대신. tier 는 펫만 (황금/무지개 색)
-function UiKit.Viewport(kind: string, id: string, parent: GuiObject, silhouette: boolean?, tier: number?): (GuiObject, Model?)
+-- 등급 배지 이모지 ("🥉" "🥈" "🥇" "🌈" "💎" "🌌", 기본은 "")
+function UiKit.TierEmoji(tier: any): string
+	local label = Config.TierInfo(UiKit.TierOf(tier)).Label
+	if type(label) ~= "string" or label == "" then
+		return ""
+	end
+	return string.match(label, "^(%S+)") or ""
+end
+
+-- 등급 표시 글자 ("🥇 골드", 기본은 "")
+function UiKit.TierLabel(tier: any): string
+	local label = Config.TierInfo(UiKit.TierOf(tier)).Label
+	return if type(label) == "string" then label else ""
+end
+
+-- 옷이 붙는 자리 아이콘 (Head 🎩 / Face 👓 / Neck 🎀 / Back 🎒)
+local ACC_SLOT_ICON: { [string]: string } = { Head = "🎩", Face = "👓", Neck = "🎀", Back = "🎒" }
+function UiKit.AccessoryIcon(slotOrAccId: string?): string
+	if type(slotOrAccId) ~= "string" then
+		return "👕"
+	end
+	local def = (Config.Accessories :: any)[slotOrAccId]
+	local slot = if def then def.Slot else slotOrAccId
+	return ACC_SLOT_ICON[slot] or "👕"
+end
+
+-- 옷 이름 (모르면 nil)
+function UiKit.AccessoryName(accId: any): string?
+	local def = if type(accId) == "string" then (Config.Accessories :: any)[accId] else nil
+	return if def then def.Name else nil
+end
+
+-- 초당 수익 글자 (10 미만은 소수 1자리: 2.5, 그 위는 12K 같은 짧은 표기)
+function UiKit.IncomeText(n: number): string
+	local v = tonumber(n) or 0
+	if v < 10 then
+		local s = string.format("%.1f", math.floor(v * 10 + 0.5) / 10)
+		return (s:gsub("%.0$", ""))
+	end
+	return Config.FormatNumber(v)
+end
+
+-- 한국어 조사 고르기: 받침이 있으면 withBatchim ("을", "이", "은"), 없으면 noBatchim ("를", "가", "는")
+-- 예) UiKit.Josa("고양이", "을", "를") → "고양이를"
+function UiKit.Josa(word: string, withBatchim: string, noBatchim: string): string
+	local last: number? = nil
+	for _, code in utf8.codes(word) do
+		last = code
+	end
+	if last and last >= 0xAC00 and last <= 0xD7A3 then
+		return word .. (if (last - 0xAC00) % 28 ~= 0 then withBatchim else noBatchim)
+	end
+	return word .. withBatchim .. "(" .. noBatchim .. ")"
+end
+
+-- 두 번 눌러야 실행되는 버튼 (팔기·모두 빼기처럼 되돌리기 힘든 일).
+-- 처음 누르면 confirmText + 빨간색으로 바뀌고, timeout(기본 2초) 안에 한 번 더 누르면 action 실행.
+-- 돌려주는 click 을 버튼 OnClick 에서 부르세요. reset 은 원래대로 돌리기
+function UiKit.TwoTap(button: GuiObject, label: TextLabel, confirmText: string, action: () -> (), timeout: number?): (() -> (), () -> ())
+	local token = 0
+	local armed = false
+	local savedText = ""
+	local savedColor = button.BackgroundColor3
+	local function reset()
+		if armed then
+			armed = false
+			token += 1
+			if button.Parent then
+				label.Text = savedText
+				button.BackgroundColor3 = savedColor
+			end
+		end
+	end
+	local function click()
+		if not armed then
+			armed = true
+			token += 1
+			local my = token
+			savedText = label.Text
+			savedColor = button.BackgroundColor3
+			label.Text = confirmText
+			button.BackgroundColor3 = C.Red
+			UiKit.Shake(button, 5, 6)
+			task.delay(timeout or 2, function()
+				if token == my then
+					reset()
+				end
+			end)
+			return
+		end
+		reset()
+		action()
+	end
+	return click, reset
+end
+
+-- 둥근 알약 라벨 (배경색 + 흰 테두리 + 글자). (알약, 글자) 반환
+function UiKit.Pill(parent: Instance?, text: string, color: Color3, props: { [string]: any }?, maxText: number?): (Frame, TextLabel)
+	local base: { [string]: any } = {
+		Name = "Pill",
+		BackgroundColor3 = color,
+		Size = UDim2.fromOffset(120, 30),
+	}
+	if props then
+		for k, v in props do
+			base[k] = v
+		end
+	end
+	local pill: Frame = Make("Frame", base)
+	UiKit.Corner(pill, UDim.new(0.5, 0))
+	UiKit.Gradient(pill)
+	UiKit.Stroke(pill, C.White, 2, true)
+	local label = UiKit.Label({
+		Text = text,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.88, 0.76),
+		ZIndex = (base.ZIndex or 1) + 1,
+		Parent = pill,
+	}, { Stroke = UiKit.Darken(color, 0.45), MaxText = maxText or 20 })
+	if parent then
+		pill.Parent = parent
+	end
+	return pill, label
+end
+
+-- 펫/알/옷 뷰포트. kind = "Pet" | "Egg" | "Accessory". PetModels 가 없거나 실패하면 이모지로 대신.
+-- tier 는 펫만 (등급 모습), accId 는 펫이 입은 옷 (없으면 nil)
+function UiKit.Viewport(kind: string, id: string, parent: GuiObject, silhouette: boolean?, tier: number?, accId: string?): (GuiObject, Model?)
 	if PetModels and PetModels.CreateViewport then
 		local t: number? = if kind == "Pet" then UiKit.TierOf(tier) else nil
-		local ok, vp, model = pcall(PetModels.CreateViewport, kind, id, parent, silhouette == true, t)
+		local acc: string? = if kind == "Pet" and not silhouette and Config.AccessoryValid(accId) then accId else nil
+		local ok, vp, model = pcall(PetModels.CreateViewport, kind, id, parent, silhouette == true, t, acc)
 		if ok and typeof(vp) == "Instance" and vp:IsA("GuiObject") then
 			vp.AnchorPoint = Vector2.new(0.5, 0.5)
 			vp.Position = UDim2.fromScale(0.5, 0.5)
@@ -322,8 +469,34 @@ function UiKit.Viewport(kind: string, id: string, parent: GuiObject, silhouette:
 			warn("[UiKit] CreateViewport 실패:", vp)
 		end
 	end
-	local emoji = if kind == "Egg" then "🥚" elseif silhouette then "❓" else "🐾"
+	local emoji = if kind == "Egg" then "🥚" elseif kind == "Accessory" then UiKit.AccessoryIcon(id) elseif silhouette then "❓" else "🐾"
 	local label = UiKit.Label({ Text = emoji, Parent = parent }, { MaxText = 80 })
+	return label, nil
+end
+
+-- 가구 뷰포트 (상점·꾸미기 칸). FurnitureModels 가 없거나 실패하면 이모지로 대신
+function UiKit.FurnitureViewport(furnId: string, parent: GuiObject): (GuiObject, Model?)
+	local fm = getFurnitureModels()
+	if fm and fm.CreateViewport then
+		local ok, vp, model = pcall(fm.CreateViewport, furnId, parent)
+		if ok and typeof(vp) == "Instance" and vp:IsA("GuiObject") then
+			vp.AnchorPoint = Vector2.new(0.5, 0.5)
+			vp.Position = UDim2.fromScale(0.5, 0.5)
+			vp.Size = UDim2.fromScale(1, 1)
+			vp.BackgroundTransparency = 1
+			if vp.Parent ~= parent then
+				vp.Parent = parent
+			end
+			local m: Model? = nil
+			if typeof(model) == "Instance" and model:IsA("Model") then
+				m = model
+			end
+			return vp, m
+		elseif not ok then
+			warn("[UiKit] 가구 CreateViewport 실패:", vp)
+		end
+	end
+	local label = UiKit.Label({ Text = "🛋", Parent = parent }, { MaxText = 80 })
 	return label, nil
 end
 
@@ -331,14 +504,24 @@ export type Window = {
 	Panel: Frame,
 	Header: Frame,
 	Content: Frame,
+	Title: TextLabel,
 	Open: () -> (),
 	Close: () -> (),
 	IsOpen: () -> boolean,
 	OnOpen: (() -> ())?,
+	OnClose: (() -> ())?,
 }
 
--- 가운데 뜨는 창 (반투명 배경 탭하면 닫힘)
-function UiKit.Window(gui: Instance, opts: { Title: string, Color: Color3, Name: string }): Window
+export type WindowOpts = {
+	Title: string,
+	Color: Color3,
+	Name: string,
+	Size: UDim2?, -- 기본 화면의 86%
+	MaxSize: Vector2?, -- 기본 900 × 660
+}
+
+-- 가운데 뜨는 창 (반투명 배경 탭하면 닫힘). Size/MaxSize 로 작은 창도 만들 수 있어요
+function UiKit.Window(gui: Instance, opts: WindowOpts): Window
 	local open = false
 	local token = 0
 
@@ -357,14 +540,14 @@ function UiKit.Window(gui: Instance, opts: { Title: string, Color: Color3, Name:
 		Name = opts.Name,
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.52),
-		Size = UDim2.fromScale(0.86, 0.86),
+		Size = opts.Size or UDim2.fromScale(0.86, 0.86),
 		BackgroundColor3 = C.Cream,
 		Visible = false,
 		ZIndex = 21,
 		Active = true,
 		Parent = gui,
 	})
-	Make("UISizeConstraint", { MaxSize = Vector2.new(900, 660), MinSize = Vector2.new(280, 220), Parent = panel })
+	Make("UISizeConstraint", { MaxSize = opts.MaxSize or Vector2.new(900, 660), MinSize = Vector2.new(280, 220), Parent = panel })
 	UiKit.Corner(panel, UDim.new(0, 26))
 	UiKit.Stroke(panel, opts.Color, 6, true)
 	local scale = UiKit.Scale(panel)
@@ -389,7 +572,7 @@ function UiKit.Window(gui: Instance, opts: { Title: string, Color: Color3, Name:
 		ZIndex = 22,
 		Parent = header,
 	})
-	UiKit.Label({
+	local titleLabel = UiKit.Label({
 		Name = "Title",
 		Text = opts.Title,
 		Position = UDim2.new(0, 18, 0, 6),
@@ -408,7 +591,7 @@ function UiKit.Window(gui: Instance, opts: { Title: string, Color: Color3, Name:
 		Parent = panel,
 	})
 
-	local win: any = { Panel = panel, Header = header, Content = content }
+	local win: any = { Panel = panel, Header = header, Content = content, Title = titleLabel }
 
 	function win.IsOpen(): boolean
 		return open
@@ -446,6 +629,9 @@ function UiKit.Window(gui: Instance, opts: { Title: string, Color: Color3, Name:
 				panel.Visible = false
 			end
 		end)
+		if win.OnClose then
+			win.OnClose()
+		end
 	end
 
 	backdrop.Activated:Connect(function()
@@ -574,7 +760,7 @@ function UiKit.SectionGrid(section: GuiObject, scroll: ScrollingFrame, minCell: 
 end
 
 -- 목록 스크롤에 넣는 머리글 알약 (희귀도 구역 제목 등)
-function UiKit.SectionHeader(scroll: Instance, text: string, color: Color3, order: number): TextLabel
+function UiKit.SectionHeader(scroll: Instance, text: string, color: Color3, order: number, width: number?): TextLabel
 	local row: Frame = Make("Frame", {
 		Name = "Header",
 		Size = UDim2.new(1, 0, 0, 34),
@@ -585,7 +771,7 @@ function UiKit.SectionHeader(scroll: Instance, text: string, color: Color3, orde
 	local pill: Frame = Make("Frame", {
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 4, 0.5, 0),
-		Size = UDim2.new(0, 190, 0, 30),
+		Size = UDim2.new(0, width or 190, 0, 30),
 		BackgroundColor3 = color,
 		Parent = row,
 	})

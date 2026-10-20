@@ -1,4 +1,7 @@
--- 화면 고정 UI: 코인, 초당 수익, 펫 수, 왼쪽 큰 버튼들 (가방/도감/집/환생)
+-- 화면 고정 UI: 코인(CoinSync 로 바로바로), 초당 수익, 집 금고, 펫 수, 왼쪽 큰 버튼 7개
+-- (가방 B / 도감 N / 집 H / 상점 P / 지도 M / 순위 L / 환생 R). 화면이 낮으면 2~3열로 접혀요.
+local UserInputService = game:GetService("UserInputService")
+
 local UiKit = require(script.Parent.UiKit)
 local State = require(script.Parent.State)
 
@@ -26,12 +29,21 @@ local coinValue = Instance.new("NumberValue")
 local targetCoins = -1
 local lastPets = -1
 
-local BUTTON_COUNT = 4
+export type Actions = {
+	ToggleBag: () -> (),
+	ToggleIndex: () -> (),
+	ToggleHouse: () -> (),
+	ToggleRebirth: () -> (),
+	ToggleShop: (() -> ())?,
+	ToggleMap: (() -> ())?,
+	ToggleLeaderboard: (() -> ())?,
+}
 
-export type Actions = { ToggleBag: () -> (), ToggleIndex: () -> (), ToggleHouse: () -> (), ToggleRebirth: () -> () }
+-- 키보드가 있는 PC 에서만 버튼 구석에 단축키 글자를 보여 줘요
+local showKeys = UserInputService.KeyboardEnabled and not UserInputService.TouchEnabled
 
--- 큰 네모 버튼 (이모지 + 아래 글자)
-local function bigButton(parent: Instance, emoji: string, caption: string, color: Color3, order: number, onClick: () -> ())
+-- 큰 네모 버튼 (이모지 + 아래 글자 + 단축키)
+local function bigButton(parent: Instance, emoji: string, caption: string, key: string, color: Color3, order: number, onClick: () -> ())
 	local btn, emojiLabel = UiKit.Button({
 		Name = caption,
 		Text = emoji,
@@ -53,6 +65,27 @@ local function bigButton(parent: Instance, emoji: string, caption: string, color
 		ZIndex = 2,
 		Parent = btn,
 	}, { Stroke = UiKit.Darken(color, 0.45), MaxText = 22 })
+	if showKeys then
+		local keyPill: Frame = Make("Frame", {
+			Name = "Key",
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.12, 0.12),
+			Size = UDim2.fromScale(0.3, 0.3),
+			BackgroundColor3 = C.White,
+			ZIndex = 3,
+			Parent = btn,
+		})
+		UiKit.Corner(keyPill, UDim.new(0.5, 0))
+		UiKit.Stroke(keyPill, UiKit.Darken(color, 0.3), 2, true)
+		UiKit.Label({
+			Text = key,
+			TextColor3 = UiKit.Darken(color, 0.45),
+			Size = UDim2.fromScale(0.8, 0.8),
+			Position = UDim2.fromScale(0.1, 0.1),
+			ZIndex = 4,
+			Parent = keyPill,
+		}, { Stroke = C.White, StrokeThickness = 1, MaxText = 16 })
+	end
 	return btn, emojiLabel, cap
 end
 
@@ -101,6 +134,25 @@ local function updatePending()
 		pendingPill.Visible = false
 	end
 	lastPending = pending
+end
+
+-- 환생 비용 알약 (살 수 있으면 민트색으로)
+local function refreshRebirth()
+	local snap = State.Snapshot
+	if not snap or not rebirthPill then
+		return
+	end
+	local rebirths = snap.Rebirths
+	local cost = snap.RebirthCost
+	local maxed = rebirths >= Config.Rebirth.MaxRebirths
+	local can = not maxed and snap.Coins >= cost
+	rebirthPillLabel.Text = if maxed then "최대 ✅" else "💰 " .. Config.FormatNumber(cost)
+	rebirthPill.BackgroundColor3 = if can then C.Mint else C.Grey
+	if can and lastCanRebirth == false then
+		UiKit.Pop(rebirthPill, 0.4)
+		UiKit.Bump(rebirthButton, 0.15)
+	end
+	lastCanRebirth = can
 end
 
 function Hud.Init(gui: ScreenGui, actions: Actions)
@@ -200,7 +252,7 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 	end)
 
 	------------------------------------------------------------------
-	-- 왼쪽: 큰 버튼들 (화면이 낮으면 2열)
+	-- 왼쪽: 큰 버튼 7개 (화면 높이에 맞게 1~3열)
 	------------------------------------------------------------------
 	local column: Frame = Make("Frame", {
 		Name = "SideButtons",
@@ -209,17 +261,31 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 		BackgroundTransparency = 1,
 		Parent = gui,
 	})
+	local GAP = 8
 	local grid: UIGridLayout = Make("UIGridLayout", {
 		SortOrder = Enum.SortOrder.LayoutOrder,
 		FillDirection = Enum.FillDirection.Horizontal,
-		CellPadding = UDim2.fromOffset(10, 10),
+		CellPadding = UDim2.fromOffset(GAP, GAP),
 		Parent = column,
 	})
 
-	bigButton(column, "🎒", "가방", C.Pink, 1, actions.ToggleBag)
-	bigButton(column, "📖", "도감", C.Sky, 2, actions.ToggleIndex)
-	bigButton(column, "🏠", "집", C.Peach, 3, actions.ToggleHouse)
-	rebirthButton = bigButton(column, "🔄", "환생", C.Lavender, 4, actions.ToggleRebirth)
+	local function noop() end
+	local defs: { { Emoji: string, Caption: string, Key: string, Color: Color3, Fn: () -> () } } = {
+		{ Emoji = "🎒", Caption = "가방", Key = "B", Color = C.Pink, Fn = actions.ToggleBag },
+		{ Emoji = "📖", Caption = "도감", Key = "N", Color = C.Sky, Fn = actions.ToggleIndex },
+		{ Emoji = "🏠", Caption = "집", Key = "H", Color = C.Peach, Fn = actions.ToggleHouse },
+		{ Emoji = "🛍", Caption = "상점", Key = "P", Color = C.Mint, Fn = actions.ToggleShop or noop },
+		{ Emoji = "🗺", Caption = "지도", Key = "M", Color = Color3.fromRGB(110, 195, 120), Fn = actions.ToggleMap or noop },
+		{ Emoji = "🏆", Caption = "순위", Key = "L", Color = C.Gold, Fn = actions.ToggleLeaderboard or noop },
+		{ Emoji = "🔄", Caption = "환생", Key = "R", Color = C.Lavender, Fn = actions.ToggleRebirth },
+	}
+	for i, def in defs do
+		local btn = bigButton(column, def.Emoji, def.Caption, def.Key, def.Color, i, def.Fn)
+		if def.Caption == "환생" then
+			rebirthButton = btn
+		end
+	end
+	local count = #defs
 
 	-- 환생 비용 (버튼 오른쪽 작은 알약)
 	rebirthPill = Make("Frame", {
@@ -242,19 +308,37 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 		Parent = rebirthPill,
 	}, { MaxText = 22 })
 
+	-- 화면 크기에 맞게: 한 줄로 세울 수 있으면 1열, 아니면 2열(폰), 그래도 안 되면 3열
+	local touch = UserInputService.TouchEnabled
 	local function layout()
-		local h = gui.AbsoluteSize.Y
-		local cols, cell
-		if h >= 520 then
-			cols = 1
-			cell = math.clamp(math.floor(h * 0.12), 66, 100)
-		else
-			cols = 2
-			cell = math.clamp(math.floor(h * 0.19), 60, 76)
+		local size = gui.AbsoluteSize
+		local w, h = size.X, size.Y
+		if h <= 0 then
+			return
 		end
-		local rows = math.ceil(BUTTON_COUNT / cols)
+		-- 좁은 화면(세로 폰)에서는 위 코인 줄 아래부터, 폰은 아래 조이스틱 자리를 비워요
+		local topMargin = if w < 700 then 110 else 12
+		local bottomMargin = if touch then 120 else 24
+		local avail = math.max(120, h - topMargin - bottomMargin)
+		local cols, cell = 3, 48
+		for c = 1, 3 do
+			local rows = math.ceil(count / c)
+			local fit = math.floor((avail - (rows - 1) * GAP) / rows)
+			local need = if c == 1 then 66 elseif c == 2 then 46 else 0
+			if fit >= need then
+				cols = c
+				cell = fit
+				break
+			end
+		end
+		cell = math.clamp(cell, 44, if cols == 1 then 92 else 80)
+		local rows = math.ceil(count / cols)
+		local height = rows * cell + (rows - 1) * GAP
 		grid.CellSize = UDim2.fromOffset(cell, cell)
-		column.Size = UDim2.fromOffset(cols * cell + (cols - 1) * 10, rows * cell + (rows - 1) * 10)
+		column.Size = UDim2.fromOffset(cols * cell + (cols - 1) * GAP, height)
+		-- 쓸 수 있는 칸의 가운데 (위아래 여백 안)
+		local centerY = topMargin + avail / 2
+		column.Position = UDim2.new(0, 10, 0, math.floor(math.max(topMargin + height / 2, centerY)))
 	end
 	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout)
 	layout()
@@ -267,14 +351,18 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 	end)
 end
 
-function Hud.Update(snap: State.Snapshot)
-	local coins = tonumber(snap.Coins) or 0
+-- 코인 / 금고 / 초당 수익 (CoinSync 와 전체 스냅샷 뒤에 State.OnCoins 로 불려요)
+function Hud.SetCoins(coins: number, _pending: number, income: number)
+	if not coinLabel then
+		return
+	end
 	if targetCoins < 0 then
 		coinValue.Value = coins
 		coinLabel.Text = Config.FormatNumber(coins)
 	elseif coins ~= targetCoins then
 		if coins > targetCoins then
-			UiKit.Bump(coinPill, 0.2)
+			-- 초당 수익처럼 조금씩 늘 때는 살짝만 통통
+			UiKit.Bump(coinPill, if coins - targetCoins > math.max(1, targetCoins * 0.05) then 0.2 else 0.06)
 			UiKit.Tween(coinValue, 0.6, { Value = coins })
 		else
 			UiKit.Bump(coinPill, -0.08)
@@ -283,9 +371,22 @@ function Hud.Update(snap: State.Snapshot)
 	end
 	targetCoins = coins
 
+	local shown = math.floor(income * 10 + 0.5) / 10
+	incomeLabel.Text = "💰 +" .. UiKit.IncomeText(shown) .. "/초"
+	if lastIncome >= 0 and shown > lastIncome then
+		UiKit.Bump(incomePill, 0.2)
+	end
+	lastIncome = shown
+
+	updatePending()
+	refreshRebirth()
+end
+
+-- 전체 스냅샷: 펫 수, 환생 버튼 (코인은 SetCoins 가 해요)
+function Hud.Update(snap: State.Snapshot)
 	local pets = 0
 	for _, item in snap.Items do
-		if item.Kind == "Pet" then
+		if type(item) == "table" and item.Kind == "Pet" then
 			pets += 1
 		end
 	end
@@ -294,27 +395,7 @@ function Hud.Update(snap: State.Snapshot)
 		UiKit.Bump(pawPill, 0.25)
 	end
 	lastPets = pets
-
-	-- 초당 수익
-	local income = math.floor(tonumber(snap.Income) or 0)
-	incomeLabel.Text = "💰 +" .. Config.FormatNumber(income) .. "/초"
-	if lastIncome >= 0 and income > lastIncome then
-		UiKit.Bump(incomePill, 0.2)
-	end
-	lastIncome = income
-
-	-- 환생 비용 (살 수 있으면 민트색으로)
-	local rebirths = tonumber(snap.Rebirths) or 0
-	local cost = tonumber(snap.RebirthCost) or Config.RebirthCost(rebirths)
-	local maxed = rebirths >= Config.Rebirth.MaxRebirths
-	local can = not maxed and coins >= cost
-	rebirthPillLabel.Text = if maxed then "최대 ✅" else "💰 " .. Config.FormatNumber(cost)
-	rebirthPill.BackgroundColor3 = if can then C.Mint else C.Grey
-	if can and lastCanRebirth == false then
-		UiKit.Pop(rebirthPill, 0.4)
-		UiKit.Bump(rebirthButton, 0.15)
-	end
-	lastCanRebirth = can
+	refreshRebirth()
 end
 
 return Hud
