@@ -6,7 +6,7 @@
 --   Base    (Color3)  알 껍데기 색
 --   Accent  (Color3)  무늬 주인공 색 (없으면 Base 를 30% 어둡게)
 --   Accent2 (Color3?) 둘째 색. 없으면 무늬마다 기본값 (A2_DEFAULT): 보통 Accent 와 하양 반반,
---                     Gems/Crown = 금색, Flames = 노랑, Leaves = 진한 덩굴색, Bubbles/Snow/Candy = 하양
+--                     Gems = 금색 띠, Crown = 루비색 보석, Flames = 노랑, Leaves = 진한 덩굴색, Bubbles/Snow/Candy = 하양
 --   Pattern (string)  PATTERN_ORDER 의 16 가지 중 하나 (모르는 이름이면 경고 + Spots)
 --   Shine   (bool?)   반짝 코팅: 껍데기 Reflectance 0.18 + 왼쪽 위 하얀 광택 줄/점 (파트 2)
 --   Glow    (bool?)   네온 띠 1줄 + 껍데기에 은은한 PointLight("Glow") + 별/보석/불꽃 같은 조각이 네온
@@ -361,28 +361,28 @@ return function(Kit, _PET_BUILDERS, _EGG_BUILDERS)
 		end
 	end
 
-	-- 왕관: 꼭대기 금관 (Accent2, 기본 금색) + 뾰족 5개 + 끝 보석 (Accent) + 껍데기에 Accent 점 8개
+	-- 왕관: 꼭대기 금속 왕관 (Accent → 금색 왕관이면 Accent 를 금색으로) + 뾰족 5개 + 보석/껍데기 점 8개 (Accent2)
 	P.Crown = function(k)
 		local b = k.b
 		local rc, hc = 0.47, 0.2
 		local yb = AY * math.sqrt(1 - ((rc - 0.03) / AX) ^ 2) -- 띠 아랫면 (껍데기 속)
 		local cy = EGG_C.Y + yb + hc / 2
-		local base = addPart(b, "Crown", "Cyl", V(hc, rc * 2, rc * 2), CFrame.new(EGG_C.X, cy, EGG_C.Z) * rot(math.pi / 2), k.a2, METAL)
+		local base = addPart(b, "Crown", "Cyl", V(hc, rc * 2, rc * 2), CFrame.new(EGG_C.X, cy, EGG_C.Z) * rot(math.pi / 2), k.a1, METAL)
 		base.Reflectance = 0.25
 		for i = 0, 4 do
 			local az = HERO + i * TAU / 5
 			local dir = V(math.sin(az), 0, -math.cos(az))
 			local foot = V(EGG_C.X, cy + hc / 2 - 0.03, EGG_C.Z) + dir * (rc - 0.04)
 			local fr = frameUp(foot, (Vector3.yAxis + dir * 0.18).Unit, dir)
-			tri(b, "Crown", fr, 0.3, 0.3, 0.07, k.a2, METAL)
-			ell(b, "CrownJewel", V(0.11, 0.11, 0.11), fr * CFrame.new(0, 0.3, 0), k.a1, k.neon)
+			tri(b, "Crown", fr, 0.3, 0.3, 0.07, k.a1, METAL)
+			ell(b, "CrownJewel", V(0.11, 0.11, 0.11), fr * CFrame.new(0, 0.3, 0), k.a2, k.neon)
 		end
 		local dir = V(math.sin(HERO), 0, -math.cos(HERO))
 		local jp = V(EGG_C.X, cy, EGG_C.Z) + dir * (rc + 0.005)
-		ell(b, "CrownJewel", V(0.15, 0.15, 0.08), CFrame.lookAt(jp, jp + dir), k.a1, k.neon)
+		ell(b, "CrownJewel", V(0.15, 0.15, 0.08), CFrame.lookAt(jp, jp + dir), k.a2, k.neon)
 		for i, s in spread(8, -0.85, 0.7, HERO + 0.4) do
 			local d = if i % 2 == 0 then 0.2 else 0.26
-			stick(b, "Dot", at(s[1], s[2]), d, d, if i % 2 == 0 then k.a1:Lerp(WHITE, 0.3) else k.a1)
+			stick(b, "Dot", at(s[1], s[2]), d, d, if i % 2 == 0 then k.a2:Lerp(WHITE, 0.3) else k.a2)
 		end
 	end
 
@@ -547,7 +547,7 @@ return function(Kit, _PET_BUILDERS, _EGG_BUILDERS)
 			return GOLD
 		end,
 		Crown = function(_)
-			return GOLD
+			return RGB(255, 85, 130) -- 루비 보석
 		end,
 		Flames = function(_)
 			return RGB(255, 228, 95)

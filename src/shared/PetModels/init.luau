@@ -2112,13 +2112,18 @@ function PetModels.HasAccessory(accId: string): boolean
 end
 
 function PetModels.BuildEgg(eggId: string): Model
-	local fn = eggBuilder(eggId)
-	if not fn then
+	local fn: (Builder) -> () = EGG_BUILDERS.Basic
+	local found = eggBuilder(eggId)
+	if found then
+		fn = found
+	else
 		warn("[PetModels] 알 수 없는 알: " .. tostring(eggId))
-		fn = EGG_BUILDERS.Basic
 	end
 	local b = newBuilder(eggId)
-	local ok, err = pcall(fn, b)
+	local ok, err = pcall(function(): any
+		fn(b)
+		return nil
+	end)
 	if not ok then
 		-- 빌더 오류(잘못된 Look 등)면 기본 알로 대신 보여줘요
 		warn("[PetModels] 알 만들기 오류 (" .. tostring(eggId) .. "): " .. tostring(err))
