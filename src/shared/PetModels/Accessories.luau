@@ -226,8 +226,10 @@ return function(Kit, PET_BUILDERS, EGG_BUILDERS, ACC_BUILDERS)
 		-- 늘어진 끝: 가슴(fit.chest) 앞으로 지나가게 앞으로 기울여요
 		local lean = math.clamp(math.atan2(knot.Z - (f.chest.Z - 0.1 * S), 0.6 * S), 0, 0.8)
 		local tf = CFrame.new(knot) * CFrame.Angles(lean, 0, -0.12)
-		ell(b, "ScarfEnd", V(0.26, 0.62, 0.1) * S, tf * CFrame.new(0, -0.32 * S, 0), RED)
-		ell(b, "ScarfStripe", V(0.27, 0.07, 0.11) * S, tf * CFrame.new(0, -0.44 * S, -0.004 * S), WT)
+		-- 바닥에 닿지 않게 길이를 줄여요 (낮은 펫)
+		local len = math.clamp(f.drop + knot.Y - 0.06 * S, 0.24 * S, 0.62 * S)
+		ell(b, "ScarfEnd", V(0.26 * S, len, 0.1 * S), tf * CFrame.new(0, -len * 0.52, 0), RED)
+		ell(b, "ScarfStripe", V(0.27, 0.07, 0.11) * S, tf * CFrame.new(0, -len * 0.7, -0.004 * S), WT)
 	end
 
 	-- 금메달: 목에 두른 파란 리본 + 가슴 앞 금 원판
@@ -236,6 +238,7 @@ return function(Kit, PET_BUILDERS, EGG_BUILDERS, ACC_BUILDERS)
 		local BLUE = RGB(60, 120, 230)
 		local c = f.ring
 		local dc = f.chest + V(0, 0.02 * S, -0.05 * S)
+		dc = V(dc.X, math.max(dc.Y, -f.drop + 0.24 * S), dc.Z) -- 바닥 위에
 		local disk = coin(b, "MedalDisc", 0.42 * S, 0.07 * S, CFrame.new(dc), GOLD, METAL)
 		disk.Reflectance = 0.3
 		coin(b, "MedalStar", 0.24 * S, 0.08 * S, CFrame.new(dc + V(0, 0, -0.01 * S)), RGB(255, 235, 140), METAL)

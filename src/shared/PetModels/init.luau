@@ -959,7 +959,7 @@ export type AccFit = {
 	ring: Vector3, -- Neck: 목 고리 중심
 	chest: Vector3, -- Neck: 가슴 앞면 (메달 원판 자리)
 	neck: Vector3, -- Back: 목 뒤 (망토 윗변)
-	drop: number, -- Back: 앵커에서 아래로 늘어뜨릴 수 있는 길이 (바닥 위까지)
+	drop: number, -- Back/Neck: 앵커에서 아래로 늘어뜨릴 수 있는 길이 (바닥/펫 맨 아래까지)
 	opaque: boolean, -- 유리 헬멧 안이면 true (반투명 파트를 불투명하게 바꿔요)
 }
 
@@ -1452,15 +1452,17 @@ local function applyTier(model: Model, tier: number)
 			elseif vis.Tint then
 				d.Color = d.Color:Lerp(vis.Tint, vis.TintAlpha or 0.7)
 			end
-			-- 네온(빛나는 장식)과 유리(헬멧 등)는 재질을 그대로 둬요
-			if vis.Material and d.Material ~= Enum.Material.Neon and d.Material ~= Enum.Material.Glass then
+			-- 네온(빛나는 장식), 유리, 이미 반투명한 파트(젤리 몸 등)는 재질/투명도를 그대로 둬요
+			-- (겹친 반투명 파트를 유리로 바꾸면 서로 안 보이게 돼요)
+			local keepLook = d.Material == Enum.Material.Neon or d.Material == Enum.Material.Glass or d.Transparency > 0.05
+			if vis.Material and not keepLook then
 				d.Material = vis.Material
 			end
 			if vis.Reflectance then
 				d.Reflectance = math.max(d.Reflectance, vis.Reflectance)
 			end
-			if vis.Transparency then
-				d.Transparency = math.max(d.Transparency, vis.Transparency)
+			if vis.Transparency and not keepLook then
+				d.Transparency = vis.Transparency
 			end
 		end
 	end
@@ -1536,8 +1538,14 @@ local APPENDAGE = {
 -- 모자 밑에 깔려도 괜찮은 머리 위 장식 (귀/털)
 local SOFT_TOP = { "Ear", "Tuft", "Mane", "Hair", "Fluff", "Bang", "Speck" }
 local NOSES = { "Nose", "Snout", "Beak", "Muzzle" }
--- 모자 자리 후보: 머리 깊이에 대한 앞(-)/뒤(+) 비율. 처음 것이 가려지면 다음 자리
-local HEAD_TRIES = { -0.12, -0.28, 0.1, -0.42, 0.24 }
+-- 모자 자리 후보 { 앞(-)/뒤(+) = 머리 깊이 비율, 옆 = 머리 폭 비율 }. 처음 것이 가려지면 다음 자리
+-- (마지막 넷은 옆으로 살짝 비스듬히 쓴 모자: 꼭대기에 지느러미/물줄기가 있는 펫)
+local HEAD_TRIES = {
+	{ -0.12, 0 }, { -0.28, 0 }, { 0.1, 0 }, { -0.42, 0 }, { 0.24, 0 },
+	{ -0.12, 0.27 }, { -0.12, -0.27 }, { 0.1, 0.3 }, { 0.1, -0.3 },
+}
+-- 머리 옷 밑면 반지름 (크기 1 기준). 앞으로 비켜 앉을 때 눈을 덮는지 볼 때 써요
+local HEAD_FOOT = { PartyHat = 0.47, FlowerCrown = 0.64, TopHat = 0.58, WizardHat = 0.75, Crown = 0.56 }
 
 local function makeProbe(model: Model): Probe?
 	local pivot = model:GetPivot()
@@ -1667,9 +1675,15 @@ local function topY(list: { Shape }, pr: Probe, x: number, z: number): (number?,
 end
 
 -- 머리 위: 가장 위의 큰 몸 파트 (헬멧이면 헬멧 위). 뿔/별 같은 장식에 가리면 앞/뒤로 비켜요
-local function headAnchor(pr: Probe, fit: AccFit): (CFrame, BasePart)
+local function headAnchor(pr: Probe, fit: AccFit, foot: number): (CFrame, BasePart)
 	local ref = pr.head or pr.body
 	local cands = solidShapes(pr, 0.6, 0.3)
+	local eyes: { Shape } = {}
+	for _, o in pr.shapes do
+		if o.part.Name == "Eye" or o.part.Name == "Shine" then
+			table.insert(eyes, o)
+		end
+	end
 	if #cands == 0 then
 		cands = pr.shapes
 	end
@@ -1689,8 +1703,9 @@ local function headAnchor(pr: Probe, fit: AccFit): (CFrame, BasePart)
 	local bestCf: CFrame? = nil
 	local bestPart: BasePart? = nil
 	local bestS, bestScore = 1, math.huge
-	for i, f in HEAD_TRIES do
-		local x, z = cx, c.Z + f * depth
+	for i, try in HEAD_TRIES do
+		local f = try[1]
+		local x, z = cx + try[2] * pr.refW, c.Z + f * depth
 		local y, hit = topY(cands, pr, x, z)
 		if y and hit then
 			-- 크기: 앉은 파트 폭 (헬멧이면 헬멧), 머리 없는 펫은 몸 폭보다 작아지지 않게
@@ -1718,6 +1733,27 @@ local function headAnchor(pr: Probe, fit: AccFit): (CFrame, BasePart)
 				local _, mx = dims(o)
 				if o ~= hit and not KEEP_COLOR[o.part.Name] and not hasName(o.part.Name, SOFT_TOP) and mx >= 0.1 * pr.refW then
 					score += overlapVol(o.lo, o.hi, zlo, zhi)
+				end
+			end
+			-- 밑면 테두리 점들이 눈(조금 넓힌 타원체)에 들어가면 큰 벌점
+			local R = foot * s
+			local pad = V(0.04, 0.04, 0.04)
+			for _, e in eyes do
+				local hit2 = false
+				for k = 0, 11 do
+					local a = k * math.pi / 6
+					for _, rr in { R, R * 0.6 } do
+						for _, hy in { -0.12 * s, 0.1 * s, 0.3 * s, 0.5 * s } do
+							local wp = cf * V(math.sin(a) * rr, hy, -math.cos(a) * rr)
+							local q = e.cf:PointToObjectSpace(wp) / (e.half + pad)
+							if q:Dot(q) < 1 then
+								hit2 = true
+							end
+						end
+					end
+				end
+				if hit2 then
+					score += 0.05
 				end
 			end
 			if score < 1e-4 then
@@ -1819,11 +1855,12 @@ local function neckAnchor(pr: Probe, fit: AccFit): (CFrame, BasePart)
 	local H = pr.hi.Y - pr.lo.Y
 	local y = neckHeight(pr)
 	local headless = y == nil
+	local mouthLo = math.huge
 	if not y then
 		-- 머리가 따로 없는 펫: 입 아래 → 눈 아래 → 40 % 높이 (나비넥타이 윗변이 입에 안 닿게)
-		local mouthLo, eyeSum, eyeN = math.huge, 0, 0
+		local eyeSum, eyeN = 0, 0
 		for _, sh in pr.shapes do
-			if sh.part.Name == "Mouth" and math.abs(sh.cf.Position.X - cx) < 0.5 * pr.refW then
+			if (sh.part.Name == "Mouth" or sh.part.Name == "Tongue") and math.abs(sh.cf.Position.X - cx) < 0.5 * pr.refW then
 				mouthLo = math.min(mouthLo, sh.lo.Y)
 			elseif sh.part.Name == "Eye" then
 				eyeSum += sh.cf.Position.Y
@@ -1838,8 +1875,26 @@ local function neckAnchor(pr: Probe, fit: AccFit): (CFrame, BasePart)
 			y = pr.lo.Y + 0.4 * H
 		end
 	end
-	local ny: number = math.max(y or 0, pr.lo.Y + 0.22 * H)
-	local zF = frontZ(solid, pr, cx, ny) or pr.lo.Z
+	local ny: number = math.max(y or 0, pr.lo.Y + 0.1 * H)
+	-- 그 높이 앞쪽에 몸이 없으면 (해파리 갓 바로 아래 등) 위로 훑어서 가장 앞으로 나온 높이에 걸어요
+	-- (입이 있으면 넥타이 윗변이 입 아래에 머무는 데까지만)
+	local zF0 = frontZ(solid, pr, cx, ny)
+	if not zF0 then
+		local capY = if mouthLo < math.huge then mouthLo - 0.02 - 0.2 * 0.6 else ny + 0.35 * u
+		local bestY, bestZ = ny, math.huge
+		local yy = ny + 0.03 * u
+		while yy <= capY and yy < pr.hi.Y do
+			local z = frontZ(solid, pr, cx, yy)
+			if z and z < bestZ - 0.02 then
+				bestY, bestZ = yy, z
+			end
+			yy += 0.03 * u
+		end
+		if bestZ < math.huge then
+			ny, zF0 = bestY, bestZ
+		end
+	end
+	local zF = zF0 or pr.lo.Z
 	local zB = backZ(solid, pr, cx, ny) or pr.hi.Z
 	local zc = (zF + zB) * 0.5
 	local pL = hitAt(solid, V(pr.lo.X - 5, ny, zc), Vector3.xAxis)
@@ -1851,6 +1906,10 @@ local function neckAnchor(pr: Probe, fit: AccFit): (CFrame, BasePart)
 	local s = math.clamp(rx / 0.72, 0.6, 2)
 	if headless then
 		s = math.min(s, u)
+		if mouthLo < math.huge then
+			-- 넥타이 윗변 (0.2 s) 이 입을 덮지 않게
+			s = math.clamp(math.min(s, (mouthLo - 0.02 - ny) / 0.2), 0.6, 2)
+		end
 	end
 	local pos = V(cx, ny, zF - 0.02 * s)
 	fit.s = s
@@ -1866,6 +1925,7 @@ local function neckAnchor(pr: Probe, fit: AccFit): (CFrame, BasePart)
 	local cz = frontZ(solid, pr, cx, cy) or zF
 	cz = math.min(cz, zF + 0.12 * s)
 	fit.chest = V(0, cy - ny, cz - pos.Z)
+	fit.drop = math.max(ny - pr.lo.Y, 0.1)
 	return CFrame.new(pos), onPart
 end
 
@@ -1950,7 +2010,7 @@ function PetModels.AttachAccessory(model: Model, accId: string): boolean
 	local fit = defaultFit(slot)
 	local anchor: CFrame, sitOn: BasePart
 	if slot == "Head" then
-		anchor, sitOn = headAnchor(pr, fit)
+		anchor, sitOn = headAnchor(pr, fit, HEAD_FOOT[accId] or 0.55)
 	elseif slot == "Face" then
 		anchor, sitOn = faceAnchor(pr, fit)
 	elseif slot == "Neck" then
