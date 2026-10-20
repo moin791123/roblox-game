@@ -28,33 +28,64 @@ Config.Rarities = {
 Config.RarityOrder = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret" }
 
 ----------------------------------------------------------------------
--- 지역 (맵). 순서대로 이어져 있고, 환생 MinRebirth 번 이상이면 들어갈 수 있어요.
--- 바닥 윗면은 어디나 y = 0. Size.Y = 땅 두께 (윗면 y = 0). 지역 2~8 은 서쪽 입구(Gate)로 들어와요.
--- 길(트레일)은 z = 0 을 따라 동쪽으로 이어져요: 지역 k-1 의 동쪽 끝 → 길 50 → 지역 k 의 서쪽 끝.
+-- 지역 (맵). v4: 숲 마을(집 6채 + 로비 + 컨베이어)이 가운데 있고, 지역 2~8 은 그 둘레의 섬이에요.
+-- 환생 MinRebirth 번 이상이면 들어갈 수 있어요. 바닥 윗면은 어디나 y = 0. Size.Y = 땅 두께 (윗면 y = 0).
+-- 섬마다 짧은 길(Trail, 30 스터드)이 숲 마을 가장자리에서 바로 시작하고, 길이 시작하는 곳(숲 마을 쪽 끝)에
+-- 입구 문(Gate)이 있어서 집 앞에서도 잠긴 문("🔒 환생 N회")이 다 보여요.
+-- 로비(서쪽, 스폰이 +X 를 봐요)에서 보면 왼쪽 뒤부터 시계 방향으로 한 바퀴:
+--   2 호수 (서쪽 왼편) → 3 정글 (왼쪽) → 4 겨울 산 (왼쪽 앞) → 5 바다 (정면 끝) → 6 캔디 랜드 (오른쪽 앞)
+--   → 7 구름 왕국 (오른쪽) → 8 우주 (서쪽 오른편)
+-- 섬 안: 입구 → 스폰 → 큰길. 컨베이어는 큰길 옆으로 나란히 (입구 쪽에서 알이 나와요), 코인 들판은 큰길 둘레.
 ----------------------------------------------------------------------
-local TRAIL_LENGTH = 50
+local TRAIL_LENGTH = 30 -- 숲 마을 가장자리 → 섬 입구
 local TRAIL_WIDTH = 16
-local ISLAND = 200 -- 지역 2~8 섬 한 변
+local ISLAND = 160 -- 지역 2~8 섬 한 변
+local BELT_LENGTH = 100 -- 지역 2~8 컨베이어 길이
+local BELT_FROM = 26 -- 섬 입구에서 컨베이어 시작(알 슈트)까지
+local BELT_EDGE = 38 -- 컨베이어와 섬 옆 가장자리 사이 (컨베이어 뒤 장식 자리)
+local SPAWN_IN = 16 -- 섬 입구에서 스폰까지
+local HOME_CENTER = V3(-22.5, 0, 0)
 
--- 지역 k(2~8) 의 중심 x
-local function zoneX(k: number): number
-	return 285 + (k - 2) * 250
-end
-
--- 지역 2~8 공통 배치 (중심 cx 기준)
-local function island(k: number, def: { [string]: any }): { [string]: any }
-	local cx = zoneX(k)
-	def.Center = V3(cx, 0, 0)
+-- 지역 2~8 섬 배치. o.Mouth = 숲 마을 가장자리의 길 시작점, o.Dir = 섬 쪽 방향 (X 나 Z 축), o.Center = 섬 가운데.
+-- 섬 안 좌표: u = 섬 입구에서 Dir 쪽으로, v = 길 중심선에서 Side 쪽으로 (Side = Dir 을 90° 돌린 방향)
+local function island(def: { [string]: any }, o: { [string]: any }): { [string]: any }
+	local dir: Vector3 = o.Dir
+	local side = V3(-dir.Z, 0, dir.X)
+	local mouth: Vector3 = o.Mouth
+	local entry = mouth + dir * TRAIL_LENGTH -- 섬 입구 (섬 가장자리 위, 길 끝)
+	local function at(u: number, v: number): Vector3
+		return entry + dir * u + side * v
+	end
+	local half = ISLAND / 2
+	local vc = (o.Center - entry):Dot(side) -- 섬 가운데의 v
+	-- 컨베이어는 길에서 더 넓은 쪽에 (똑같으면 숲 마을 반대쪽)
+	local roomPos, roomNeg = vc + half, half - vc
+	local beltSide = if roomPos > roomNeg + 1
+		then 1
+		elseif roomNeg > roomPos + 1 then -1
+		elseif (HOME_CENTER - entry):Dot(side) > 0 then -1
+		else 1
+	local vb = vc + beltSide * (half - BELT_EDGE)
+	-- 코인 들판: 컨베이어 앞(길 쪽) ~ 반대편 가장자리, 입구 12 ~ 끝 30 (맨 끝 띠와 컨베이어 뒤는 큰 장식 자리)
+	local f1 = at(12, vb - beltSide * 12)
+	local f2 = at(ISLAND - 30, vc - beltSide * (half - 10))
+	def.Center = o.Center
 	def.Size = V3(ISLAND, 4, ISLAND)
-	def.ConveyorStart = V3(cx - 60, 0, -55)
-	def.ConveyorEnd = V3(cx + 60, 0, -55)
-	def.FieldMin = V3(cx - 92, 0, -40)
-	def.FieldMax = V3(cx + 92, 0, 92)
-	def.Spawn = V3(cx - 84, 0, 0)
-	-- 입구 문: 섬 서쪽 끝 바로 앞 길 위 (환생이 모자란 사람만 클라이언트에서 막혀요)
-	def.Gate = { CFrame = CFrame.new(cx - ISLAND / 2 - 2, 8, 0), Size = V3(2, 16, TRAIL_WIDTH + 4) }
+	def.ConveyorStart = at(BELT_FROM, vb)
+	def.ConveyorEnd = at(BELT_FROM + BELT_LENGTH, vb)
+	def.FieldMin = V3(math.min(f1.X, f2.X), 0, math.min(f1.Z, f2.Z))
+	def.FieldMax = V3(math.max(f1.X, f2.X), 0, math.max(f1.Z, f2.Z))
+	def.Spawn = at(SPAWN_IN, 0)
+	def.SpawnLook = dir -- 스폰/순간이동하면 섬 안쪽을 봐요
+	-- 길: From(숲 마을 가장자리) → To(섬 입구). Side/BeltSide 는 WorldBuilder 가 섬 안 길을 그릴 때 써요
+	def.Trail = { From = mouth, To = entry, Dir = dir, Side = side, BeltSide = beltSide }
+	-- 입구 문: 길이 시작하는 곳 (숲 마을 쪽 끝). 환생이 모자란 사람만 클라이언트에서 막혀요
+	local gatePos = mouth + dir * 1.5 + V3(0, 8, 0)
+	def.Gate = { CFrame = CFrame.lookAt(gatePos, gatePos + dir), Size = V3(TRAIL_WIDTH + 4, 16, 2) }
 	return def
 end
+
+local WEST, EAST, NORTH, SOUTH = V3(-1, 0, 0), V3(1, 0, 0), V3(0, 0, 1), V3(0, 0, -1)
 
 Config.Zones = {
 	{
@@ -63,8 +94,8 @@ Config.Zones = {
 		Emoji = "🌳",
 		MinRebirth = 0,
 		CoinMult = 1,
-		Center = V3(-22.5, 0, 0),
-		Size = V3(315, 4, 250), -- x -180..135, z -125..125 (집 6채 + 로비 + 컨베이어)
+		Center = HOME_CENTER,
+		Size = V3(315, 4, 250), -- x -180..135, z -125..125 (집 6채 + 로비 + 컨베이어). 둘레에 섬 7개
 		Palette = {
 			Ground = RGB(125, 210, 105),
 			Path = RGB(250, 232, 198),
@@ -73,15 +104,17 @@ Config.Zones = {
 			Sky = RGB(165, 215, 255),
 			Deco = { "Tree", "Flower", "Mushroom", "Bush", "Cloud" },
 		},
-		Eggs = { "Basic", "Forest" },
+		Eggs = { "Basic", "Flower", "Mushroom", "Forest", "Fairy", "Spirit" },
 		ConveyorStart = V3(-56, 0, 0),
 		ConveyorEnd = V3(56, 0, 0),
 		FieldMin = V3(-110, 0, -42),
 		FieldMax = V3(110, 0, 42),
 		Spawn = V3(-140, 0, 0), -- = Layout.LobbySpawn
+		SpawnLook = EAST,
 		Gate = nil, -- 첫 지역은 문이 없어요
+		Trail = nil,
 	},
-	island(2, {
+	island({
 		Id = "Lake",
 		Name = "호수",
 		Emoji = "🦆",
@@ -96,9 +129,9 @@ Config.Zones = {
 			Sky = RGB(175, 225, 255),
 			Deco = { "Pond", "LilyPad", "Reed", "Rock", "Tree" },
 		},
-		Eggs = { "Lake", "Crystal" },
-	}),
-	island(3, {
+		Eggs = { "Lake", "Lily", "Bubble", "Moonlight", "Crystal" },
+	}, { Mouth = V3(-180, 0, -80), Dir = WEST, Center = V3(-290, 0, -90) }),
+	island({
 		Id = "Jungle",
 		Name = "정글",
 		Emoji = "🌴",
@@ -112,9 +145,9 @@ Config.Zones = {
 			Sky = RGB(190, 235, 200),
 			Deco = { "PalmTree", "BigLeaf", "Vine", "Rock", "Flower" },
 		},
-		Eggs = { "Jungle", "Spotted" },
-	}),
-	island(4, {
+		Eggs = { "Jungle", "Leaf", "Spotted", "Tropical", "Tiger" },
+	}, { Mouth = V3(-150, 0, -125), Dir = SOUTH, Center = V3(-105, 0, -235) }),
+	island({
 		Id = "Snow",
 		Name = "겨울 산",
 		Emoji = "🏔",
@@ -128,9 +161,9 @@ Config.Zones = {
 			Sky = RGB(215, 230, 250),
 			Deco = { "PineTree", "SnowPile", "IceCrystal", "Snowman", "Rock" },
 		},
-		Eggs = { "Snow", "Twilight" },
-	}),
-	island(5, {
+		Eggs = { "Snow", "Ice", "Snowflake", "Aurora", "Twilight" },
+	}, { Mouth = V3(120, 0, -125), Dir = SOUTH, Center = V3(125, 0, -235) }),
+	island({
 		Id = "Ocean",
 		Name = "바다",
 		Emoji = "🌊",
@@ -145,9 +178,9 @@ Config.Zones = {
 			Sky = RGB(160, 215, 255),
 			Deco = { "PalmTree", "Shell", "Starfish", "Coral", "Umbrella" },
 		},
-		Eggs = { "Ocean", "Pearl" },
-	}),
-	island(6, {
+		Eggs = { "Ocean", "Shell", "Coral", "Pearl", "DragonPalace" },
+	}, { Mouth = V3(135, 0, 0), Dir = EAST, Center = V3(245, 0, 0) }),
+	island({
 		Id = "Candy",
 		Name = "캔디 랜드",
 		Emoji = "🍭",
@@ -161,9 +194,9 @@ Config.Zones = {
 			Sky = RGB(255, 220, 240),
 			Deco = { "Lollipop", "CandyCane", "Cupcake", "GumDrop", "Donut" },
 		},
-		Eggs = { "Candy", "Rainbow" },
-	}),
-	island(7, {
+		Eggs = { "Candy", "Jelly", "Lollipop", "Cake", "Rainbow" },
+	}, { Mouth = V3(120, 0, 125), Dir = NORTH, Center = V3(125, 0, 235) }),
+	island({
 		Id = "Cloud",
 		Name = "구름 왕국",
 		Emoji = "☁️",
@@ -177,9 +210,9 @@ Config.Zones = {
 			Sky = RGB(230, 225, 255),
 			Deco = { "Cloud", "Castle", "RainbowArch", "Star", "Pillar" },
 		},
-		Eggs = { "Cloud", "Golden" },
-	}),
-	island(8, {
+		Eggs = { "Cloud", "Breeze", "Feather", "Angel", "Golden" },
+	}, { Mouth = V3(-150, 0, 125), Dir = NORTH, Center = V3(-105, 0, 235) }),
+	island({
 		Id = "Space",
 		Name = "우주",
 		Emoji = "🚀",
@@ -193,8 +226,8 @@ Config.Zones = {
 			Sky = RGB(25, 20, 60),
 			Deco = { "Crater", "Planet", "SpaceCrystal", "Rocket", "Star" },
 		},
-		Eggs = { "Space", "Starlight" },
-	}),
+		Eggs = { "Space", "Moon", "Planet", "Comet", "Starlight" },
+	}, { Mouth = V3(-180, 0, 80), Dir = WEST, Center = V3(-290, 0, 90) }),
 }
 Config.MaxZone = #Config.Zones
 
@@ -309,94 +342,250 @@ Config.PetOrder = {
 }
 
 ----------------------------------------------------------------------
--- 알. 지역마다 2개: 싼 "지역 알"(Premium = false) + 비싼 알(Premium = true).
--- SpawnWeight = 그 지역 컨베이어 안에서 나오는 비율. HatchTime = 부화까지 초 (환생하면 빨라짐).
--- Pets = 부화 확률 가중치 (합이 대략 100 → %로 읽으면 돼요). 비밀 펫은 자기 지역 알에서만 아주 드물게.
--- MinRebirth 는 지역 MinRebirth 로 아래에서 채워요 (예전 코드 호환용). ★ = v3 새 알
+-- 알. v4: 지역마다 5개 (숲 마을은 6개) 의 "사다리": 싼 알은 늘 나오고, 비싸고 반짝이는 알은 가끔 나와요.
+-- SpawnWeight = 그 지역 컨베이어 안에서 나오는 비율 (약 40 → 24 → 11 → 5 → 2). HatchTime = 부화까지 초 (환생하면 빨라짐).
+-- Pets = 부화 확률 가중치 (합 100 → %로 읽으면 돼요). 사다리를 올라갈수록 그 지역의 더 좋은 펫 쪽으로 밀려요.
+-- 비밀 펫은 자기 지역의 맨 위 알 2개에서만 (우주 고래는 별빛 알에서만 0.25%).
+-- Look = 손으로 만든 모델이 없는 새 알의 모양 (PetModels/EggsPattern.luau 가 읽어요):
+--   { Base, Accent, Accent2?, Pattern = "Plain"|"Spots"|"Stripes"|"Zigzag"|"Stars"|"Hearts"|"Dots"|"Swirl"|"Gems"|"Crown"|
+--     "Flames"|"Leaves"|"Bubbles"|"Snow"|"Candy"|"Planets", Shine?, Glow? }
+-- 아래에서 자동으로 채워요: MinRebirth (= 지역 MinRebirth), Rung (지역 안 사다리 칸, 1 = 제일 싼 알),
+-- Rungs (그 지역 알 수), Premium (위 2칸 = 좋은 알: 큰 간판·반짝임·알림·빛기둥). ★ v4 = 새 알
+-- 가격·확률은 scratchpad 의 v4/sim4.py (eggs4.py) 로 맞췄어요.
 ----------------------------------------------------------------------
 Config.Eggs = {
 	-- 1. 숲 마을
 	Basic = {
-		Name = "기본 알", Rarity = "Common", Zone = 1, Premium = false, Price = 50, HatchTime = 8, SpawnWeight = 80,
-		Pets = { Chick = 15, Bunny = 15, Hamster = 15, Piglet = 15, Puppy = 22, Cat = 11, Owl = 5, Fox = 1.6, RainbowCat = 0.35, SpiritDeer = 0.05 },
+		Name = "기본 알", Rarity = "Common", Zone = 1, Price = 50, HatchTime = 8, SpawnWeight = 40,
+		Pets = { Chick = 17, Bunny = 17, Hamster = 16, Piglet = 16, Puppy = 27, Cat = 7 },
+	},
+	Flower = { -- ★ v4
+		Name = "꽃 알", Rarity = "Uncommon", Zone = 1, Price = 150, HatchTime = 10, SpawnWeight = 24,
+		Pets = { Chick = 7, Bunny = 7, Hamster = 9, Piglet = 9, Puppy = 32, Cat = 26, Owl = 8, Fox = 2 },
+		Look = { Base = RGB(255, 222, 236), Accent = RGB(255, 125, 175), Accent2 = RGB(255, 228, 95), Pattern = "Dots" },
+	},
+	Mushroom = { -- ★ v4
+		Name = "버섯 알", Rarity = "Rare", Zone = 1, Price = 500, HatchTime = 14, SpawnWeight = 12,
+		Pets = { Hamster = 4, Piglet = 4, Puppy = 22, Cat = 34, Owl = 26, Fox = 9, RainbowCat = 1 },
+		Look = { Base = RGB(240, 95, 95), Accent = RGB(255, 250, 242), Accent2 = RGB(255, 225, 200), Pattern = "Spots" },
 	},
 	Forest = {
-		Name = "숲속 알", Rarity = "Rare", Zone = 1, Premium = true, Price = 500, HatchTime = 20, SpawnWeight = 20,
-		Pets = { Puppy = 30, Cat = 30, Owl = 22, Fox = 12.5, RainbowCat = 5, SpiritDeer = 0.25 },
+		Name = "숲속 알", Rarity = "Epic", Zone = 1, Price = 1500, HatchTime = 20, SpawnWeight = 6,
+		Pets = { Puppy = 10, Cat = 28, Owl = 34, Fox = 22, RainbowCat = 6 },
+	},
+	Fairy = { -- ★ v4
+		Name = "요정 알", Rarity = "Legendary", Zone = 1, Price = 5000, HatchTime = 28, SpawnWeight = 3,
+		Pets = { Cat = 14, Owl = 34, Fox = 34, RainbowCat = 17.5, SpiritDeer = 0.5 },
+		Look = { Base = RGB(215, 192, 255), Accent = RGB(165, 245, 215), Accent2 = RGB(255, 225, 120), Pattern = "Stars", Shine = true },
+	},
+	Spirit = { -- ★ v4
+		Name = "정령 알", Rarity = "Mythic", Zone = 1, Price = 15000, HatchTime = 36, SpawnWeight = 1.5,
+		Pets = { Owl = 23, Fox = 42, RainbowCat = 33, SpiritDeer = 2 },
+		Look = { Base = RGB(205, 255, 228), Accent = RGB(110, 230, 160), Accent2 = RGB(255, 232, 140), Pattern = "Leaves", Shine = true, Glow = true },
 	},
 	-- 2. 호수
-	Lake = { -- ★
-		Name = "호수 알", Rarity = "Uncommon", Zone = 2, Premium = false, Price = 2000, HatchTime = 12, SpawnWeight = 80,
-		Pets = { Duck = 30, Frog = 30, Hedgehog = 22, Squirrel = 11, Raccoon = 5, Turtle = 1.6, Axolotl = 0.35, MoonKoi = 0.05 },
+	Lake = {
+		Name = "호수 알", Rarity = "Common", Zone = 2, Price = 2000, HatchTime = 12, SpawnWeight = 40,
+		Pets = { Duck = 35, Frog = 31, Hedgehog = 28, Squirrel = 6 },
+	},
+	Lily = { -- ★ v4
+		Name = "연꽃 알", Rarity = "Rare", Zone = 2, Price = 6000, HatchTime = 16, SpawnWeight = 24,
+		Pets = { Duck = 12, Frog = 12, Hedgehog = 32, Squirrel = 28, Raccoon = 13, Turtle = 3 },
+		Look = { Base = RGB(195, 235, 175), Accent = RGB(255, 165, 205), Accent2 = RGB(255, 240, 150), Pattern = "Leaves" },
+	},
+	Bubble = { -- ★ v4
+		Name = "물방울 알", Rarity = "Epic", Zone = 2, Price = 20000, HatchTime = 22, SpawnWeight = 11,
+		Pets = { Hedgehog = 16, Squirrel = 34, Raccoon = 32, Turtle = 15, Axolotl = 3 },
+		Look = { Base = RGB(150, 215, 250), Accent = RGB(240, 250, 255), Accent2 = RGB(100, 185, 245), Pattern = "Bubbles" },
+	},
+	Moonlight = { -- ★ v4
+		Name = "달빛 알", Rarity = "Legendary", Zone = 2, Price = 40000, HatchTime = 29, SpawnWeight = 5,
+		Pets = { Squirrel = 16, Raccoon = 36, Turtle = 32, Axolotl = 15.7, MoonKoi = 0.3 },
+		Look = { Base = RGB(60, 80, 165), Accent = RGB(255, 244, 185), Accent2 = RGB(215, 228, 255), Pattern = "Stars", Shine = true },
 	},
 	Crystal = {
-		Name = "크리스탈 알", Rarity = "Epic", Zone = 2, Premium = true, Price = 16000, HatchTime = 30, SpawnWeight = 20,
-		Pets = { Hedgehog = 30, Squirrel = 30, Raccoon = 22, Turtle = 12.5, Axolotl = 5, MoonKoi = 0.25 },
+		Name = "크리스탈 알", Rarity = "Mythic", Zone = 2, Price = 100000, HatchTime = 36, SpawnWeight = 2,
+		Pets = { Raccoon = 24, Turtle = 42, Axolotl = 33, MoonKoi = 1 },
 	},
 	-- 3. 정글
-	Jungle = { -- ★
-		Name = "정글 알", Rarity = "Rare", Zone = 3, Premium = false, Price = 24000, HatchTime = 15, SpawnWeight = 80,
-		Pets = { Monkey = 30, Parrot = 30, Koala = 22, Bear = 11, Lion = 5, Panda = 1.6, Peacock = 0.35, WhiteTiger = 0.05 },
+	Jungle = {
+		Name = "정글 알", Rarity = "Common", Zone = 3, Price = 24000, HatchTime = 15, SpawnWeight = 40,
+		Pets = { Monkey = 35, Parrot = 31, Koala = 28, Bear = 6 },
+	},
+	Leaf = { -- ★ v4
+		Name = "나뭇잎 알", Rarity = "Rare", Zone = 3, Price = 75000, HatchTime = 20, SpawnWeight = 24,
+		Pets = { Monkey = 12, Parrot = 12, Koala = 32, Bear = 28, Lion = 13, Panda = 3 },
+		Look = { Base = RGB(175, 228, 115), Accent = RGB(55, 145, 70), Accent2 = RGB(255, 210, 70), Pattern = "Leaves" },
 	},
 	Spotted = {
-		Name = "점박이 알", Rarity = "Epic", Zone = 3, Premium = true, Price = 200000, HatchTime = 40, SpawnWeight = 20,
-		Pets = { Koala = 30, Bear = 30, Lion = 22, Panda = 12.5, Peacock = 5, WhiteTiger = 0.25 },
+		Name = "점박이 알", Rarity = "Epic", Zone = 3, Price = 200000, HatchTime = 27, SpawnWeight = 11,
+		Pets = { Koala = 16, Bear = 34, Lion = 32, Panda = 15, Peacock = 3 },
+	},
+	Tropical = { -- ★ v4
+		Name = "열대 알", Rarity = "Legendary", Zone = 3, Price = 500000, HatchTime = 36, SpawnWeight = 5,
+		Pets = { Bear = 16, Lion = 36, Panda = 32, Peacock = 15.7, WhiteTiger = 0.3 },
+		Look = { Base = RGB(255, 175, 75), Accent = RGB(255, 85, 160), Accent2 = RGB(85, 200, 110), Pattern = "Zigzag", Shine = true },
+	},
+	Tiger = { -- ★ v4
+		Name = "호랑이 알", Rarity = "Mythic", Zone = 3, Price = 1200000, HatchTime = 45, SpawnWeight = 2,
+		Pets = { Lion = 24, Panda = 42, Peacock = 33, WhiteTiger = 1 },
+		Look = { Base = RGB(246, 248, 255), Accent = RGB(80, 100, 145), Accent2 = RGB(140, 215, 255), Pattern = "Stripes", Shine = true, Glow = true },
 	},
 	-- 4. 겨울 산
 	Snow = {
-		Name = "겨울 알", Rarity = "Rare", Zone = 4, Premium = false, Price = 300000, HatchTime = 18, SpawnWeight = 80,
-		Pets = { Penguin = 30, Seal = 30, SnowBunny = 22, Snowman = 11, PolarBear = 5, Reindeer = 1.6, FrostFox = 0.35, Yeti = 0.05 },
+		Name = "겨울 알", Rarity = "Common", Zone = 4, Price = 300000, HatchTime = 18, SpawnWeight = 40,
+		Pets = { Penguin = 35, Seal = 31, SnowBunny = 28, Snowman = 6 },
+	},
+	Ice = { -- ★ v4
+		Name = "얼음 알", Rarity = "Rare", Zone = 4, Price = 1000000, HatchTime = 24, SpawnWeight = 24,
+		Pets = { Penguin = 12, Seal = 12, SnowBunny = 32, Snowman = 28, PolarBear = 13, Reindeer = 3 },
+		Look = { Base = RGB(185, 228, 255), Accent = RGB(240, 250, 255), Accent2 = RGB(120, 190, 245), Pattern = "Zigzag" },
+	},
+	Snowflake = { -- ★ v4
+		Name = "눈꽃 알", Rarity = "Epic", Zone = 4, Price = 2500000, HatchTime = 32, SpawnWeight = 11,
+		Pets = { SnowBunny = 16, Snowman = 34, PolarBear = 32, Reindeer = 15, FrostFox = 3 },
+		Look = { Base = RGB(236, 245, 255), Accent = RGB(105, 175, 245), Accent2 = RGB(255, 255, 255), Pattern = "Snow" },
+	},
+	Aurora = { -- ★ v4
+		Name = "오로라 알", Rarity = "Legendary", Zone = 4, Price = 6000000, HatchTime = 43, SpawnWeight = 5,
+		Pets = { Snowman = 16, PolarBear = 36, Reindeer = 32, FrostFox = 15.7, Yeti = 0.3 },
+		Look = { Base = RGB(40, 70, 115), Accent = RGB(120, 255, 190), Accent2 = RGB(200, 140, 255), Pattern = "Swirl", Shine = true },
 	},
 	Twilight = {
-		Name = "황혼 알", Rarity = "Legendary", Zone = 4, Premium = true, Price = 2400000, HatchTime = 50, SpawnWeight = 20,
-		Pets = { SnowBunny = 30, Snowman = 30, PolarBear = 22, Reindeer = 12.5, FrostFox = 5, Yeti = 0.25 },
+		Name = "황혼 알", Rarity = "Mythic", Zone = 4, Price = 15000000, HatchTime = 54, SpawnWeight = 2,
+		Pets = { PolarBear = 24, Reindeer = 42, FrostFox = 33, Yeti = 1 },
 	},
 	-- 5. 바다
 	Ocean = {
-		Name = "바다 알", Rarity = "Epic", Zone = 5, Premium = false, Price = 3000000, HatchTime = 22, SpawnWeight = 80,
-		Pets = { Crab = 30, Jellyfish = 30, Octopus = 22, BabyShark = 11, Dolphin = 5, Narwhal = 1.6, MermaidCat = 0.35, DragonKing = 0.05 },
+		Name = "바다 알", Rarity = "Common", Zone = 5, Price = 3000000, HatchTime = 22, SpawnWeight = 40,
+		Pets = { Crab = 35, Jellyfish = 31, Octopus = 28, BabyShark = 6 },
 	},
-	Pearl = { -- ★
-		Name = "진주 알", Rarity = "Legendary", Zone = 5, Premium = true, Price = 24000000, HatchTime = 60, SpawnWeight = 20,
-		Pets = { Octopus = 30, BabyShark = 30, Dolphin = 22, Narwhal = 12.5, MermaidCat = 5, DragonKing = 0.25 },
+	Shell = { -- ★ v4
+		Name = "조개 알", Rarity = "Rare", Zone = 5, Price = 10000000, HatchTime = 30, SpawnWeight = 24,
+		Pets = { Crab = 12, Jellyfish = 12, Octopus = 32, BabyShark = 28, Dolphin = 13, Narwhal = 3 },
+		Look = { Base = RGB(255, 218, 192), Accent = RGB(255, 140, 120), Accent2 = RGB(255, 245, 225), Pattern = "Stripes" },
+	},
+	Coral = { -- ★ v4
+		Name = "산호 알", Rarity = "Epic", Zone = 5, Price = 25000000, HatchTime = 40, SpawnWeight = 11,
+		Pets = { Octopus = 16, BabyShark = 34, Dolphin = 32, Narwhal = 15, MermaidCat = 3 },
+		Look = { Base = RGB(255, 132, 145), Accent = RGB(255, 195, 105), Accent2 = RGB(255, 240, 220), Pattern = "Spots" },
+	},
+	Pearl = {
+		Name = "진주 알", Rarity = "Legendary", Zone = 5, Price = 60000000, HatchTime = 53, SpawnWeight = 5,
+		Pets = { BabyShark = 16, Dolphin = 36, Narwhal = 32, MermaidCat = 15.7, DragonKing = 0.3 },
+	},
+	DragonPalace = { -- ★ v4
+		Name = "용궁 알", Rarity = "Mythic", Zone = 5, Price = 150000000, HatchTime = 66, SpawnWeight = 2,
+		Pets = { Dolphin = 24, Narwhal = 42, MermaidCat = 33, DragonKing = 1 },
+		Look = { Base = RGB(60, 190, 170), Accent = RGB(255, 210, 80), Accent2 = RGB(250, 248, 240), Pattern = "Crown", Shine = true, Glow = true },
 	},
 	-- 6. 캔디 랜드
 	Candy = {
-		Name = "캔디 알", Rarity = "Epic", Zone = 6, Premium = false, Price = 30000000, HatchTime = 26, SpawnWeight = 80,
-		Pets = { CottonSheep = 30, DonutPuppy = 30, JellyBear = 22, CupcakeCat = 11, MacaronBunny = 5, GummyDragon = 1.6, CandyUnicorn = 0.35, CookieKing = 0.05 },
+		Name = "캔디 알", Rarity = "Common", Zone = 6, Price = 30000000, HatchTime = 26, SpawnWeight = 40,
+		Pets = { CottonSheep = 35, DonutPuppy = 31, JellyBear = 28, CupcakeCat = 6 },
+	},
+	Jelly = { -- ★ v4
+		Name = "젤리 알", Rarity = "Rare", Zone = 6, Price = 100000000, HatchTime = 35, SpawnWeight = 24,
+		Pets = { CottonSheep = 12, DonutPuppy = 12, JellyBear = 32, CupcakeCat = 28, MacaronBunny = 13, GummyDragon = 3 },
+		Look = { Base = RGB(255, 120, 150), Accent = RGB(255, 205, 222), Accent2 = RGB(255, 255, 255), Pattern = "Hearts" },
+	},
+	Lollipop = { -- ★ v4
+		Name = "막대사탕 알", Rarity = "Epic", Zone = 6, Price = 250000000, HatchTime = 47, SpawnWeight = 11,
+		Pets = { JellyBear = 16, CupcakeCat = 34, MacaronBunny = 32, GummyDragon = 15, CandyUnicorn = 3 },
+		Look = { Base = RGB(255, 252, 252), Accent = RGB(255, 90, 140), Accent2 = RGB(150, 230, 200), Pattern = "Swirl" },
+	},
+	Cake = { -- ★ v4
+		Name = "케이크 알", Rarity = "Legendary", Zone = 6, Price = 600000000, HatchTime = 62, SpawnWeight = 5,
+		Pets = { CupcakeCat = 16, MacaronBunny = 36, GummyDragon = 32, CandyUnicorn = 15.7, CookieKing = 0.3 },
+		Look = { Base = RGB(255, 240, 222), Accent = RGB(255, 130, 170), Accent2 = RGB(140, 85, 55), Pattern = "Candy", Shine = true },
 	},
 	Rainbow = {
-		Name = "무지개 알", Rarity = "Mythic", Zone = 6, Premium = true, Price = 240000000, HatchTime = 70, SpawnWeight = 20,
-		Pets = { JellyBear = 30, CupcakeCat = 30, MacaronBunny = 22, GummyDragon = 12.5, CandyUnicorn = 5, CookieKing = 0.25 },
+		Name = "무지개 알", Rarity = "Mythic", Zone = 6, Price = 1.5e9, HatchTime = 78, SpawnWeight = 2,
+		Pets = { MacaronBunny = 24, GummyDragon = 42, CandyUnicorn = 33, CookieKing = 1 },
 	},
 	-- 7. 구름 왕국
-	Cloud = { -- ★
-		Name = "구름 알", Rarity = "Legendary", Zone = 7, Premium = false, Price = 300000000, HatchTime = 30, SpawnWeight = 80,
-		Pets = { Sheep = 30, CloudPuppy = 30, BabyCloud = 22, Dragon = 11, Unicorn = 5, Pegasus = 1.6, Phoenix = 0.35, AngelBunny = 0.05 },
+	Cloud = {
+		Name = "구름 알", Rarity = "Common", Zone = 7, Price = 300000000, HatchTime = 30, SpawnWeight = 40,
+		Pets = { Sheep = 35, CloudPuppy = 31, BabyCloud = 28, Dragon = 6 },
+	},
+	Breeze = { -- ★ v4
+		Name = "바람 알", Rarity = "Rare", Zone = 7, Price = 1e9, HatchTime = 40, SpawnWeight = 24,
+		Pets = { Sheep = 12, CloudPuppy = 12, BabyCloud = 32, Dragon = 28, Unicorn = 13, Pegasus = 3 },
+		Look = { Base = RGB(190, 225, 255), Accent = RGB(255, 255, 255), Accent2 = RGB(200, 170, 255), Pattern = "Swirl" },
+	},
+	Feather = { -- ★ v4
+		Name = "깃털 알", Rarity = "Epic", Zone = 7, Price = 2.5e9, HatchTime = 54, SpawnWeight = 11,
+		Pets = { BabyCloud = 16, Dragon = 34, Unicorn = 32, Pegasus = 15, Phoenix = 3 },
+		Look = { Base = RGB(250, 248, 255), Accent = RGB(200, 170, 255), Accent2 = RGB(255, 210, 90), Pattern = "Leaves" },
+	},
+	Angel = { -- ★ v4
+		Name = "천사 알", Rarity = "Legendary", Zone = 7, Price = 6e9, HatchTime = 72, SpawnWeight = 5,
+		Pets = { Dragon = 16, Unicorn = 36, Pegasus = 32, Phoenix = 15.7, AngelBunny = 0.3 },
+		Look = { Base = RGB(255, 248, 228), Accent = RGB(255, 205, 85), Accent2 = RGB(255, 255, 255), Pattern = "Hearts", Shine = true },
 	},
 	Golden = {
-		Name = "황금 알", Rarity = "Mythic", Zone = 7, Premium = true, Price = 2400000000, HatchTime = 80, SpawnWeight = 20,
-		Pets = { BabyCloud = 30, Dragon = 30, Unicorn = 22, Pegasus = 12.5, Phoenix = 5, AngelBunny = 0.25 },
+		Name = "황금 알", Rarity = "Mythic", Zone = 7, Price = 1.5e10, HatchTime = 90, SpawnWeight = 2,
+		Pets = { Unicorn = 24, Pegasus = 42, Phoenix = 33, AngelBunny = 1 },
 	},
-	-- 8. 우주 (우주 고래는 별빛 알에서만)
+	-- 8. 우주
 	Space = {
-		Name = "우주 알", Rarity = "Legendary", Zone = 8, Premium = false, Price = 3000000000, HatchTime = 35, SpawnWeight = 80,
-		Pets = { Alien = 30, RobotPuppy = 30, MoonBunny = 22, SpaceCat = 11, AstroBear = 5, CometFox = 1.6, StarSlime = 0.4 },
+		Name = "우주 알", Rarity = "Common", Zone = 8, Price = 3e9, HatchTime = 35, SpawnWeight = 40,
+		Pets = { Alien = 35, RobotPuppy = 31, MoonBunny = 28, SpaceCat = 6 },
+	},
+	Moon = { -- ★ v4
+		Name = "달 알", Rarity = "Rare", Zone = 8, Price = 1e10, HatchTime = 47, SpawnWeight = 24,
+		Pets = { Alien = 12, RobotPuppy = 12, MoonBunny = 32, SpaceCat = 28, AstroBear = 13, CometFox = 3 },
+		Look = { Base = RGB(236, 232, 205), Accent = RGB(165, 160, 155), Accent2 = RGB(255, 250, 220), Pattern = "Spots" },
+	},
+	Planet = { -- ★ v4
+		Name = "행성 알", Rarity = "Epic", Zone = 8, Price = 2.5e10, HatchTime = 63, SpawnWeight = 11,
+		Pets = { MoonBunny = 16, SpaceCat = 34, AstroBear = 32, CometFox = 15, StarSlime = 3 },
+		Look = { Base = RGB(130, 90, 200), Accent = RGB(255, 170, 110), Accent2 = RGB(120, 240, 255), Pattern = "Planets" },
+	},
+	Comet = { -- ★ v4
+		Name = "혜성 알", Rarity = "Legendary", Zone = 8, Price = 6e10, HatchTime = 84, SpawnWeight = 5,
+		Pets = { SpaceCat = 16, AstroBear = 36, CometFox = 32, StarSlime = 16 },
+		Look = { Base = RGB(40, 50, 120), Accent = RGB(120, 240, 255), Accent2 = RGB(255, 255, 255), Pattern = "Flames", Shine = true },
 	},
 	Starlight = {
-		Name = "별빛 알", Rarity = "Mythic", Zone = 8, Premium = true, Price = 400000000000, HatchTime = 100, SpawnWeight = 20,
-		Pets = { MoonBunny = 30, SpaceCat = 30, AstroBear = 22, CometFox = 12.5, StarSlime = 5, CosmicWhale = 0.1 },
+		Name = "별빛 알", Rarity = "Mythic", Zone = 8, Price = 1.5e11, HatchTime = 105, SpawnWeight = 2,
+		Pets = { AstroBear = 24, CometFox = 42, StarSlime = 33.75, CosmicWhale = 0.25 },
 	},
 }
 
+-- 지역 순, 지역 안에서는 사다리 순 (싼 알 → 비싼 알)
 Config.EggOrder = {
-	"Basic", "Forest", "Lake", "Crystal", "Jungle", "Spotted", "Snow", "Twilight",
-	"Ocean", "Pearl", "Candy", "Rainbow", "Cloud", "Golden", "Space", "Starlight",
+	"Basic", "Flower", "Mushroom", "Forest", "Fairy", "Spirit",
+	"Lake", "Lily", "Bubble", "Moonlight", "Crystal",
+	"Jungle", "Leaf", "Spotted", "Tropical", "Tiger",
+	"Snow", "Ice", "Snowflake", "Aurora", "Twilight",
+	"Ocean", "Shell", "Coral", "Pearl", "DragonPalace",
+	"Candy", "Jelly", "Lollipop", "Cake", "Rainbow",
+	"Cloud", "Breeze", "Feather", "Angel", "Golden",
+	"Space", "Moon", "Planet", "Comet", "Starlight",
 }
 
--- 알의 MinRebirth = 지역 MinRebirth (예전 코드가 egg.MinRebirth 를 읽어도 맞게)
+-- 지역별 알 목록 (사다리 순) + 자동으로 채우는 값
+Config.ZoneEggOrder = {} :: { [number]: { string } }
+for _, id in Config.EggOrder do
+	local egg = Config.Eggs[id]
+	local list = Config.ZoneEggOrder[egg.Zone]
+	if not list then
+		list = {}
+		Config.ZoneEggOrder[egg.Zone] = list
+	end
+	table.insert(list, id)
+	egg.Rung = #list
+end
 for _, egg in Config.Eggs do
+	local rungs = #Config.ZoneEggOrder[egg.Zone]
+	egg.Rungs = rungs
+	egg.Premium = egg.Rung >= rungs - 1 -- 위 2칸 = 좋은 알
+	-- 알의 MinRebirth = 지역 MinRebirth (예전 코드가 egg.MinRebirth 를 읽어도 맞게)
 	egg.MinRebirth = Config.Zones[egg.Zone].MinRebirth
+end
+for k, zone in Config.Zones do
+	zone.Eggs = Config.ZoneEggOrder[k] or {}
 end
 
 ----------------------------------------------------------------------
@@ -497,6 +686,15 @@ Config.Conveyor = {
 	TravelTime = 26, -- 끝까지 가는 데 걸리는 초 (끝에 닿으면 사라짐)
 	MaxEggs = 12,
 	FlyMaxDistance = 400, -- 이보다 먼 집으로는 날아가지 않고 "뿅" 하고 바로 받침대에 나타나요
+	BeaconHeight = 70, -- 좋은 알(위 2칸) 위로 솟는 빛기둥 높이 (숲 마을에서도 보여요)
+}
+
+-- 좋은 알 알림 (Remotes.EggAlert). 지역의 맨 위 알 2칸이 벨트에 나오면 그 지역이 열린 사람에게 보내요.
+-- 맨 위 칸은 언제나, 둘째 칸은 벨트마다 Gap 초에 한 번만. 받는 사람: 그 지역이 열렸고,
+-- (그 지역이 내 열린 지역 중 위에서 ZoneWindow 개 안에 있거나, 지금 그 지역 섬에 서 있을 때) → 다 큰 아이에게 숲 마을 알림이 쏟아지지 않게
+Config.EggAlert = {
+	Gap = 15,
+	ZoneWindow = 2,
 }
 
 ----------------------------------------------------------------------
@@ -676,8 +874,9 @@ Config.FieldCoins = {
 }
 
 ----------------------------------------------------------------------
--- 맵 배치 (지역 1 = 숲 마을). 바닥 윗면 y = 0. 컨베이어는 X 축 방향 (z = 0, x -56..56),
--- 집은 북쪽(+Z) 3채 / 남쪽(-Z) 3채, 한 변 64. 로비(스폰·순위표)는 서쪽, 지역 2 로 가는 길은 동쪽 (x = 135, z = 0).
+-- 맵 배치 (지역 1 = 숲 마을, 맵 한가운데). 바닥 윗면 y = 0. 컨베이어는 X 축 방향 (z = 0, x -56..56),
+-- 집은 북쪽(+Z) 3채 / 남쪽(-Z) 3채, 한 변 64. 로비(스폰·순위표)는 서쪽 (x = -140).
+-- 숲 마을 가장자리에서 7개 섬으로 가는 길 입구: 서쪽 z = ±80, 북쪽/남쪽 x = -150 과 120, 동쪽 z = 0 (Config.Zones[k].Trail)
 -- 각 집 CFrame: 위치 = 집 땅 중심(y=0), LookVector = 입구 쪽(컨베이어 방향). 집 로컬 입구 = -Z (z = -32)
 ----------------------------------------------------------------------
 local PLOT_SIZE = 64
@@ -713,10 +912,10 @@ Config.Layout = {
 		Income = CFrame.lookAt(V3(-165, 0, -28), V3(-140, 0, -28)),
 		Rebirths = CFrame.lookAt(V3(-165, 0, 28), V3(-140, 0, 28)),
 	},
-	TrailLength = TRAIL_LENGTH, -- 지역 사이 길 길이
+	TrailLength = TRAIL_LENGTH, -- 숲 마을 가장자리 → 섬 입구 길 길이
 	TrailWidth = TRAIL_WIDTH, -- 길 폭 (양옆 난간 높이 ≥ 4)
 	SeaY = -3, -- 섬 사이 물 윗면 (CanCollide 끔, 장식)
-	FallResetY = -30, -- 이보다 떨어지면 ZoneService 가 마지막 지역 스폰으로 돌려보내요
+	FallResetY = -30, -- 이보다 떨어지면 ZoneService 가 마지막 지역 스폰으로 돌려보내요 (물/구름/우주 바닥은 모두 이 위, 통과 가능)
 }
 
 -- 소리 (Studio 기본 내장 사운드만 사용. 나중에 rbxassetid 로 바꿔도 됨)
@@ -758,15 +957,51 @@ function Config.RollPet(eggId: string, rng: Random?): string
 	return Config.WeightedPick(egg.Pets, rng)
 end
 
--- 컨베이어에 나올 알 뽑기. zoneIndex 를 주면 그 지역 알 중에서 (SpawnWeight 비율), 없으면 전체에서
+-- 컨베이어에 나올 알 뽑기. zoneIndex 를 주면 그 지역 알 중에서 (SpawnWeight 비율), 없으면 전체에서.
+-- 늘 EggOrder 순서로 돌아서 같은 rng 면 같은 결과예요
 function Config.RollEgg(rng: Random?, zoneIndex: number?): string
-	local weights = {}
-	for id, egg in Config.Eggs do
-		if zoneIndex == nil or egg.Zone == zoneIndex then
-			weights[id] = egg.SpawnWeight
+	local r = rng or Random.new()
+	local list = if zoneIndex then Config.ZoneEggOrder[zoneIndex] or Config.EggOrder else Config.EggOrder
+	local total = 0
+	for _, id in list do
+		total += Config.Eggs[id].SpawnWeight
+	end
+	local roll = r:NextNumber() * total
+	for _, id in list do
+		roll -= Config.Eggs[id].SpawnWeight
+		if roll <= 0 then
+			return id
 		end
 	end
-	return Config.WeightedPick(weights, rng)
+	return list[#list]
+end
+
+-- 지역의 알 목록 (사다리 순, 싼 알 → 비싼 알)
+function Config.ZoneEggs(zoneIndex: number): { string }
+	return Config.ZoneEggOrder[zoneIndex] or {}
+end
+
+-- 사다리 칸 (1 = 제일 싼 알), 그 지역 알 수
+function Config.EggRung(eggId: string): (number, number)
+	local egg = Config.Eggs[eggId]
+	if not egg then
+		return 0, 0
+	end
+	return egg.Rung, egg.Rungs
+end
+
+-- 좋은 알 알림 대상 알인가 ("Top" = 맨 위 칸, "Second" = 둘째 칸, nil = 아님)
+function Config.EggAlertKind(eggId: string): string?
+	local egg = Config.Eggs[eggId]
+	if not egg then
+		return nil
+	end
+	if egg.Rung == egg.Rungs then
+		return "Top"
+	elseif egg.Rung == egg.Rungs - 1 then
+		return "Second"
+	end
+	return nil
 end
 
 -- 지역 도우미 ----------------------------------------------------------

@@ -32,12 +32,12 @@ local SLAB_T = HouseLayout.SLAB_T -- 1
 local PED_BASE_H = HouseLayout.PED_BASE_H
 local PED_TOP_H = HouseLayout.PED_TOP_H
 local SLOTS_PER_FLOOR = Config.Plot.SlotsPerFloor
-local PLOT_HALF = Config.Layout.PlotSize / 2 -- 32
-local FENCE = PLOT_HALF - 0.4 -- 울타리 가운데 선 (±31.6)
-local FENCE_T = 0.6
+local FENCE = HouseLayout.FENCE -- 울타리 가운데 선 (±31.6). 마당 숫자는 HouseLayout 이 정해요 (가구 자리와 같이)
+local FENCE_T = HouseLayout.FENCE_T
 local FENCE_H = 2.2
-local GATE_HALF = 6 -- 마당 문 반 폭 (기둥 안쪽 면 사이 12)
-local PILLAR = 1.6 -- 모서리 기둥
+local GATE_HALF = HouseLayout.GATE_HALF -- 마당 문 반 폭 (기둥 안쪽 면 사이 12)
+local PILLAR = HouseLayout.PILLAR -- 모서리 기둥
+local YARD_Y = HouseLayout.YARD_Y -- 마당 바닥 윗면 (마당 가구가 여기 서요)
 local CAP_TOP = FLOOR1_TOP + RAIL_H + 0.5 -- 1층 벽 위 장식띠 윗면 (작은 장식을 올려 두는 자리)
 local DOOR_POST_TOP = 10.2 -- 현관 기둥 (2층 바닥 아래에서 끝나요)
 local ELEV_FRAME_H = 9
@@ -630,7 +630,7 @@ local function buildYard(ctx: Ctx)
 	local edge = FENCE + FENCE_T / 2
 
 	-- 마당 바닥 + 길 (마당 문 → 현관)
-	box(ctx, "Yard", -edge, edge, -0.14, 0.06, -edge, edge, {
+	box(ctx, "Yard", -edge, edge, YARD_Y - 0.2, YARD_Y, -edge, edge, {
 		Color = look.Ground or darker(theme.Floor, 0.1),
 		Material = look.GroundMat,
 	})
@@ -644,7 +644,8 @@ local function buildYard(ctx: Ctx)
 	local capColor = capLook(ctx, 1)
 	local fi = FENCE - FENCE_T / 2
 	local fo = FENCE + FENCE_T / 2
-	local gx = GATE_HALF + 1.2
+	local Y = L.Yard
+	local gx = GATE_HALF + Y.GatePost
 	local segs = {
 		{ -fo, -fi, -fo, fo, false }, -- 왼쪽
 		{ fi, fo, -fo, fo, false }, -- 오른쪽
@@ -676,22 +677,22 @@ local function buildYard(ctx: Ctx)
 	end
 
 	-- 이름 간판: 마당 문 왼쪽 옆 기둥 (길 위가 아니에요). BillboardGui > TextLabel "OwnerLabel" 은 PlotService 가 채워요
-	local signX = -(gx + 3.2)
-	box(ctx, "SignPost", signX - 0.25, signX + 0.25, 0, 3.4, -FENCE + 0.7, -FENCE + 1.2, { Color = WOOD, Material = Enum.Material.Wood })
-	local sign = box(ctx, "Sign", signX - 2.8, signX + 2.8, 3.2, 6.6, -FENCE + 0.6, -FENCE + 1.1, { Color = theme.Accent })
+	local signX, signZ = Y.Sign.X, Y.Sign.Z
+	box(ctx, "SignPost", signX - 0.25, signX + 0.25, 0, 3.4, signZ - 0.25, signZ + 0.25, { Color = WOOD, Material = Enum.Material.Wood })
+	local sign = box(ctx, "Sign", signX - 2.8, signX + 2.8, 3.2, 6.6, signZ - 0.35, signZ + 0.15, { Color = theme.Accent })
 	local bb, label = makeBillboard(sign, 0.6, 13, 2.4, 70, "OwnerLabel")
 	bb.AlwaysOnTop = true
 	label.TextStrokeTransparency = 0.1
 	label.Text = "빈 집"
 
 	-- 우편함 (마당 문 오른쪽)
-	local mx, mz = gx + 3.3, -FENCE + 1.2
+	local mx, mz = Y.Mail.X, Y.Mail.Z
 	box(ctx, "MailPost", mx - 0.2, mx + 0.2, 0, 2.6, mz - 0.2, mz + 0.2, { Color = WOOD, Material = Enum.Material.Wood })
 	box(ctx, "Mailbox", mx - 0.75, mx + 0.75, 2.6, 3.7, mz - 0.5, mz + 0.5, { Color = theme.Accent })
 	deco(ctx, { Name = "MailFlag", Size = Vector3.new(0.12, 0.9, 0.35), Local = CFrame.new(mx + 0.8, 3.5, mz), Color = RED })
 
 	-- 펫 집 (앞마당 왼쪽)
-	local px, pz = -19, -28.2
+	local px, pz = Y.PetHouse.X, Y.PetHouse.Z
 	box(ctx, "PetHouse", px - 1.7, px + 1.7, 0, 2.6, pz - 1.5, pz + 1.5, { Color = theme.Wall, Material = ctx.mats.Wall })
 	deco(ctx, { Name = "PetHouseDoor", Size = Vector3.new(1.3, 1.6, 0.2), Local = CFrame.new(px, 0.8, pz - 1.55), Color = DARK })
 	for _, sz in { -1, 1 } do
@@ -706,7 +707,7 @@ local function buildYard(ctx: Ctx)
 
 	-- 화분 2개 (현관 양옆 바깥)
 	for i, sx in { -1, 1 } do
-		local x, z = sx * (L.Door.MaxX + 3.6), L.FrontZ - 1.8
+		local x, z = sx * Y.PlanterX, Y.PlanterZ
 		box(ctx, "Planter", x - 1.3, x + 1.3, 0, 1.2, z - 1.3, z + 1.3, { Color = darker(theme.Accent, 0.15) })
 		blob(ctx, Vector3.new(x, 1.45, z), Vector3.new(2.4, 1.1, 2.4), { Name = "PlanterLeaves", Color = LEAF })
 		local offsets = { Vector3.new(-0.6, 0, 0.3), Vector3.new(0.55, 0.1, 0.45), Vector3.new(0.05, 0.25, -0.55) }
@@ -716,13 +717,9 @@ local function buildYard(ctx: Ctx)
 	end
 
 	-- 가로등: 마당 문 안쪽 양옆 (+ 마당이 길면 중간에 한 쌍 더)
-	for _, sx in { -1, 1 } do
-		lampPost(ctx, sx * (L.Door.MaxX + 2), -FENCE + 2.4)
-	end
-	local yardDepth = L.FrontZ + FENCE
-	if yardDepth > 18 then
+	for _, lz in Y.LampZs do
 		for _, sx in { -1, 1 } do
-			lampPost(ctx, sx * (L.Door.MaxX + 2), (L.FrontZ - FENCE) / 2 + 1)
+			lampPost(ctx, sx * Y.LampX, lz)
 		end
 	end
 
@@ -1204,16 +1201,10 @@ local function decoSpots(ctx: Ctx)
 	local L = ctx.L
 	local st = L.Stair
 	local S = L.Size
-	-- 앞마당 (울타리 근처, 길 |x| ≤ 5 밖)
-	ctx.yardSpots = {
-		Vector3.new(15.5, 0, -28.6),
-		Vector3.new(20.5, 0, -28.6),
-		Vector3.new(-13.6, 0, -27.6),
-		Vector3.new(25.2, 0, -28.6),
-		Vector3.new(-25, 0, -28.6),
-	}
-	local sideX = (L.Half + FENCE - FENCE_T / 2) / 2
-	ctx.sideSpots = { Vector3.new(-sideX, 0, L.CenterZ), Vector3.new(sideX, 0, L.CenterZ) }
+	-- 앞마당 (울타리 근처, 길 |x| ≤ 5 밖) / 집 양옆. 자리는 HouseLayout 이 정해요: 가구 막힌 자리(BlockedRects)도 같은 자리
+	-- 라서, 테마 장식을 옮기면 HouseLayout 의 DECO_YARD 도 같이 고쳐요
+	ctx.yardSpots = table.clone(L.Yard.Spots)
+	ctx.sideSpots = table.clone(L.Yard.Side)
 	-- 1층 벽 위: 왼쪽 3, 오른쪽 2, 뒤 2
 	local rightEnd = if ctx.floors >= 2 then st.MinZ else L.BackZ - PILLAR
 	local backEnd = if ctx.floors >= 2 then st.GlassX else L.Half - PILLAR

@@ -27,17 +27,43 @@ local groups: { Group } = {}
 local dirty = true
 local lastCount = -1
 
--- 비밀 펫 힌트: 그 펫이 가장 잘 나오는 알 이름 (알 표에서 찾아요)
+-- 비밀 펫 힌트: 그 펫이 나올 확률(가중치 ÷ 그 알 가중치 합)이 가장 높은 알 이름.
+-- 지역마다 알이 5~6개여도, EggOrder 에 없는 알이 있어도 괜찮게 Config.Eggs 를 다 봐요 (같으면 EggOrder 앞쪽)
 local secretHints: { [string]: string } = {}
-for _, eggId in Config.EggOrder do
-	local egg = Config.Eggs[eggId]
-	for petId, weight in egg.Pets do
-		local def = Config.Pets[petId]
-		if def and def.Rarity == "Secret" then
-			local best = secretHints[petId]
-			local bestWeight = if best then (Config.Eggs[best].Pets[petId] or 0) else -1
-			if weight > bestWeight then
-				secretHints[petId] = eggId
+do
+	local order: { string } = {}
+	local seen: { [string]: boolean } = {}
+	for _, eggId in Config.EggOrder do
+		if Config.Eggs[eggId] and not seen[eggId] then
+			seen[eggId] = true
+			table.insert(order, eggId)
+		end
+	end
+	local extra: { string } = {}
+	for eggId in Config.Eggs do
+		if not seen[eggId] then
+			table.insert(extra, eggId)
+		end
+	end
+	table.sort(extra)
+	for _, eggId in extra do
+		table.insert(order, eggId)
+	end
+	local bestChance: { [string]: number } = {}
+	for _, eggId in order do
+		local egg = Config.Eggs[eggId]
+		local total = 0
+		for _, weight in egg.Pets do
+			total += math.max(0, tonumber(weight) or 0)
+		end
+		if total > 0 then
+			for petId, weight in egg.Pets do
+				local def = Config.Pets[petId]
+				local chance = math.max(0, tonumber(weight) or 0) / total
+				if def and def.Rarity == "Secret" and chance > 0 and chance > (bestChance[petId] or 0) then
+					bestChance[petId] = chance
+					secretHints[petId] = eggId
+				end
 			end
 		end
 	end

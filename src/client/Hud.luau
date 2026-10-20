@@ -1,5 +1,6 @@
 -- 화면 고정 UI: 코인(CoinSync 로 바로바로), 초당 수익, 집 금고, 펫 수, 왼쪽 큰 버튼 7개
 -- (가방 B / 도감 N / 집 H / 상점 P / 지도 M / 순위 L / 환생 R). 화면이 낮으면 2~3열로 접혀요.
+-- Hud.SetBadge("집", true): 버튼 오른쪽 위에 빨간 "!" (새 집을 살 수 있을 때 init.client 가 켜요)
 local UserInputService = game:GetService("UserInputService")
 
 local UiKit = require(script.Parent.UiKit)
@@ -22,6 +23,9 @@ local rebirthButton: TextButton
 local rebirthPill: Frame
 local rebirthPillLabel: TextLabel
 local sideColumn: Frame? = nil
+local sideButtons: { [string]: TextButton } = {} -- 글자(가방, 집 …) → 버튼
+local badges: { [string]: Frame } = {}
+local wantBadge: { [string]: boolean } = {} -- Init 전에 부르면 기억해 뒀다가 붙여요
 local lastPending = -1
 local lastIncome = -1
 local lastCanRebirth: boolean? = nil
@@ -283,6 +287,7 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 	}
 	for i, def in defs do
 		local btn = bigButton(column, def.Emoji, def.Caption, def.Key, def.Color, i, def.Fn)
+		sideButtons[def.Caption] = btn
 		if def.Caption == "환생" then
 			rebirthButton = btn
 		end
@@ -345,6 +350,10 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout)
 	layout()
 
+	for caption, on in wantBadge do
+		Hud.SetBadge(caption, on)
+	end
+
 	task.spawn(function()
 		while true do
 			updatePending()
@@ -382,6 +391,33 @@ function Hud.SetCoins(coins: number, _pending: number, income: number)
 
 	updatePending()
 	refreshRebirth()
+end
+
+-- 왼쪽 큰 버튼에 빨간 "!" 알림 켜기/끄기 (caption = "가방" | "집" | …)
+function Hud.SetBadge(caption: string, on: boolean)
+	wantBadge[caption] = on
+	local btn = sideButtons[caption]
+	if not btn then
+		return
+	end
+	local badge = badges[caption]
+	if not badge then
+		if not on then
+			return
+		end
+		badge = UiKit.Badge(btn)
+		badges[caption] = badge
+	end
+	if on and not badge.Visible then
+		UiKit.Bump(btn, 0.15)
+	end
+	UiKit.ShowBadge(badge, on)
+end
+
+-- 알림이 켜져 있나 (검사용)
+function Hud.HasBadge(caption: string): boolean
+	local badge = badges[caption]
+	return badge ~= nil and badge.Visible
 end
 
 -- 왼쪽 큰 버튼들 보이기/숨기기 (꾸미기 모드 동안 숨겨요)

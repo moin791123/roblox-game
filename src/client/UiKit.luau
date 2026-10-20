@@ -845,6 +845,62 @@ function UiKit.SectionHeader(scroll: Instance, text: string, color: Color3, orde
 	}, { Stroke = UiKit.Darken(color, 0.45), MaxText = 22 })
 end
 
+-- 빨간 알림 동그라미 "!" (새 소식). parent 오른쪽 위에 붙어요. 보이기/숨기기는 UiKit.ShowBadge 로.
+-- size 를 주면 그 픽셀 크기, 안 주면 parent 크기의 36% (네모 버튼용)
+local badgePulse: { [Frame]: Tween } = setmetatable({}, { __mode = "k" }) :: any
+function UiKit.Badge(parent: GuiObject, text: string?, size: number?): Frame
+	local badge: Frame = Make("Frame", {
+		Name = "Badge",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.9, 0.12),
+		Size = if size then UDim2.fromOffset(size, size) else UDim2.fromScale(0.36, 0.36),
+		BackgroundColor3 = C.Red,
+		Visible = false,
+		ZIndex = 8,
+		Parent = parent,
+	})
+	if not size then
+		Make("UIAspectRatioConstraint", { AspectRatio = 1, Parent = badge })
+	end
+	UiKit.Corner(badge, UDim.new(0.5, 0))
+	UiKit.Stroke(badge, C.White, 2, true)
+	UiKit.Label({
+		Name = "Text",
+		Text = text or "!",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.8, 0.8),
+		ZIndex = 9,
+		Parent = badge,
+	}, { Stroke = UiKit.Darken(C.Red, 0.4), MaxText = 30 })
+	return badge
+end
+
+-- 알림 동그라미 켜기/끄기 (켜져 있는 동안 통통 뛰어요)
+function UiKit.ShowBadge(badge: Frame?, on: boolean)
+	if not badge then
+		return
+	end
+	if badge.Visible == on then
+		return
+	end
+	badge.Visible = on
+	local old = badgePulse[badge]
+	if old then
+		old:Cancel()
+		badgePulse[badge] = nil
+	end
+	local s = UiKit.Scale(badge)
+	if on then
+		s.Scale = 0.88
+		local tween = TweenService:Create(s, TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Scale = 1.15 })
+		tween:Play()
+		badgePulse[badge] = tween
+	else
+		s.Scale = 1
+	end
+end
+
 function UiKit.Scroller(parent: Instance, props: { [string]: any }?): ScrollingFrame
 	local base: { [string]: any } = {
 		BackgroundTransparency = 1,

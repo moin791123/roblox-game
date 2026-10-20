@@ -1,7 +1,9 @@
--- 펫 월드 (v3): 클라이언트 시작점
+-- 펫 월드 (v4): 클라이언트 시작점
 -- 화면(UI)과 효과를 만들고 서버 이벤트를 연결해요. 창은 한 번에 하나만 열려요.
 -- 단축키: B 가방 / N 도감 / H 집 / P 상점 / M 지도 / L 순위 / R 환생
 -- (꾸미기 모드 중에는 단축키를 쉬어요. R 회전 · X 치우기 · Esc/Q 끝내기는 DecorateMode 가 직접 받아요)
+-- ✨ 좋은 알 알림 (EggAlert): 위쪽 가운데 큰 배너 + "🗺 바로 가기" (꾸미기 중에는 쉬어요)
+-- 🏠 HUD "집" 버튼의 빨간 "!": 아직 없는 더 좋은 집을 지금 살 수 있을 때
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
@@ -9,6 +11,8 @@ local UserInputService = game:GetService("UserInputService")
 local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
 
 local UiKit = require(script.UiKit)
+local Config = UiKit.Config
+local C = UiKit.Colors
 local State = require(script.State)
 local Toasts = require(script.Toasts)
 local Hud = require(script.Hud)
@@ -195,6 +199,11 @@ HouseWindow.Init(gui, {
 	OpenShop = openShop,
 })
 RebirthWindow.Init(gui)
+-- 큰 알림 배너는 왼쪽 큰 버튼 칸을 가리지 않게 비켜요
+local sideButtons = gui:FindFirstChild("SideButtons")
+if sideButtons and sideButtons:IsA("GuiObject") then
+	Toasts.SetBannerGuard(sideButtons)
+end
 safeCall(ShopWindow, "Init", gui)
 safeCall(MapWindow, "Init", gui)
 safeCall(LeaderboardWindow, "Init", gui)
@@ -227,6 +236,7 @@ safeCall(DecorateMode, "OnChanged", function(on: boolean)
 	end
 	Hud.SetSideVisible(not on)
 	Tips.SetSuppressed(on)
+	Toasts.SetBannerSuppressed(on)
 end)
 
 ----------------------------------------------------------------------
@@ -240,8 +250,14 @@ local optionalSync: { [string]: any } = {
 	ZoneClient = ZoneClient,
 }
 
+-- 🏠 "집" 버튼 빨간 "!" (더 좋은 새 집을 살 수 있으면)
+local function refreshHouseBadge()
+	Hud.SetBadge("집", safeCall(HouseWindow, "ThemeGoal") ~= nil)
+end
+
 State.OnSync(function(snap)
 	Hud.Update(snap)
+	refreshHouseBadge()
 	BagWindow.OnSync()
 	IndexWindow.OnSync()
 	HouseWindow.OnSync()
@@ -253,6 +269,7 @@ end)
 
 State.OnCoins(function(coins, pending, income)
 	Hud.SetCoins(coins, pending, income)
+	refreshHouseBadge()
 end)
 
 Remotes.DataSync.OnClientEvent:Connect(function(snap)
@@ -279,6 +296,95 @@ end)
 
 Remotes.CoinFx.OnClientEvent:Connect(function(amount, position, silent)
 	WorldFx.CoinFx(amount, position, silent)
+end)
+
+----------------------------------------------------------------------
+-- ✨ 좋은 알 알림: 서버가 (zone, eggId) 를 보내면 큰 배너
+----------------------------------------------------------------------
+local lastAlertTeleport = -10
+
+-- 내가 지금 있는 지역 (ZoneClient 가 없으면 플레이어 속성 Zone)
+local function myZone(): number
+	local z = safeCall(ZoneClient, "CurrentZone")
+	if type(z) == "number" then
+		return z
+	end
+	return tonumber(player:GetAttribute("Zone")) or 1
+end
+
+local function onEggAlert(zone: any, eggId: any)
+	local z = tonumber(zone)
+	local zoneDef = if z then Config.Zones[z] else nil
+	local egg = if type(eggId) == "string" then Config.Eggs[eggId] else nil
+	if not z or not zoneDef or not egg then
+		return
+	end
+	if decorating() then
+		return -- 꾸미기 중에는 쉬어요
+	end
+	if not State.ZoneUnlocked(z) then
+		return -- 아직 못 가는 지역이면 알려도 갈 수 없어요
+	end
+	local rarity = (Config.Rarities :: any)[egg.Rarity]
+	local color = UiKit.RarityColor(egg.Rarity)
+	local zoneIndex: number = z
+	Toasts.Banner({
+		Key = "Egg:" .. zoneIndex .. ":" .. eggId,
+		Title = "✨ " .. zoneDef.Name .. "에 " .. UiKit.Josa(egg.Name, "이", "가") .. " 나타났어요!",
+		Sub = string.format("%s · 💰 %s · 서둘러요! 🏃", if rarity then rarity.Name .. " 알" else "좋은 알", Config.FormatNumber(egg.Price or 0)),
+		HiddenSub = "📍 이 지역 컨베이어에 있어요! 얼른 찾아봐요 👀",
+		Color = color,
+		IconKind = "Egg",
+		IconId = eggId,
+		Sound = "Alert",
+		ButtonText = "🗺 바로 가기",
+		ButtonColor = C.Mint,
+		ButtonVisible = function(): boolean
+			return myZone() ~= zoneIndex
+		end,
+		OnButton = function(): boolean?
+			if decorating() then
+				return true
+			end
+			if not State.ZoneUnlocked(zoneIndex) then
+				Toasts.Show("🔒 환생 " .. zoneDef.MinRebirth .. "회가 필요해요!", "warn")
+				return true
+			end
+			if os.clock() - lastAlertTeleport < 1.6 then
+				Toasts.Show("잠깐만요! ⏳", "info")
+				return false
+			end
+			lastAlertTeleport = os.clock()
+			closeAll()
+			Remotes.Teleport:FireServer("Zone", zoneIndex)
+			Toasts.Show("🗺 " .. zoneDef.Name .. "에 가요! 알을 찾아봐요 🥚", "good")
+			return true
+		end,
+	})
+end
+
+-- EggAlert 리모트는 서버 버전에 따라 없을 수도 있어요: 10초만 기다리고, 없으면 나중에 생길 때 연결해요
+task.spawn(function()
+	local remote: Instance? = (Remotes :: any).EggAlert
+	local folder = ReplicatedStorage:FindFirstChild("Remotes")
+	if not remote and folder then
+		remote = folder:WaitForChild("EggAlert", 10)
+	end
+	if remote and remote:IsA("RemoteEvent") then
+		remote.OnClientEvent:Connect(onEggAlert)
+		return
+	end
+	if folder then
+		local conn: RBXScriptConnection? = nil
+		conn = folder.ChildAdded:Connect(function(child: Instance)
+			if child.Name == "EggAlert" and child:IsA("RemoteEvent") then
+				child.OnClientEvent:Connect(onEggAlert)
+				if conn then
+					conn:Disconnect()
+				end
+			end
+		end)
+	end
 end)
 
 -- 키보드 단축키 (PC)

@@ -1,6 +1,7 @@
 -- 🛍 상점 서버: 펫 옷 (사기/입히기) + 가구 (사기/놓기/옮기기/치우기) + 집에 놓인 가구 그리기.
 -- (설계: docs/DESIGN.md "ShopService", §5 Remotes, §6 Plot<i>.Furniture)
--- 좌표는 모두 플롯 로컬 (origin = 집 땅 가운데, y = 0, 입구 = -Z). 집 모양 규칙은 HouseLayout 이 정해요.
+-- 좌표는 모두 플롯 로컬 (origin = 집 땅 가운데, y = 0, 입구 = -Z). 집 모양·가구 놓기 규칙은 HouseLayout 이 정해요
+-- (HouseLayout.CheckPlace 하나를 클라이언트 DecorateMode 도 그대로 써요). 1층 = 울타리 안 전체 (마당 + 집 안), 위층 = 집 안.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -35,19 +36,14 @@ local ShopService = {}
 ----------------------------------------------------------------------
 local ACTION_THROTTLE = 0.15 -- 같은 사람 연타 무시 (초)
 local MAX_STRING = 32
-local EPS = 1e-3 -- 딱 붙는 건 괜찮아요 (겹침/벽 판정 여유)
 local FOLDER_NAME = "Furniture"
 local DECOR = Config.Decor
 local VALID_R = { [0] = true, [90] = true, [180] = true, [270] = true }
 
-local REASON_BAD = "여기에는 놓을 수 없어요!"
-local REASON_WALL = "벽 밖이에요!"
-local REASON_BLOCKED = "받침대/계단 자리예요!"
-local REASON_OVERLAP = "다른 가구랑 겹쳐요!"
+local REASON_BAD = HouseLayout.Reasons.Bad
 local REASON_MAX = string.format("가구는 최대 %d개까지예요!", DECOR.MaxPlaced)
 
 type Furniture = DataService.Furniture
-type Rect = { MinX: number, MaxX: number, MinZ: number, MaxZ: number }
 
 ----------------------------------------------------------------------
 -- 상태
@@ -117,123 +113,32 @@ local function fidNumber(fid: string): number
 	return tonumber(string.match(fid, "^f(%d+)$")) or 0
 end
 
-local function footprintRect(furnId: string, x: number, z: number, r: number): Rect
-	local sx, sz = Config.FurnitureFootprint(furnId, r)
-	return { MinX = x - sx / 2, MaxX = x + sx / 2, MinZ = z - sz / 2, MaxZ = z + sz / 2 }
-end
-
-local function overlaps(a: Rect, b: any): boolean
-	local bMinX, bMaxX = tonumber(b.MinX), tonumber(b.MaxX)
-	local bMinZ, bMaxZ = tonumber(b.MinZ), tonumber(b.MaxZ)
-	if not (bMinX and bMaxX and bMinZ and bMaxZ) then
-		return false
-	end
-	return a.MinX < bMaxX - EPS and bMinX < a.MaxX - EPS and a.MinZ < bMaxZ - EPS and bMinZ < a.MaxZ - EPS
-end
-
-local function isRug(furnId: string): boolean
-	local def = Config.Furniture[furnId]
-	return def ~= nil and def.Category == "Rug"
-end
-
--- 놓기 규칙 (CanPlace 와 Validate 가 같이 써요). others = 비교할 다른 가구들 (fid → 가구)
+-- 놓기 규칙 (CanPlace 와 Validate 가 같이 써요) = HouseLayout.CheckPlace. others = 비교할 다른 가구들 (fid → 가구)
 -- x, z 는 이미 Snap 된 값, r 은 0/90/180/270
 local function checkPlace(themeId: string, floors: number, furnId: string, floor: number, x: number, z: number, r: number, others: { [string]: Furniture }, ignoreFid: string?): (boolean, string?)
-	if not Config.Furniture[furnId] then
+	local ok, fits, reason = pcall(HouseLayout.CheckPlace, themeId, floors, furnId, floor, x, z, r, others, ignoreFid)
+	if not ok then
+		warn("[ShopService] 가구 놓기 검사 오류:", fits)
 		return false, REASON_BAD
 	end
-	if floor ~= math.floor(floor) or floor < 1 or floor > floors or floor > Config.House.MaxFloors then
-		return false, REASON_BAD
-	end
-	local rect = footprintRect(furnId, x, z, r)
-
-	-- 벽 안쪽 (WallMargin 만큼 띄워서)
-	local okB, bounds = pcall(HouseLayout.FloorBounds, themeId, floor)
-	if not okB or type(bounds) ~= "table" then
-		return false, REASON_BAD
-	end
-	local m = DECOR.WallMargin
-	local minX, maxX = (tonumber(bounds.MinX) or 0) + m, (tonumber(bounds.MaxX) or 0) - m
-	local minZ, maxZ = (tonumber(bounds.MinZ) or 0) + m, (tonumber(bounds.MaxZ) or 0) - m
-	if rect.MinX < minX - EPS or rect.MaxX > maxX + EPS or rect.MinZ < minZ - EPS or rect.MaxZ > maxZ + EPS then
-		return false, REASON_WALL
-	end
-
-	-- 받침대 / 계단 / 엘리베이터 / 입구 자리
-	local okR, blocked = pcall(HouseLayout.BlockedRects, themeId, floor)
-	if okR and type(blocked) == "table" then
-		for _, b in blocked do
-			if type(b) == "table" and overlaps(rect, b) then
-				return false, REASON_BLOCKED
-			end
-		end
-	end
-
-	-- 같은 층 다른 가구 (러그는 위에 겹쳐 놓아도 돼요)
-	local rug = isRug(furnId)
-	for fid, f in others do
-		if fid ~= ignoreFid and f.Floor == floor and not rug and not isRug(f.Id) then
-			if overlaps(rect, footprintRect(f.Id, f.X, f.Z, f.R)) then
-				return false, REASON_OVERLAP
-			end
-		end
-	end
-	return true, nil
+	return fits == true, reason
 end
 
--- 빈 집 기준으로 이 가구가 들어갈 자리가 하나라도 있나? (테마·층 수만 보고, 다른 가구는 안 봐요)
--- 결과는 (테마, 층 1~2, 가구) 별로 기억해요. 작은 집에 큰 가구를 사 놓고 못 놓는 일을 막아요
-local fitCache: { [string]: boolean } = {}
-local NO_OTHERS: { [string]: Furniture } = {}
+-- 빈 집 기준으로 이 가구가 들어갈 자리가 하나라도 있나? (마당 포함, HouseLayout 이 테마·층별로 기억해요)
+-- 작은 집에 큰 가구를 사 놓고 못 놓는 일을 막아요
 local function fitsInHouse(themeId: string, floors: number, furnId: string): boolean
-	local maxFloor = math.clamp(math.floor(floors), 1, 2) -- 2층부터는 모양이 같아요
-	local key = themeId .. "|" .. maxFloor .. "|" .. furnId
-	local cached = fitCache[key]
-	if cached ~= nil then
-		return cached
-	end
-	local step = math.max(DECOR.Snap, 1)
-	local found = false
-	for floor = 1, maxFloor do
-		local okB, b = pcall(HouseLayout.FloorBounds, themeId, floor)
-		if okB and type(b) == "table" then
-			local x0, x1 = snap(tonumber(b.MinX) or 0), snap(tonumber(b.MaxX) or 0)
-			local z0, z1 = snap(tonumber(b.MinZ) or 0), snap(tonumber(b.MaxZ) or 0)
-			for _, r in { 0, 90 } do
-				local x = x0
-				while x <= x1 and not found do
-					local z = z0
-					while z <= z1 do
-						if checkPlace(themeId, floors, furnId, floor, x, z, r, NO_OTHERS, nil) then
-							found = true
-							break
-						end
-						z += step
-					end
-					x += step
-				end
-				if found then
-					break
-				end
-			end
-		end
-		if found then
-			break
-		end
-	end
-	fitCache[key] = found
-	return found
+	local ok, fits = pcall(HouseLayout.FitsInHouse, themeId, floors, furnId)
+	return ok and fits == true
 end
 
 -- 이 가구가 들어가는 가장 작은 집 테마 이름 (없으면 nil)
 local function smallestThemeFor(furnId: string, floors: number): string?
-	for _, themeId in Config.House.ThemeOrder do
-		if fitsInHouse(themeId, floors, furnId) then
-			local theme = Config.House.Themes[themeId]
-			return if theme then theme.Name else themeId
-		end
+	local ok, id = pcall(HouseLayout.SmallestThemeFor, furnId, floors)
+	if not ok or type(id) ~= "string" then
+		return nil
 	end
-	return nil
+	local theme = Config.House.Themes[id]
+	return if theme then theme.Name else id
 end
 
 function ShopService.FitsInHouse(themeId: string, floors: number, furnId: string): boolean
@@ -262,7 +167,7 @@ function ShopService.CanPlace(player: Player, furnId: any, floor: any, x: any, z
 	local half = Config.Layout.PlotSize / 2
 	local sx, sz = snap(x :: number), snap(z :: number)
 	if math.abs(sx) > half or math.abs(sz) > half then
-		return false, REASON_WALL
+		return false, if floor == 1 then HouseLayout.Reasons.Fence else HouseLayout.Reasons.Wall
 	end
 	if not ignoreFid and DataService.CountPlacedFurniture(player) >= DECOR.MaxPlaced then
 		return false, REASON_MAX
@@ -326,8 +231,9 @@ local function buildModel(furnId: string): Model
 	return fallbackModel(furnId)
 end
 
-local function furnitureCFrame(origin: CFrame, f: Furniture): CFrame
-	return origin * CFrame.new(f.X, HouseLayout.FloorY(f.Floor), f.Z) * CFrame.Angles(0, math.rad(f.R), 0)
+-- 바닥 높이: 위층 = 그 층 바닥, 1층 = 집 안이면 집 바닥 / 마당이면 마당 땅 (HouseLayout.PlaceY)
+local function furnitureCFrame(origin: CFrame, themeId: string, f: Furniture): CFrame
+	return origin * CFrame.new(f.X, HouseLayout.PlaceY(themeId, f.Floor, f.X, f.Z), f.Z) * CFrame.Angles(0, math.rad(f.R), 0)
 end
 
 local function renderOne(player: Player, plot: any, fid: string, f: Furniture)
@@ -354,7 +260,10 @@ local function renderOne(player: Player, plot: any, fid: string, f: Furniture)
 			end
 		end
 	end
-	m:PivotTo(furnitureCFrame(plot.Origin, f))
+	-- 지어진 집 테마 기준 (집 안 / 마당 높이). 없으면 저장된 테마
+	local data = DataService.Get(player)
+	local themeId = if type(plot.Theme) == "string" then plot.Theme elseif data then data.Theme else "Basic"
+	m:PivotTo(furnitureCFrame(plot.Origin, themeId, f))
 	m.Parent = folder
 end
 

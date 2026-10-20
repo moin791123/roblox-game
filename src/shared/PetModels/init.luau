@@ -1083,6 +1083,9 @@ local Kit = {
 	bounds = bounds,
 	dropParts = dropParts,
 	accAnchor = accAnchor,
+	-- v4: 무늬 알 (EggsPattern.luau 가 채워요). Config.Eggs[id].Look 표로 알을 만들어요
+	eggFromLook = nil :: ((Builder, any) -> ())?,
+	EGG_PATTERNS = {} :: { string },
 }
 
 for _, child in script:GetChildren() do
@@ -2083,8 +2086,25 @@ function PetModels.HasPet(petId: string): boolean
 	return PET_BUILDERS[petId] ~= nil
 end
 
+-- 알 빌더 찾기: 손으로 만든 빌더(EGG_BUILDERS) → Config.Eggs[id].Look 무늬 알 → 없으면 nil
+local function eggBuilder(eggId: string): ((Builder) -> ())?
+	local fn = EGG_BUILDERS[eggId]
+	if fn then
+		return fn
+	end
+	local def = (Config.Eggs :: any)[eggId]
+	local look = if type(def) == "table" then def.Look else nil
+	local fromLook = Kit.eggFromLook
+	if type(look) == "table" and fromLook then
+		return function(b: Builder)
+			fromLook(b, look)
+		end
+	end
+	return nil
+end
+
 function PetModels.HasEgg(eggId: string): boolean
-	return EGG_BUILDERS[eggId] ~= nil
+	return eggBuilder(eggId) ~= nil
 end
 
 function PetModels.HasAccessory(accId: string): boolean
@@ -2092,14 +2112,38 @@ function PetModels.HasAccessory(accId: string): boolean
 end
 
 function PetModels.BuildEgg(eggId: string): Model
-	local fn = EGG_BUILDERS[eggId]
+	local fn = eggBuilder(eggId)
 	if not fn then
 		warn("[PetModels] 알 수 없는 알: " .. tostring(eggId))
 		fn = EGG_BUILDERS.Basic
 	end
 	local b = newBuilder(eggId)
-	fn(b)
+	local ok, err = pcall(fn, b)
+	if not ok then
+		-- 빌더 오류(잘못된 Look 등)면 기본 알로 대신 보여줘요
+		warn("[PetModels] 알 만들기 오류 (" .. tostring(eggId) .. "): " .. tostring(err))
+		b.model:Destroy()
+		b = newBuilder(eggId)
+		EGG_BUILDERS.Basic(b)
+	end
 	return finish(b)
+end
+
+-- Look 표 하나로 바로 알 만들기 (Config 없이 미리보기/시험용). Look 형식은 EggsPattern.luau 맨 위 참고
+function PetModels.BuildEggLook(look: any, name: string?): Model
+	local b = newBuilder(name or "LookEgg")
+	local fromLook = Kit.eggFromLook
+	if fromLook then
+		fromLook(b, look)
+	else
+		EGG_BUILDERS.Basic(b)
+	end
+	return finish(b)
+end
+
+-- 무늬 알이 쓸 수 있는 Pattern 이름 목록
+function PetModels.EggPatterns(): { string }
+	return table.clone(Kit.EGG_PATTERNS)
 end
 
 -- 옷 하나만 (상점 미리보기용). PrimaryPart = 첫 파트, 피벗 = 바닥 가운데, 앞 = -Z (펫이 입었을 때와 같은 방향)

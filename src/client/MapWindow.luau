@@ -1,5 +1,6 @@
--- 🗺️ 지도 창: 지역 8개 카드 (이모지, 이름, 지역 색, 🔒 환생 N회 / "이동"), 지금 있는 지역 표시,
+-- 🗺️ 지도 창: 지역 카드 (이모지, 이름, 그 지역 알들 작은 그림, 지역 색, 🔒 환생 N회 / "이동"), 지금 있는 지역 표시,
 -- "🏠 우리 집" 버튼. 이동은 Teleport("Zone", i) / Teleport("Home") (서버가 환생 수를 다시 확인해요)
+-- 지역 수·알 수·위치는 모두 Config.Zones / Config.Eggs 에서 읽어요 (알 그림은 창을 처음 열 때 만들어요)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -15,6 +16,9 @@ local player = Players.LocalPlayer
 local MapWindow = {}
 
 local TELEPORT_GAP = 1.6 -- 서버 쿨다운(1.5초)보다 살짝 길게
+local MAX_EGG_ICONS = 6 -- 카드 한 장에 보여 줄 알 그림 수 (더 많으면 앞의 6개)
+
+type EggIcon = { Holder: Frame, EggId: string, Made: string? } -- Made: nil 아직 / "lit" 그림 / "dark" 그림자
 
 type Card = {
 	Frame: Frame,
@@ -26,6 +30,8 @@ type Card = {
 	Here: Frame,
 	Ground: Color3,
 	Unlocked: boolean?,
+	EggCount: number,
+	Eggs: { EggIcon },
 }
 
 local window: UiKit.Window
@@ -34,6 +40,30 @@ local homeButton: TextButton
 local cards: { [number]: Card } = {}
 local dirty = true
 local lastTeleport = 0
+local eggGen = 0
+
+-- 그 지역 알 목록: Zone.Eggs 순서 + (빠진 것이 있으면) EggOrder 에서 Zone 이 같은 알
+local function zoneEggs(i: number): { string }
+	local def: any = Config.Zones[i]
+	local list: { string } = {}
+	local seen: { [string]: boolean } = {}
+	if def and type(def.Eggs) == "table" then
+		for _, id in def.Eggs do
+			if type(id) == "string" and Config.Eggs[id] and not seen[id] then
+				seen[id] = true
+				table.insert(list, id)
+			end
+		end
+	end
+	for _, id in Config.EggOrder do
+		local egg = Config.Eggs[id]
+		if egg and egg.Zone == i and not seen[id] then
+			seen[id] = true
+			table.insert(list, id)
+		end
+	end
+	return list
+end
 
 local function rebirths(): number
 	local snap: any = State.Snapshot
@@ -105,8 +135,8 @@ local function createCard(parent: Instance, i: number): Card
 	local badge: Frame = Make("Frame", {
 		Name = "Badge",
 		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.fromScale(0.5, 0.05),
-		Size = UDim2.fromScale(0.4, 0.4),
+		Position = UDim2.fromScale(0.5, 0.04),
+		Size = UDim2.fromScale(0.32, 0.32),
 		BackgroundColor3 = pal.Accent,
 		ZIndex = 25,
 		Parent = frame,
@@ -128,18 +158,57 @@ local function createCard(parent: Instance, i: number): Card
 		Name = "ZoneName",
 		Text = i .. ". " .. def.Name,
 		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.fromScale(0.5, 0.46),
-		Size = UDim2.fromScale(0.92, 0.15),
+		Position = UDim2.fromScale(0.5, 0.37),
+		Size = UDim2.fromScale(0.92, 0.13),
 		ZIndex = 25,
 		Parent = frame,
 	}, { Stroke = UiKit.Darken(pal.Ground, 0.55), MaxText = 26, StrokeThickness = 2.5 })
+
+	-- 그 지역 알들 (작은 그림 한 줄, 칸에 맞게 줄어들어요)
+	local eggRow: Frame = Make("Frame", {
+		Name = "Eggs",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromScale(0.5, 0.505),
+		Size = UDim2.fromScale(0.94, 0.135),
+		BackgroundTransparency = 1,
+		ZIndex = 25,
+		Parent = frame,
+	})
+	Make("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 3),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = eggRow,
+	})
+	local allEggs = zoneEggs(i)
+	local shown = math.min(#allEggs, MAX_EGG_ICONS)
+	local eggs: { EggIcon } = {}
+	for k = 1, shown do
+		local eggId = allEggs[k]
+		local egg = Config.Eggs[eggId]
+		local holder: Frame = Make("Frame", {
+			Name = eggId,
+			LayoutOrder = k,
+			Size = UDim2.new(1 / math.max(shown, 4), -3, 1, 0),
+			BackgroundColor3 = C.White,
+			BackgroundTransparency = 0.35,
+			ZIndex = 26,
+			Parent = eggRow,
+		})
+		Make("UIAspectRatioConstraint", { AspectRatio = 1, Parent = holder })
+		UiKit.Corner(holder, UDim.new(0.5, 0))
+		UiKit.Stroke(holder, UiKit.RarityColor(egg.Rarity), 2, true)
+		table.insert(eggs, { Holder = holder, EggId = eggId, Made = nil })
+	end
 
 	local status = UiKit.Label({
 		Name = "Status",
 		Text = "",
 		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.fromScale(0.5, 0.61),
-		Size = UDim2.fromScale(0.9, 0.11),
+		Position = UDim2.fromScale(0.5, 0.645),
+		Size = UDim2.fromScale(0.9, 0.1),
 		ZIndex = 25,
 		Parent = frame,
 	}, { Stroke = UiKit.Darken(pal.Ground, 0.55), MaxText = 18 })
@@ -149,7 +218,7 @@ local function createCard(parent: Instance, i: number): Card
 		Text = "🚀 이동",
 		Color = C.Mint,
 		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.fromScale(0.5, 0.95),
+		Position = UDim2.fromScale(0.5, 0.955),
 		Size = UDim2.fromScale(0.82, 0.19),
 		Radius = UDim.new(0.35, 0),
 		TextSize = 24,
@@ -191,7 +260,41 @@ local function createCard(parent: Instance, i: number): Card
 		Here = here,
 		Ground = ground,
 		Unlocked = nil,
+		EggCount = #allEggs,
+		Eggs = eggs,
 	}
+end
+
+-- 알 그림 만들기 (창이 열려 있을 때만, 몇 개마다 한 프레임 쉬면서). 잠긴 지역은 그림자
+local function ensureEggIcons()
+	eggGen += 1
+	local my = eggGen
+	task.spawn(function()
+		local made = 0
+		local r = rebirths()
+		for i = 1, #cards do
+			local card = cards[i]
+			local want = if Config.ZoneUnlocked(i, r) then "lit" else "dark"
+			for _, icon in card.Eggs do
+				if icon.Made ~= want then
+					for _, child in icon.Holder:GetChildren() do
+						if child:IsA("GuiObject") then
+							child:Destroy()
+						end
+					end
+					UiKit.Viewport("Egg", icon.EggId, icon.Holder, want == "dark")
+					icon.Made = want
+					made += 1
+					if made % 8 == 0 then
+						task.wait()
+						if eggGen ~= my or not window.IsOpen() then
+							return
+						end
+					end
+				end
+			end
+		end
+	end)
 end
 
 local function refresh()
@@ -213,7 +316,7 @@ local function refresh()
 		if unlocked then
 			card.Frame.BackgroundColor3 = card.Ground
 			card.Badge.BackgroundColor3 = def.Palette.Accent
-			card.Status.Text = "💰 코인 ×" .. tostring(def.CoinMult)
+			card.Status.Text = "💰 코인 ×" .. tostring(def.CoinMult) .. (if card.EggCount > 0 then " · 🥚 " .. card.EggCount .. "종" else "")
 			card.ButtonLabel.Text = if isHere then "📍 스폰으로" else "🚀 이동"
 			card.Button.BackgroundColor3 = if isHere then C.Lemon else C.Mint
 		else
@@ -233,6 +336,9 @@ local function refresh()
 	end
 	if infoLabel then
 		infoLabel.Text = string.format("🔄 환생 %d회 · 열린 지역 %d/%d", r, opened, Config.MaxZone)
+	end
+	if window and window.IsOpen() then
+		ensureEggIcons()
 	end
 end
 

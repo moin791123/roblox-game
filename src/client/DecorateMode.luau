@@ -1,5 +1,6 @@
 -- 🪑 꾸미기 모드: 내 집에 가구를 놓고 / 옮기고 / 돌리고 / 치워요. (설계: docs/DESIGN.md §10 DecorateMode)
--- 고스트(미리보기)는 서버 ShopService.CanPlace 와 같은 규칙(HouseLayout + Config)으로 초록/빨강을 보여 줘요.
+-- 1층은 울타리 안 아무 데나 (마당 + 집 안), 위층은 집 안. 마당에 서 있어도 1층을 꾸밀 수 있어요.
+-- 고스트(미리보기)는 서버 ShopService.CanPlace 와 같은 함수(HouseLayout.CheckPlace)로 초록/빨강을 보여 줘요.
 -- 서버가 다시 검사하니까 여기 검사는 "미리 알려 주기" 용이에요.
 -- PC: 마우스를 따라오는 고스트, 클릭 = 놓기 / R 회전 / X·Delete 치우기 / Esc·Q 끝내기
 -- 폰: 바닥을 누르면 고스트가 그 자리로, 고스트를 한 번 더 누르거나 "✅ 놓기" = 놓기
@@ -32,17 +33,31 @@ do
 		warn("[DecorateMode] HouseLayout 모듈이 없어요 (간단한 규칙으로 미리 보여 줘요)")
 	end
 	if type(HouseLayout) ~= "table" then
+		-- 대신 규칙: 울타리 안이면 다 초록 (서버가 진짜로 검사해요)
+		local function floorY(floor: number): number
+			return 0.2 + (floor - 1) * Config.House.FloorHeight
+		end
+		local function plotBounds(_themeId: string, _floor: number): any
+			local half = Config.Layout.PlotSize / 2 - 0.7
+			return { MinX = -half, MaxX = half, MinZ = -half, MaxZ = half }
+		end
 		HouseLayout = {
-			FloorY = function(floor: number): number
-				return 0.2 + (floor - 1) * Config.House.FloorHeight
+			FloorY = floorY,
+			PlaceY = function(_themeId: string, floor: number, _x: number, _z: number): number
+				return floorY(floor)
 			end,
-			FloorBounds = function(themeId: string, _floor: number): any
-				local half = Config.ThemeSize(themeId) / 2 - 0.5
-				return { MinX = -half, MaxX = half, MinZ = -half, MaxZ = half }
+			FloorBounds = plotBounds,
+			PlaceBounds = plotBounds,
+			CheckPlace = function(): (boolean, string?)
+				return true, nil
 			end,
-			BlockedRects = function(_themeId: string, _floor: number): any
-				return {}
+			FitsInHouse = function(): boolean
+				return true
 			end,
+			SmallestThemeFor = function(): string?
+				return nil
+			end,
+			Reasons = {},
 		}
 	end
 end
@@ -77,7 +92,6 @@ local DecorateMode = {}
 local DECOR = Config.Decor
 -- 1 스터드 격자 (서버 Decor.Snap 의 배수라서 서버에서도 같은 자리)
 local GRID = DECOR.Snap * math.max(1, math.floor(1 / DECOR.Snap + 0.5))
-local EPS = 1e-3
 local FIRE_GAP = 0.25 -- 서버 요청 간격 (서버는 0.15 초)
 local TELEPORT_GAP = 1.6 -- 서버 Teleport 제한 1.5 초
 local TELEPORT_GRACE = 3 -- 순간이동 뒤 이만큼은 층/집 밖 검사 안 함
@@ -89,11 +103,13 @@ local MAX_RAY = 1500
 local COLOR_OK = Color3.fromRGB(90, 230, 120)
 local COLOR_BAD = Color3.fromRGB(255, 80, 95)
 
-local REASON_BAD = "여기에는 놓을 수 없어요!"
-local REASON_WALL = "벽 밖이에요!"
-local REASON_BLOCKED = "받침대/계단 자리예요!"
-local REASON_OVERLAP = "다른 가구랑 겹쳐요!"
+-- 알림 글은 서버와 같아요 (HouseLayout.Reasons)
+local REASONS = if type(HouseLayout.Reasons) == "table" then HouseLayout.Reasons else {}
+local REASON_BAD = REASONS.Bad or "여기에는 놓을 수 없어요!"
+local REASON_WALL = REASONS.Wall or "벽 밖이에요!"
+local REASON_FENCE = REASONS.Fence or "울타리 밖이에요!"
 local REASON_MAX = string.format("가구는 최대 %d개까지예요!", DECOR.MaxPlaced)
+local YARD_HINT = "울타리 안 아무 데나 놓을 수 있어요!"
 
 type Piece = { Id: string, Floor: number, X: number, Z: number, R: number }
 type Rect = { MinX: number, MaxX: number, MinZ: number, MaxZ: number }
@@ -263,20 +279,11 @@ local function countPlaced(): number
 end
 
 ----------------------------------------------------------------------
--- 놓기 규칙 (서버 ShopService.CanPlace 와 똑같이)
+-- 놓기 규칙 (서버 ShopService.CanPlace 와 같은 함수 HouseLayout.CheckPlace)
 ----------------------------------------------------------------------
 local function footprintRect(furnId: string, x: number, z: number, r: number): Rect
 	local sx, sz = Config.FurnitureFootprint(furnId, r)
 	return { MinX = x - sx / 2, MaxX = x + sx / 2, MinZ = z - sz / 2, MaxZ = z + sz / 2 }
-end
-
-local function overlaps(a: Rect, b: any): boolean
-	local bMinX, bMaxX = tonumber(b.MinX), tonumber(b.MaxX)
-	local bMinZ, bMaxZ = tonumber(b.MinZ), tonumber(b.MaxZ)
-	if not (bMinX and bMaxX and bMinZ and bMaxZ) then
-		return false
-	end
-	return a.MinX < bMaxX - EPS and bMinX < a.MaxX - EPS and a.MinZ < bMaxZ - EPS and bMinZ < a.MaxZ - EPS
 end
 
 local function isRug(furnId: string): boolean
@@ -284,55 +291,7 @@ local function isRug(furnId: string): boolean
 	return def ~= nil and def.Category == "Rug"
 end
 
--- 서버 checkPlace 와 같은 본체 (테마·층 수·다른 가구를 받아요). x, z 는 Snap 된 값, r 은 0/90/180/270
--- pre = 미리 구한 { Bounds, Blocked } (같은 층을 많이 검사할 때. HouseLayout 값이라 결과는 같아요)
-type Pre = { Bounds: any, Blocked: any }
-local function checkRules(theme: string, floors: number, furnId: string, floor: number, x: number, z: number, r: number, others: { [string]: Piece }, ignoreFid: string?, pre: Pre?): (boolean, string?)
-	if not Config.Furniture[furnId] then
-		return false, REASON_BAD
-	end
-	if floor ~= math.floor(floor) or floor < 1 or floor > floors or floor > Config.House.MaxFloors then
-		return false, REASON_BAD
-	end
-	local rect = footprintRect(furnId, x, z, r)
-
-	local okB, bounds = true, pre and pre.Bounds
-	if not pre then
-		okB, bounds = pcall(HouseLayout.FloorBounds, theme, floor)
-	end
-	if not okB or type(bounds) ~= "table" then
-		return false, REASON_BAD
-	end
-	local m = DECOR.WallMargin
-	local minX, maxX = (tonumber(bounds.MinX) or 0) + m, (tonumber(bounds.MaxX) or 0) - m
-	local minZ, maxZ = (tonumber(bounds.MinZ) or 0) + m, (tonumber(bounds.MaxZ) or 0) - m
-	if rect.MinX < minX - EPS or rect.MaxX > maxX + EPS or rect.MinZ < minZ - EPS or rect.MaxZ > maxZ + EPS then
-		return false, REASON_WALL
-	end
-
-	local okR, blocked = true, pre and pre.Blocked
-	if not pre then
-		okR, blocked = pcall(HouseLayout.BlockedRects, theme, floor)
-	end
-	if okR and type(blocked) == "table" then
-		for _, b in blocked do
-			if type(b) == "table" and overlaps(rect, b) then
-				return false, REASON_BLOCKED
-			end
-		end
-	end
-
-	local rug = isRug(furnId)
-	for fid, f in others do
-		if fid ~= ignoreFid and f.Floor == floor and not rug and not isRug(f.Id) then
-			if overlaps(rect, footprintRect(f.Id, f.X, f.Z, f.R)) then
-				return false, REASON_OVERLAP
-			end
-		end
-	end
-	return true, nil
-end
-
+-- 서버 CanPlace 와 같은 순서: 층 → 플롯 밖 → 개수 → HouseLayout.CheckPlace (땅 끝·막힌 자리·다른 가구)
 local function canPlaceLocal(furnId: string, floor: number, x: number, z: number, r: number, ignoreFid: string?): (boolean, string?)
 	if not snapshot() or not Config.Furniture[furnId] then
 		return false, REASON_BAD
@@ -342,7 +301,7 @@ local function canPlaceLocal(furnId: string, floor: number, x: number, z: number
 	end
 	local half = Config.Layout.PlotSize / 2
 	if math.abs(x) > half or math.abs(z) > half then
-		return false, REASON_WALL
+		return false, if floor == 1 then REASON_FENCE else REASON_WALL
 	end
 	local placed = placedMap()
 	if not ignoreFid then
@@ -354,96 +313,66 @@ local function canPlaceLocal(furnId: string, floor: number, x: number, z: number
 			return false, REASON_MAX
 		end
 	end
-	return checkRules(themeId(), floorsCount(), furnId, floor, x, z, r, placed, ignoreFid)
+	local ok, fits, reason = pcall(HouseLayout.CheckPlace, themeId(), floorsCount(), furnId, floor, x, z, r, placed, ignoreFid)
+	if not ok then
+		return true, nil -- 검사가 고장 나면 서버에 맡겨요
+	end
+	return fits == true, reason
 end
 
--- 빈 집에 이 가구가 들어갈 자리가 하나라도 있나? (서버 ShopService fitsInHouse 와 똑같이: 1~2층, 0/90도,
--- Snap 한 벽 끝에서 max(Snap, 1) 씩, 다른 가구 없이). 서버는 안 들어가는 가구는 팔지 않아요. 결과는 기억해요
-local NO_OTHERS: { [string]: Piece } = {}
-local fitCache: { [string]: boolean } = {}
-
-local function snapHalf(v: number): number
-	local s = DECOR.Snap
-	return math.floor(v / s + 0.5) * s
-end
-
+-- 빈 집(마당 포함)에 이 가구가 들어갈 자리가 하나라도 있나? = 서버 fitsInHouse (HouseLayout.FitsInHouse, 결과는 기억해요).
+-- 서버는 안 들어가는 가구는 팔지 않아요. 상점 "🏠 더 큰 집 필요" 표시용
 function DecorateMode.FitsInHouse(theme: string, floors: number, furnId: string): boolean
-	local floorCount = math.floor(tonumber(floors) or 1)
-	local maxFloor = math.clamp(floorCount, 1, 2) -- 2층부터는 모양이 같아요
-	local key = tostring(theme) .. "|" .. maxFloor .. "|" .. furnId
-	local cached = fitCache[key]
-	if cached ~= nil then
-		return cached
-	end
-	local step = math.max(DECOR.Snap, 1)
-	local found = false
-	for floor = 1, maxFloor do
-		local okB, b = pcall(HouseLayout.FloorBounds, theme, floor)
-		if okB and type(b) == "table" then
-			local okR, blocked = pcall(HouseLayout.BlockedRects, theme, floor)
-			local pre: Pre = { Bounds = b, Blocked = if okR then blocked else nil }
-			local x0, x1 = snapHalf(tonumber(b.MinX) or 0), snapHalf(tonumber(b.MaxX) or 0)
-			local z0, z1 = snapHalf(tonumber(b.MinZ) or 0), snapHalf(tonumber(b.MaxZ) or 0)
-			for _, r in { 0, 90 } do
-				local x = x0
-				while x <= x1 and not found do
-					local z = z0
-					while z <= z1 do
-						if checkRules(theme, floorCount, furnId, floor, x, z, r, NO_OTHERS, nil, pre) then
-							found = true
-							break
-						end
-						z += step
-					end
-					x += step
-				end
-				if found then
-					break
-				end
-			end
-		end
-		if found then
-			break
-		end
-	end
-	fitCache[key] = found
-	return found
+	local ok, fits = pcall(HouseLayout.FitsInHouse, theme, tonumber(floors) or 1, furnId)
+	return not ok or fits ~= false
 end
 
 -- 이 가구가 들어가는 가장 작은 집 테마 이름 (없으면 nil). 서버 알림과 같은 글
 function DecorateMode.SmallestThemeFor(furnId: string, floors: number): string?
-	for _, id in Config.House.ThemeOrder do
-		if DecorateMode.FitsInHouse(id, floors, furnId) then
-			local theme = Config.House.Themes[id]
-			return if theme then theme.Name else id
-		end
+	local ok, id = pcall(HouseLayout.SmallestThemeFor, furnId, tonumber(floors) or 1)
+	if not ok or type(id) ~= "string" then
+		return nil
 	end
-	return nil
+	local theme = Config.House.Themes[id]
+	return if theme then theme.Name else id
 end
 
 ----------------------------------------------------------------------
 -- 위치 계산 (화면 → 집 로컬 바닥)
 ----------------------------------------------------------------------
-local function floorWorldY(origin: CFrame): number
-	return (origin * CFrame.new(0, HouseLayout.FloorY(editFloor), 0)).Position.Y
-end
-
--- 화면 좌표(뷰포트) → 바닥 평면 위 로컬 (x, z). 못 맞추면 nil
-local function rayToLocal(ray: Ray): (number?, number?)
-	local origin = plotOrigin()
-	if not origin then
-		return nil, nil
-	end
+-- 광선 ↔ 플롯 로컬 높이 localY 의 수평면 → 로컬 (x, z). 못 맞추면 nil
+local function planeHit(origin: CFrame, ray: Ray, localY: number): (number?, number?)
 	local dy = ray.Direction.Y
 	if math.abs(dy) < 1e-4 then
 		return nil, nil
 	end
-	local t = (floorWorldY(origin) - ray.Origin.Y) / dy
+	local worldY = (origin * CFrame.new(0, localY, 0)).Position.Y
+	local t = (worldY - ray.Origin.Y) / dy
 	if t <= 0 or t > MAX_RAY then
 		return nil, nil
 	end
 	local p = origin:PointToObjectSpace(ray.Origin + ray.Direction * t)
 	return p.X, p.Z
+end
+
+-- 화면 광선 → 꾸미는 층 바닥 위 로컬 (x, z). 1층 마당은 땅이 집 바닥보다 살짝 낮아서 그 높이로 한 번 더 맞춰요
+local function rayToLocal(ray: Ray): (number?, number?)
+	local origin = plotOrigin()
+	if not origin then
+		return nil, nil
+	end
+	local y = HouseLayout.FloorY(editFloor)
+	local x, z = planeHit(origin, ray, y)
+	if x and z and editFloor == 1 then
+		local y2 = HouseLayout.PlaceY(themeId(), 1, x, z)
+		if math.abs(y2 - y) > 1e-3 then
+			local x2, z2 = planeHit(origin, ray, y2)
+			if x2 and z2 then
+				x, z = x2, z2
+			end
+		end
+	end
+	return x, z
 end
 
 local function viewportRay(pos: Vector2): Ray?
@@ -454,7 +383,7 @@ local function viewportRay(pos: Vector2): Ray?
 	return cam:ViewportPointToRay(pos.X, pos.Y)
 end
 
--- 캐릭터가 있는 층, 집 안인지, 집 땅 위인지
+-- 캐릭터가 있는 층, 그 층 꾸미는 자리 안인지 (1층 = 울타리 안 마당 + 집 안, 위층 = 집 안), 집 땅 근처인지
 local function characterWhere(): (number, boolean, boolean)
 	local hrp, hum = character()
 	local origin = plotOrigin()
@@ -468,7 +397,7 @@ local function characterWhere(): (number, boolean, boolean)
 	local fh = Config.House.FloorHeight
 	local f = math.clamp(math.floor((feet - HouseLayout.FloorY(1)) / fh + 0.5) + 1, 1, floorsCount())
 	local inside = false
-	local ok, b = pcall(HouseLayout.FloorBounds, themeId(), f)
+	local ok, b = pcall(HouseLayout.PlaceBounds, themeId(), f)
 	if ok and type(b) == "table" then
 		local minX, maxX = tonumber(b.MinX) or 0, tonumber(b.MaxX) or 0
 		local minZ, maxZ = tonumber(b.MinZ) or 0, tonumber(b.MaxZ) or 0
@@ -702,7 +631,7 @@ local function refreshGhost(force: boolean?)
 	end
 	ghostKey = key
 	ghostValid, ghostReason = canPlaceLocal(id, editFloor, x, z, rot, ignore)
-	local y = HouseLayout.FloorY(editFloor)
+	local y = HouseLayout.PlaceY(themeId(), editFloor, x, z) -- 마당이면 땅, 집 안이면 바닥 (서버 그리기와 같아요)
 	m:PivotTo(origin * CFrame.new(x, y + GHOST_LIFT, z) * CFrame.Angles(0, math.rad(rot), 0))
 	local sx, sz = Config.FurnitureFootprint(id, rot)
 	p.Size = Vector3.new(math.max(sx, 0.2), 0.08, math.max(sz, 0.2))
@@ -1232,7 +1161,7 @@ function updateHint()
 	local color = C.Sky
 	if mode == "Place" or mode == "Move" then
 		if gx == nil then
-			text = "👆 놓을 곳을 눌러요"
+			text = if editFloor == 1 then "👆 " .. YARD_HINT else "👆 놓을 곳을 눌러요"
 		elseif ghostValid then
 			text = if isTouchInput() then "✅ 좋아요! 한 번 더 누르면 놓아요" else "✅ 여기에 놓을 수 있어요! (클릭)"
 			color = C.Mint
@@ -1255,7 +1184,13 @@ function updateHint()
 				break
 			end
 		end
-		text = if hasInv then "👇 가구를 고르거나, 놓인 가구를 눌러요" else "🛋 놓인 가구를 누르거나 🛍 상점에서 사 와요"
+		if not hasInv then
+			text = "🛋 놓인 가구를 누르거나 🛍 상점에서 사 와요"
+		elseif editFloor == 1 then
+			text = "🌳 " .. YARD_HINT
+		else
+			text = "👇 가구를 고르거나, 놓인 가구를 눌러요"
+		end
 	end
 	hintLabel.Text = text
 	hintPill.BackgroundColor3 = color
@@ -1730,7 +1665,7 @@ function DecorateMode.Enter(floor: number?, furnId: string?)
 		if ownScreen then
 			(ownScreen :: ScreenGui).Enabled = true
 		end
-		Toasts.Show("🪑 꾸미기 시작! 아래에서 가구를 골라요", "good")
+		Toasts.Show(if target == 1 then "🪑 꾸미기 시작! 🌳 " .. YARD_HINT else "🪑 꾸미기 시작! 아래에서 가구를 골라요", "good")
 		fireChanged()
 	end
 

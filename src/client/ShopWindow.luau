@@ -129,8 +129,8 @@ local function needCoins(price: number, button: GuiObject)
 	UiKit.Shake(button, 6, 6)
 end
 
--- 지금 집(테마·층 수)에 이 가구를 놓을 자리가 있나? 규칙은 DecorateMode (= 서버 fitsInHouse) 와 같아요.
--- 결과는 DecorateMode 가 테마·층별로 기억해요. 모르면 true (서버가 다시 검사해요)
+-- 지금 집(테마·층 수)에 이 가구를 놓을 자리가 있나? 1층은 울타리 안 마당도 자리라서 거의 다 들어가요.
+-- 규칙은 서버와 같은 HouseLayout.FitsInHouse (DecorateMode 를 거쳐요), 결과는 테마·층별로 기억해요. 모르면 true (서버가 다시 검사해요)
 local function fitsHouse(furnId: string): boolean
 	local snap = snapshot()
 	if not snap or not DecorateMode or type(DecorateMode.FitsInHouse) ~= "function" then
