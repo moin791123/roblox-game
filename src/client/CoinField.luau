@@ -1,4 +1,5 @@
 -- 내 들판 코인: 서버가 보내는 CoinField 이벤트대로 로컬 파트를 그리고, 가까이 가면 빨려 들어와요.
+-- 코인은 지역마다 있어요 (payload.Zone). 가벼우려고 내가 있는 지역 코인 + 가까운(RenderDistance) 코인만 파트로 그려요.
 -- 파트는 workspace.ClientCoins 아래에 (나한테만 보임). 먹기는 PickupCoin 으로 서버에 요청해요.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -15,20 +16,24 @@ local player = Players.LocalPlayer
 local CoinField = {}
 
 local MAGNET_INTERVAL = 0.1
+local CULL_INTERVAL = 0.3 -- 보이기/숨기기 다시 계산
 local FLY_TIME = 0.25 -- 플레이어에게 날아가는 시간
 local CONFIRM_TIMEOUT = 3 -- 서버가 Remove 를 안 보내면 코인을 되살리는 시간
 local SPIN_SPEED = 2.4
 local BOB_HEIGHT = 0.25
 local BOB_SPEED = 2.2
 local SOUND_GAP = 0.08
+local RENDER_DISTANCE = math.min(FC.RenderDistance or 150, 160)
 
 type CoinKind = { Name: string, Value: number, Weight: number, Color: Color3, Size: number }
 type Entry = {
 	id: number,
 	kind: CoinKind,
+	zone: number,
 	base: Vector3, -- 떠 있는 기준 위치 (코인 중심)
 	phase: number,
 	part: BasePart?,
+	visible: boolean, -- 지금 그려야 하는지 (내 지역이거나 가까움)
 	state: string, -- "Live" | "Pending" | "Gone"
 	flyStart: number,
 	flyFrom: CFrame,
@@ -38,10 +43,12 @@ type Entry = {
 }
 
 local entries: { [number]: Entry } = {}
+local shown: { [number]: Entry } = {} -- 파트가 있는 코인만
 local folder: Folder? = nil
 local moveParts: { BasePart } = {}
 local moveCFrames: { CFrame } = {}
 local lastSound = 0
+local myZone = 1 -- 지금 있는 지역 (길 위에서는 마지막 지역)
 local initialized = false
 
 ----------------------------------------------------------------------
@@ -82,6 +89,16 @@ local function getHRP(): BasePart?
 		return hrp
 	end
 	return nil
+end
+
+-- 보는 기준 위치 (캐릭터가 없으면 카메라)
+local function viewPosition(): Vector3?
+	local hrp = getHRP()
+	if hrp then
+		return hrp.Position
+	end
+	local cam = workspace.CurrentCamera
+	return if cam then cam.CFrame.Position else nil
 end
 
 -- 따라오는 펫 수 + 타는 펫 (스냅샷 기준, 서버 FollowService.GetFollowerCount 와 같아야 해요)
@@ -160,18 +177,44 @@ end
 local function destroyPart(entry: Entry)
 	local part = entry.part
 	entry.part = nil
+	shown[entry.id] = nil
 	if part then
 		part:Destroy()
 	end
 end
 
-local function spawnPart(entry: Entry)
-	destroyPart(entry)
+local function ensurePart(entry: Entry)
+	if entry.part then
+		return
+	end
 	local part = makePart(entry.kind)
 	part.CFrame = CFrame.new(entry.base) * CFrame.Angles(0, entry.phase, 0)
 	part.Parent = getFolder()
 	entry.part = part
+	shown[entry.id] = entry
+end
+
+-- 보여야 하는지: 내 지역 코인이거나 가까운 코인
+local function wantVisible(entry: Entry, view: Vector3?): boolean
+	if entry.zone == myZone then
+		return true
+	end
+	if not view then
+		return false
+	end
+	local dx, dz = entry.base.X - view.X, entry.base.Z - view.Z
+	return dx * dx + dz * dz <= RENDER_DISTANCE * RENDER_DISTANCE
+end
+
+-- 다시 살아 있는 코인으로 (보일 때만 파트를 만들어요)
+local function setLive(entry: Entry)
 	entry.state = "Live"
+	entry.confirmed = false
+	if entry.visible then
+		ensurePart(entry)
+	else
+		destroyPart(entry)
+	end
 end
 
 local function removeEntry(id: number)
@@ -193,15 +236,18 @@ local function addCoin(raw: any)
 	if type(id) ~= "number" or not kind or typeof(pos) ~= "Vector3" then
 		return
 	end
+	local zone = if type(raw.Zone) == "number" then raw.Zone else (Config.ZoneAt(pos) or 1)
 	removeEntry(id)
 	-- 큰 코인은 바닥에 안 묻히게 조금 더 띄워요
 	local lift = 1.2 + kind.Size * 0.35
 	local entry: Entry = {
 		id = id,
 		kind = kind,
+		zone = zone,
 		base = pos + Vector3.new(0, lift, 0),
 		phase = (id * 0.73) % (math.pi * 2),
 		part = nil,
+		visible = false,
 		state = "Live",
 		flyStart = 0,
 		flyFrom = CFrame.identity,
@@ -209,8 +255,9 @@ local function addCoin(raw: any)
 		goneAt = 0,
 		confirmed = false,
 	}
+	entry.visible = wantVisible(entry, viewPosition())
 	entries[id] = entry
-	spawnPart(entry)
+	setLive(entry)
 end
 
 local function resetCoins(list: any)
@@ -218,6 +265,7 @@ local function resetCoins(list: any)
 		removeEntry(id)
 	end
 	table.clear(entries)
+	table.clear(shown)
 	if type(list) ~= "table" then
 		return
 	end
@@ -243,10 +291,41 @@ local function onRemove(id: any)
 end
 
 ----------------------------------------------------------------------
+-- 보이기/숨기기 (지역 + 거리)
+----------------------------------------------------------------------
+
+local function updateZone(view: Vector3?)
+	if not view then
+		return
+	end
+	local z = Config.ZoneAt(view)
+	if z then
+		myZone = z
+	end
+end
+
+local function cullCheck()
+	local view = viewPosition()
+	updateZone(view)
+	for _, entry in entries do
+		local want = wantVisible(entry, view)
+		entry.visible = want
+		if entry.state == "Live" then
+			if want then
+				ensurePart(entry)
+			elseif entry.part then
+				destroyPart(entry)
+			end
+		end
+	end
+end
+
+----------------------------------------------------------------------
 -- 자석: 반경 안 코인을 빨아들여요
 ----------------------------------------------------------------------
 
 local function startFly(entry: Entry)
+	ensurePart(entry)
 	local part = entry.part
 	if not part then
 		return
@@ -269,20 +348,22 @@ local function magnetCheck()
 	local radius = FC.MagnetRadius + FC.MagnetPerFollower * followerCount()
 	local r2 = radius * radius
 	for _, entry in entries do
-		if entry.state == "Live" and hrp then
-			local d = entry.base - hrp.Position
-			if d:Dot(d) <= r2 then
-				startFly(entry)
+		if entry.state == "Live" then
+			if hrp then
+				local d = entry.base - hrp.Position
+				if d:Dot(d) <= r2 then
+					startFly(entry)
+				end
 			end
 		elseif entry.state == "Gone" and not entry.confirmed and now - entry.goneAt > CONFIRM_TIMEOUT then
 			-- 서버가 안 받아줬어요 (너무 멀었거나 지연): 제자리에 다시 놓아요
-			spawnPart(entry)
+			setLive(entry)
 		end
 	end
 end
 
 ----------------------------------------------------------------------
--- 매 프레임: 빙글빙글 + 둥실둥실 + 날아가기
+-- 매 프레임: 빙글빙글 + 둥실둥실 + 날아가기 (파트가 있는 코인만)
 ----------------------------------------------------------------------
 
 local function render()
@@ -290,7 +371,7 @@ local function render()
 	local hrp = getHRP()
 	table.clear(moveParts)
 	table.clear(moveCFrames)
-	for _, entry in entries do
+	for _, entry in shown do
 		local part = entry.part
 		if not part then
 			continue
@@ -332,6 +413,18 @@ end
 -- 공개 API
 ----------------------------------------------------------------------
 
+-- 지금 그리고 있는 코인 수 / 전체 코인 수 (디버그용)
+function CoinField.Counts(): (number, number)
+	local a, b = 0, 0
+	for _ in shown do
+		a += 1
+	end
+	for _ in entries do
+		b += 1
+	end
+	return a, b
+end
+
 function CoinField.Init()
 	if initialized then
 		return
@@ -352,8 +445,14 @@ function CoinField.Init()
 	RunService.RenderStepped:Connect(render)
 
 	task.spawn(function()
+		local nextCull = 0
 		while true do
 			task.wait(MAGNET_INTERVAL)
+			local now = os.clock()
+			if now >= nextCull then
+				nextCull = now + CULL_INTERVAL
+				cullCheck()
+			end
 			magnetCheck()
 		end
 	end)

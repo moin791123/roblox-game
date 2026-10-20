@@ -474,7 +474,32 @@ function UiKit.Viewport(kind: string, id: string, parent: GuiObject, silhouette:
 	return label, nil
 end
 
--- 가구 뷰포트 (상점·꾸미기 칸). FurnitureModels 가 없거나 실패하면 이모지로 대신
+-- 모델 하나를 ViewportFrame 에 담아 비스듬히 앞에서 보여 줘요 (모델은 그 안으로 옮겨요)
+function UiKit.ModelViewport(model: Model, parent: GuiObject): ViewportFrame
+	local vf: ViewportFrame = Make("ViewportFrame", {
+		Name = "ModelViewport",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Ambient = Color3.fromRGB(175, 175, 185),
+		LightColor = Color3.fromRGB(255, 250, 245),
+		LightDirection = Vector3.new(-0.4, -1, 0.8),
+	})
+	model.Parent = vf
+	local cam: Camera = Make("Camera", { FieldOfView = 32, Parent = vf })
+	vf.CurrentCamera = cam
+	local cf, size = model:GetBoundingBox()
+	local radius = math.max(size.Magnitude * 0.5, 0.5)
+	local dist = radius / math.sin(math.rad(cam.FieldOfView * 0.5)) * 0.85
+	local dir = Vector3.new(0.45, 0.32, -1).Unit -- 앞(-Z) 오른쪽 위에서
+	local center = cf.Position
+	cam.CFrame = CFrame.lookAt(center + dir * dist, center)
+	vf.Parent = parent
+	return vf
+end
+
+-- 가구 뷰포트 (상점·꾸미기 칸). FurnitureModels.CreateViewport → 없으면 Build 로 직접 → 그것도 안 되면 이모지
 function UiKit.FurnitureViewport(furnId: string, parent: GuiObject): (GuiObject, Model?)
 	local fm = getFurnitureModels()
 	if fm and fm.CreateViewport then
@@ -494,6 +519,14 @@ function UiKit.FurnitureViewport(furnId: string, parent: GuiObject): (GuiObject,
 			return vp, m
 		elseif not ok then
 			warn("[UiKit] 가구 CreateViewport 실패:", vp)
+		end
+	end
+	if fm and fm.Build then
+		local ok, model = pcall(fm.Build, furnId)
+		if ok and typeof(model) == "Instance" and model:IsA("Model") then
+			return UiKit.ModelViewport(model, parent), model
+		elseif not ok then
+			warn("[UiKit] 가구 Build 실패:", model)
 		end
 	end
 	local label = UiKit.Label({ Text = "🛋", Parent = parent }, { MaxText = 80 })

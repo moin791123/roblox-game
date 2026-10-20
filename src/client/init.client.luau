@@ -1,5 +1,7 @@
--- 펫 월드: 클라이언트 시작점
--- 화면(UI)과 효과를 만들고 서버 이벤트를 연결해요.
+-- 펫 월드 (v3): 클라이언트 시작점
+-- 화면(UI)과 효과를 만들고 서버 이벤트를 연결해요. 창은 한 번에 하나만 열려요.
+-- 단축키: B 가방 / N 도감 / H 집 / P 상점 / M 지도 / L 순위 / R 환생
+-- (꾸미기 모드 중에는 단축키를 쉬어요. R 회전 · X 치우기 · Esc/Q 끝내기는 DecorateMode 가 직접 받아요)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
@@ -18,6 +20,44 @@ local HatchFx = require(script.HatchFx)
 local WorldFx = require(script.WorldFx)
 local CoinField = require(script.CoinField)
 local Tips = require(script.Tips)
+
+-- 다른 모듈(상점·지도·순위·꾸미기·지역)은 없거나 오류가 나도 나머지 화면이 살아 있게 pcall 로 불러요
+local function optionalRequire(name: string): any
+	local mod = script:FindFirstChild(name)
+	if not mod or not mod:IsA("ModuleScript") then
+		warn("[Client] " .. name .. " 모듈이 없어요")
+		return nil
+	end
+	local ok, result = pcall(require, mod)
+	if not ok then
+		warn("[Client] " .. name .. " 불러오기 실패:", result)
+		return nil
+	end
+	return result
+end
+
+local ShopWindow = optionalRequire("ShopWindow") -- Init(gui), Open(tab?), Close, IsOpen, OnSync
+local MapWindow = optionalRequire("MapWindow") -- Init(gui), Open, Close, IsOpen, OnSync?
+local LeaderboardWindow = optionalRequire("LeaderboardWindow") -- Init(gui), Open, Close, IsOpen, OnSync, SetBoard (LeaderboardSync 는 스스로 받아요)
+local DecorateMode = optionalRequire("DecorateMode") -- Init(gui?), Enter(floor?, furnId?), Exit, IsActive, OnSync, OnChanged(fn), SetShopOpener(fn)
+local ZoneClient = optionalRequire("ZoneClient") -- Init()
+
+-- 모듈 함수 안전하게 부르기 (없으면 nil, 오류는 경고만)
+local function safeCall(mod: any, fnName: string, ...: any): any
+	if type(mod) ~= "table" then
+		return nil
+	end
+	local fn = mod[fnName]
+	if type(fn) ~= "function" then
+		return nil
+	end
+	local ok, result = pcall(fn, ...)
+	if not ok then
+		warn("[Client] " .. fnName .. " 오류:", result)
+		return nil
+	end
+	return result
+end
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -38,39 +78,6 @@ local gui: ScreenGui = UiKit.Make("ScreenGui", {
 	Parent = playerGui,
 })
 
--- 창은 한 번에 하나만 열려요
-type WindowApi = { Open: () -> (), Close: () -> (), IsOpen: () -> boolean }
-local windows: { WindowApi } = { BagWindow, IndexWindow, HouseWindow, RebirthWindow }
-
-local function toggle(target: WindowApi)
-	if target.IsOpen() then
-		target.Close()
-		return
-	end
-	for _, w in windows do
-		if w ~= target then
-			w.Close()
-		end
-	end
-	target.Open()
-end
-
-local function toggleBag()
-	toggle(BagWindow)
-end
-
-local function toggleIndex()
-	toggle(IndexWindow)
-end
-
-local function toggleHouse()
-	toggle(HouseWindow)
-end
-
-local function toggleRebirth()
-	toggle(RebirthWindow)
-end
-
 -- 알림은 부화 연출(DisplayOrder 20)보다 위에 보이도록 따로
 local toastGui: ScreenGui = UiKit.Make("ScreenGui", {
 	Name = "PetWorldToasts",
@@ -81,27 +88,184 @@ local toastGui: ScreenGui = UiKit.Make("ScreenGui", {
 	Parent = playerGui,
 })
 Toasts.Init(toastGui)
-Hud.Init(gui, { ToggleBag = toggleBag, ToggleIndex = toggleIndex, ToggleHouse = toggleHouse, ToggleRebirth = toggleRebirth })
-BagWindow.Init(gui)
+
+----------------------------------------------------------------------
+-- 창 목록 (한 번에 하나만 열려요)
+----------------------------------------------------------------------
+type WindowApi = { Open: (...any) -> (), Close: () -> (), IsOpen: () -> boolean }
+
+local function windowOf(mod: any, missingText: string): WindowApi
+	return {
+		Open = function(...: any)
+			if type(mod) == "table" and type(mod.Open) == "function" then
+				safeCall(mod, "Open", ...)
+			else
+				Toasts.Show(missingText, "info")
+			end
+		end,
+		Close = function()
+			safeCall(mod, "Close")
+		end,
+		IsOpen = function(): boolean
+			return safeCall(mod, "IsOpen") == true
+		end,
+	}
+end
+
+local Bag = windowOf(BagWindow, "🎒 가방을 준비 중이에요!")
+local Index = windowOf(IndexWindow, "📖 도감을 준비 중이에요!")
+local House = windowOf(HouseWindow, "🏠 집 창을 준비 중이에요!")
+local Rebirth = windowOf(RebirthWindow, "🔄 환생 창을 준비 중이에요!")
+local Shop = windowOf(ShopWindow, "🛍 상점은 곧 열려요!")
+local Map = windowOf(MapWindow, "🗺 지도는 곧 열려요!")
+local Board = windowOf(LeaderboardWindow, "🏆 순위표는 곧 열려요!")
+local windows: { WindowApi } = { Bag, Index, House, Rebirth, Shop, Map, Board }
+
+local function decorating(): boolean
+	return safeCall(DecorateMode, "IsActive") == true
+end
+
+local function closeAll(except: WindowApi?)
+	for _, w in windows do
+		if w ~= except then
+			w.Close()
+		end
+	end
+end
+
+-- 이 창만 열기 (꾸미기 중이면 꾸미기를 끝내고)
+local function openOnly(target: WindowApi, ...: any)
+	if decorating() then
+		safeCall(DecorateMode, "Exit")
+	end
+	closeAll(target)
+	target.Open(...)
+end
+
+local function toggle(target: WindowApi)
+	if target.IsOpen() then
+		target.Close()
+		return
+	end
+	openOnly(target)
+end
+
+local function openShop(tab: string?)
+	openOnly(Shop, tab)
+end
+
+----------------------------------------------------------------------
+-- 만들기
+----------------------------------------------------------------------
+Hud.Init(gui, {
+	ToggleBag = function()
+		toggle(Bag)
+	end,
+	ToggleIndex = function()
+		toggle(Index)
+	end,
+	ToggleHouse = function()
+		toggle(House)
+	end,
+	ToggleRebirth = function()
+		toggle(Rebirth)
+	end,
+	ToggleShop = function()
+		toggle(Shop)
+	end,
+	ToggleMap = function()
+		toggle(Map)
+	end,
+	ToggleLeaderboard = function()
+		toggle(Board)
+	end,
+})
+BagWindow.Init(gui, { OpenShop = openShop })
 IndexWindow.Init(gui)
-HouseWindow.Init(gui)
+HouseWindow.Init(gui, {
+	-- 🛋️ 꾸미기: 창을 모두 닫고 꾸미기 모드 (floor = 지금 있는 층, 집 밖이면 nil)
+	Decorate = function(floor: number?)
+		closeAll()
+		if DecorateMode then
+			safeCall(DecorateMode, "Enter", floor)
+		else
+			Toasts.Show("🛋️ 꾸미기는 곧 열려요!", "info")
+		end
+	end,
+	OpenShop = openShop,
+})
 RebirthWindow.Init(gui)
+safeCall(ShopWindow, "Init", gui)
+safeCall(MapWindow, "Init", gui)
+safeCall(LeaderboardWindow, "Init", gui)
+safeCall(DecorateMode, "Init", gui)
 Tips.Init(gui)
 HatchFx.Init(playerGui)
 WorldFx.Init()
 CoinField.Init()
+safeCall(ZoneClient, "Init")
 
+-- 엘리베이터 프롬프트 → 층 고르기 창
+WorldFx.OnElevator(function(floor: number?)
+	if decorating() then
+		return
+	end
+	closeAll(House)
+	HouseWindow.OpenFloorPicker(floor)
+end)
+
+-- 꾸미기 모드 가구 가방이 비었을 때 "🛍 상점" → 상점 가구 탭 (꾸미기는 그대로, 다른 창은 닫아요)
+safeCall(DecorateMode, "SetShopOpener", function()
+	closeAll(Shop)
+	Shop.Open("Furniture")
+end)
+
+-- 꾸미기 모드가 켜지면 창을 닫고 왼쪽 버튼을 잠깐 숨겨요 (OnChanged 가 있으면)
+safeCall(DecorateMode, "OnChanged", function(on: boolean)
+	if on then
+		closeAll()
+	end
+	Hud.SetSideVisible(not on)
+end)
+
+----------------------------------------------------------------------
 -- 서버 이벤트
+----------------------------------------------------------------------
+local optionalSync: { [string]: any } = {
+	ShopWindow = ShopWindow,
+	MapWindow = MapWindow,
+	LeaderboardWindow = LeaderboardWindow,
+	DecorateMode = DecorateMode,
+	ZoneClient = ZoneClient,
+}
+
 State.OnSync(function(snap)
 	Hud.Update(snap)
 	BagWindow.OnSync()
 	IndexWindow.OnSync()
 	HouseWindow.OnSync()
 	RebirthWindow.OnSync()
+	for _, mod in optionalSync do
+		safeCall(mod, "OnSync")
+	end
+end)
+
+State.OnCoins(function(coins, pending, income)
+	Hud.SetCoins(coins, pending, income)
 end)
 
 Remotes.DataSync.OnClientEvent:Connect(function(snap)
 	State.SetSnapshot(snap)
+end)
+
+-- 코인만 바뀌었을 때 (가벼운 갱신): 스냅샷의 Coins / Pending / Income 만 덮어써요
+Remotes.CoinSync.OnClientEvent:Connect(function(coins, pending, income)
+	State.ApplyCoins(coins, pending, income)
+end)
+
+-- 순위표: LeaderboardWindow 는 LeaderboardSync 를 스스로 받아요. 여기서는 State.Board 에만 넣어요
+Remotes.LeaderboardSync.OnClientEvent:Connect(function(board)
+	State.SetBoard(board)
 end)
 
 Remotes.Notify.OnClientEvent:Connect(function(text, kind)
@@ -116,17 +280,27 @@ Remotes.CoinFx.OnClientEvent:Connect(function(amount, position, silent)
 	WorldFx.CoinFx(amount, position, silent)
 end)
 
--- 키보드 단축키 (PC): B = 가방, N = 도감, H = 집
+-- 키보드 단축키 (PC)
+local HOTKEYS: { [Enum.KeyCode]: WindowApi } = {
+	[Enum.KeyCode.B] = Bag,
+	[Enum.KeyCode.N] = Index,
+	[Enum.KeyCode.H] = House,
+	[Enum.KeyCode.P] = Shop,
+	[Enum.KeyCode.M] = Map,
+	[Enum.KeyCode.L] = Board,
+	[Enum.KeyCode.R] = Rebirth,
+}
+
 UserInputService.InputBegan:Connect(function(input, processed)
-	if processed then
+	if processed or UserInputService:GetFocusedTextBox() then
 		return
 	end
-	if input.KeyCode == Enum.KeyCode.B then
-		toggleBag()
-	elseif input.KeyCode == Enum.KeyCode.N then
-		toggleIndex()
-	elseif input.KeyCode == Enum.KeyCode.H then
-		toggleHouse()
+	if decorating() then
+		return -- 꾸미기 모드가 R / X / Esc / Q 를 써요
+	end
+	local target = HOTKEYS[input.KeyCode]
+	if target then
+		toggle(target)
 	end
 end)
 
