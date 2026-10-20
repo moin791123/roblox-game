@@ -43,6 +43,7 @@ local function getFurnitureModels(): any
 end
 
 local UiKit = {}
+UiKit.PetModels = PetModels -- 없으면 nil (WorldFx 무지개 색 돌리기 등)
 UiKit.Config = Config
 UiKit.Font = Enum.Font.FredokaOne
 

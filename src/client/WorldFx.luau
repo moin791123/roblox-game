@@ -23,6 +23,7 @@ local BOB_DISTANCE = 90 -- 이 거리 안의 펫만 살랑살랑
 local LOD_DISTANCE = 70 -- 이보다 먼 펫은 반짝이·빛을 꺼요
 local BOB_STEP = 1 / 30 -- 살랑살랑 갱신 간격 (초당 30번)
 local SCAN_STEP = 0.25 -- 거리 다시 재는 간격
+local CYCLE_STEP = 0.1 -- 레인보우 등급 색 돌리는 간격 (초당 10번)
 
 ----------------------------------------------------------------------
 -- 프롬프트 필터: PromptKind "Owner" 는 주인한테만 보여요
@@ -346,8 +347,22 @@ local function setupBob()
 		end
 		plots.ChildAdded:Connect(watchPlot)
 	end)
-	local bobAcc, scanAcc = 0, 0
+	local bobAcc, scanAcc, cycleAcc = 0, 0, 0
 	RunService.Heartbeat:Connect(function(dt)
+		-- 레인보우 등급(TierCycle) 펫은 가까운 것만 색이 천천히 돌아요
+		cycleAcc += dt
+		if cycleAcc >= CYCLE_STEP then
+			cycleAcc = 0
+			local pm = UiKit.PetModels
+			if pm and pm.CycleTierColors then
+				local phase = (os.clock() * 0.25) % 1
+				for _, info in active do
+					if info.Active and not info.Far and info.Model:GetAttribute("TierCycle") == true then
+						pcall(pm.CycleTierColors, info.Model, phase)
+					end
+				end
+			end
+		end
 		scanAcc += dt
 		if scanAcc >= SCAN_STEP then
 			scanAcc = 0
