@@ -1,10 +1,9 @@
--- 월드 쪽 클라이언트 효과: 코인 빙글빙글, 프롬프트 숨기기, 내 레이저문 통과, +코인 숫자
+-- 월드 쪽 클라이언트 효과: 내 것 아닌 프롬프트 숨기기, +코인 숫자
+-- (들판 코인 그리기는 CoinField 모듈이 해요)
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
 
 local UiKit = require(script.Parent.UiKit)
-local State = require(script.Parent.State)
 
 local Config = UiKit.Config
 local Make, C = UiKit.Make, UiKit.Colors
@@ -14,7 +13,7 @@ local myId = player.UserId
 local WorldFx = {}
 
 ----------------------------------------------------------------------
--- 프롬프트 필터 (내 것만 보이게 / 내 것은 숨기게)
+-- 프롬프트 필터: PromptKind "Owner" 는 주인한테만 보여요
 ----------------------------------------------------------------------
 local hiddenByMe: { [ProximityPrompt]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 local lastWrite: { [ProximityPrompt]: boolean } = setmetatable({}, { __mode = "k" }) :: any
@@ -26,24 +25,18 @@ local function setLocal(p: ProximityPrompt, value: boolean)
 end
 
 local function applyPrompt(p: ProximityPrompt)
-	local kind = p:GetAttribute("PromptKind")
-	if kind == nil then
+	if p:GetAttribute("PromptKind") ~= "Owner" then
 		return
 	end
 	local owner = tonumber(p:GetAttribute("OwnerUserId"))
-	local want: boolean? = nil
-	if kind == "Steal" then
-		want = owner ~= myId
-	elseif kind == "Owner" or kind == "Reclaim" then
-		want = owner == myId
-	end
-	if want == false then
+	local want = owner == myId
+	if not want then
 		-- 서버가 켜 둔 것만 숨겨요 (꺼져 있던 걸 숨김 처리하면 나중에 잘못 켜져요)
 		if p.Enabled then
 			hiddenByMe[p] = true
 			setLocal(p, false)
 		end
-	elseif want == true and hiddenByMe[p] then
+	elseif hiddenByMe[p] then
 		-- 내가 숨긴 것만 다시 켜요 (서버가 끈 건 그대로)
 		hiddenByMe[p] = nil
 		setLocal(p, true)
@@ -81,110 +74,6 @@ local function setupPrompts()
 		if d:IsA("ProximityPrompt") then
 			hookPrompt(d)
 		end
-	end)
-end
-
-----------------------------------------------------------------------
--- 내 기지 레이저문은 나만 통과
-----------------------------------------------------------------------
-local doorConns: { RBXScriptConnection } = {}
-
-local function setupLaserDoor(plot: Model?)
-	for _, c in doorConns do
-		c:Disconnect()
-	end
-	table.clear(doorConns)
-	if not plot then
-		return
-	end
-	local function hook(door: Instance)
-		if door.Name ~= "LaserDoor" then
-			return
-		end
-		local parts: { BasePart } = {}
-		if door:IsA("BasePart") then
-			table.insert(parts, door)
-		end
-		for _, d in door:GetDescendants() do
-			if d:IsA("BasePart") then
-				table.insert(parts, d)
-			end
-		end
-		for _, part in parts do
-			local function apply()
-				if part.CanCollide then
-					part.CanCollide = false
-				end
-			end
-			apply()
-			table.insert(doorConns, part:GetPropertyChangedSignal("CanCollide"):Connect(apply))
-		end
-	end
-	for _, d in plot:GetDescendants() do
-		hook(d)
-	end
-	table.insert(doorConns, plot.DescendantAdded:Connect(hook))
-end
-
-----------------------------------------------------------------------
--- 들판 코인 빙글빙글 (앵커된 파트, 로컬에서만 회전)
-----------------------------------------------------------------------
-local coinParts: { BasePart } = {}
-local coinModels: { Model } = {}
-local coinsDirty = true
-local cfBuffer: { CFrame } = {}
-local moved: { BasePart } = {}
-
-local function setupCoins()
-	task.spawn(function()
-		local folder = workspace:FindFirstChild("FieldCoins")
-		while not folder do
-			task.wait(1)
-			folder = workspace:FindFirstChild("FieldCoins")
-		end
-		local function rebuild()
-			coinsDirty = false
-			table.clear(coinParts)
-			table.clear(coinModels)
-			for _, child in folder:GetChildren() do
-				if child:IsA("BasePart") then
-					table.insert(coinParts, child)
-				elseif child:IsA("Model") then
-					table.insert(coinModels, child)
-				end
-			end
-		end
-		folder.ChildAdded:Connect(function()
-			coinsDirty = true
-		end)
-		folder.ChildRemoved:Connect(function()
-			coinsDirty = true
-		end)
-		rebuild()
-		RunService.RenderStepped:Connect(function(dt)
-			if coinsDirty then
-				rebuild()
-			end
-			local rot = CFrame.Angles(0, math.min(dt, 0.1) * 2.4, 0)
-			table.clear(cfBuffer)
-			table.clear(moved)
-			for _, part in coinParts do
-				if part.Parent and part.Anchored then
-					local cf = part.CFrame
-					table.insert(moved, part)
-					table.insert(cfBuffer, CFrame.new(cf.Position) * rot * cf.Rotation)
-				end
-			end
-			if #moved > 0 then
-				workspace:BulkMoveTo(moved, cfBuffer, Enum.BulkMoveMode.FireCFrameChanged)
-			end
-			for _, model in coinModels do
-				if model.Parent then
-					local cf = model:GetPivot()
-					model:PivotTo(CFrame.new(cf.Position) * rot * cf.Rotation)
-				end
-			end
-		end)
 	end)
 end
 
@@ -235,9 +124,6 @@ end
 
 function WorldFx.Init()
 	setupPrompts()
-	setupCoins()
-	State.OnPlot(setupLaserDoor)
-	setupLaserDoor(State.Plot)
 end
 
 return WorldFx

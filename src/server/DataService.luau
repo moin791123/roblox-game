@@ -11,7 +11,9 @@ local Remotes = require(ReplicatedStorage.Shared.Remotes)
 export type Item = {
 	Kind: string, -- "Egg" | "Pet"
 	Id: string,
-	Loc: string, -- "Slot" | "Follow" | "Bag"
+	Tier: number?, -- 펫만: 1..Config.MaxTier (알은 없음)
+	Size: number?, -- 펫만: Config.PetSize.Min..Max (부화 때 뽑음, 없으면 1)
+	Loc: string, -- "Slot" | "Follow" | "Ride" | "Hold" | "Bag" (알은 Slot | Bag)
 	Slot: number?,
 	HatchAt: number?,
 	HatchLeft: number?,
@@ -21,11 +23,15 @@ export type Data = {
 	Coins: number,
 	Pending: number,
 	SlotsUnlocked: number,
+	Floors: number, -- 1 또는 2
+	Theme: string, -- 현재 집 테마 id
+	Themes: { [string]: boolean }, -- 가진 테마 (Basic 은 항상)
 	Items: { [string]: Item },
-	Index: { [string]: boolean },
+	Index: { [string]: number }, -- 도감: 펫별 본 적 있는 최고 등급
 	NextUid: number,
 	LastOnline: number,
-	Stats: { Hatched: number, Steals: number },
+	Stats: { Hatched: number, Fused: number },
+	Rebirths: number, -- 환생 횟수 (0..Config.Rebirth.MaxRebirths)
 }
 
 local DataService = {}
@@ -93,11 +99,15 @@ local function defaultData(): Data
 		Coins = Config.StartCoins,
 		Pending = 0,
 		SlotsUnlocked = Config.Plot.StartSlots,
+		Floors = 1,
+		Theme = "Basic",
+		Themes = { Basic = true },
 		Items = {},
 		Index = {},
 		NextUid = 1,
 		LastOnline = os.time(),
-		Stats = { Hatched = 0, Steals = 0 },
+		Stats = { Hatched = 0, Fused = 0 },
+		Rebirths = 0,
 	}
 end
 
@@ -115,6 +125,20 @@ local function num(v: any, default: number, min: number?, max: number?): number
 	return n
 end
 
+-- 등급을 1..MaxTier 정수로
+local function tierOf(v: any): number
+	return math.clamp(math.floor(num(v, 1)), 1, Config.MaxTier)
+end
+
+-- 2층을 올리면 바로 열리는 받침대 번호까지 (가격표에 없는 13~18 → 18)
+local function floor2StartSlots(): number
+	local n = Config.Plot.SlotsPerFloor
+	while n < Config.Plot.TotalSlots and Config.Plot.SlotPrices[n + 1] == nil do
+		n += 1
+	end
+	return n
+end
+
 -- 저장된 값을 믿지 않고 하나하나 검사해요. 모르는 id 는 버려요.
 local function sanitize(raw: any): Data
 	local data = defaultData()
@@ -124,24 +148,56 @@ local function sanitize(raw: any): Data
 	local now = os.time()
 	data.Coins = math.floor(num(raw.Coins, Config.StartCoins, 0))
 	data.Pending = math.floor(num(raw.Pending, 0, 0))
+	data.Floors = math.floor(num(raw.Floors, 1, 1, Config.House.MaxFloors))
 	data.SlotsUnlocked =
 		math.floor(num(raw.SlotsUnlocked, Config.Plot.StartSlots, Config.Plot.StartSlots, Config.Plot.TotalSlots))
+	if data.Floors < 2 then
+		-- 2층이 없으면 1층 받침대까지만
+		data.SlotsUnlocked = math.min(data.SlotsUnlocked, Config.Plot.SlotsPerFloor)
+	else
+		-- 2층이 있으면 2층 기본 받침대(13~18)는 열려 있어요
+		data.SlotsUnlocked = math.max(data.SlotsUnlocked, floor2StartSlots())
+	end
 	data.NextUid = math.floor(num(raw.NextUid, 1, 1))
 	data.LastOnline = num(raw.LastOnline, now, 0, now)
+	data.Rebirths = math.floor(num(raw.Rebirths, 0, 0, Config.Rebirth.MaxRebirths))
 	if type(raw.Stats) == "table" then
 		data.Stats.Hatched = math.floor(num(raw.Stats.Hatched, 0, 0))
-		data.Stats.Steals = math.floor(num(raw.Stats.Steals, 0, 0))
+		data.Stats.Fused = math.floor(num(raw.Stats.Fused, 0, 0))
 	end
+
+	-- 테마: 아는 것만, Basic 은 항상 보유
+	if type(raw.Themes) == "table" then
+		for themeId, v in raw.Themes do
+			if type(themeId) == "string" and Config.House.Themes[themeId] and v then
+				data.Themes[themeId] = true
+			end
+		end
+	end
+	data.Themes.Basic = true
+	if type(raw.Theme) == "string" and Config.House.Themes[raw.Theme] and data.Themes[raw.Theme] then
+		data.Theme = raw.Theme
+	else
+		data.Theme = "Basic"
+	end
+
+	-- 도감: 옛 저장(true) 은 1등급으로
 	if type(raw.Index) == "table" then
 		for petId, v in raw.Index do
-			if type(petId) == "string" and Config.Pets[petId] and v then
-				data.Index[petId] = true
+			if type(petId) == "string" and Config.Pets[petId] then
+				if v == true then
+					data.Index[petId] = 1
+				elseif type(v) == "number" then
+					data.Index[petId] = tierOf(v)
+				end
 			end
 		end
 	end
 
 	local usedSlots: { [number]: boolean } = {}
 	local followCount = 0
+	local hasRide = false
+	local hasHold = false
 	local maxUid = 0
 	if type(raw.Items) == "table" then
 		-- 정렬해서 처리하면 같은 슬롯 충돌 때 결과가 항상 같아요
@@ -174,6 +230,10 @@ local function sanitize(raw: any): Data
 				continue
 			end
 			local item: Item = { Kind = kind, Id = id, Loc = "Bag" }
+			if kind == "Pet" then
+				item.Tier = tierOf(it.Tier)
+				item.Size = Config.SizeOf(it)
+			end
 			local loc = it.Loc
 			if loc == "Slot" then
 				local slot = it.Slot
@@ -191,6 +251,14 @@ local function sanitize(raw: any): Data
 			elseif loc == "Follow" and kind == "Pet" and followCount < Config.MaxFollow then
 				followCount += 1
 				item.Loc = "Follow"
+			elseif loc == "Ride" and kind == "Pet" and not hasRide then
+				-- 타는 펫은 딱 한 마리 (나머지는 가방으로)
+				hasRide = true
+				item.Loc = "Ride"
+			elseif loc == "Hold" and kind == "Pet" and not hasHold then
+				-- 들고 있는 펫도 딱 한 마리
+				hasHold = true
+				item.Loc = "Hold"
 			end
 			if kind == "Egg" then
 				local hatchTime = Config.Eggs[id].HatchTime
@@ -212,7 +280,10 @@ local function sanitize(raw: any): Data
 					end
 				end
 			else
-				data.Index[id] = true
+				local tier = item.Tier or 1
+				if (data.Index[id] or 0) < tier then
+					data.Index[id] = tier
+				end
 			end
 			data.Items[uid] = item
 			local n = tonumber(string.match(uid, "^i(%d+)$"))
@@ -227,19 +298,24 @@ local function sanitize(raw: any): Data
 	return data
 end
 
+-- 받침대 위 펫들의 초당 수익 합계 (등급·크기·환생 배율 포함)
+local function incomeOf(data: Data): number
+	local income = 0
+	for _, item in data.Items do
+		if item.Loc == "Slot" then
+			income += Config.ItemIncome(item)
+		end
+	end
+	return income * Config.RebirthIncomeMult(data.Rebirths)
+end
+
 -- 접속 안 한 동안 받침대 펫이 번 코인 (OfflineRate 비율)
 local function applyOffline(data: Data)
 	local elapsed = math.clamp(os.time() - data.LastOnline, 0, Config.Plot.OfflineMaxSeconds)
 	if elapsed < 30 then
 		return
 	end
-	local income = 0
-	for _, item in data.Items do
-		if item.Kind == "Pet" and item.Loc == "Slot" then
-			income += Config.Pets[item.Id].Income
-		end
-	end
-	local earned = math.floor(income * elapsed * Config.Plot.OfflineRate)
+	local earned = math.floor(incomeOf(data) * elapsed * Config.Plot.OfflineRate)
 	if earned > 0 then
 		data.Pending += earned
 	end
@@ -478,6 +554,13 @@ function DataService.AddItem(player: Player, item: Item): string
 	if not data then
 		return ""
 	end
+	if item.Kind == "Pet" then
+		item.Tier = tierOf(item.Tier)
+		item.Size = Config.SizeOf(item)
+	else
+		item.Tier = nil
+		item.Size = nil
+	end
 	local uid = "i" .. tostring(data.NextUid)
 	while data.Items[uid] do
 		data.NextUid += 1
@@ -520,16 +603,53 @@ function DataService.CountItems(player: Player, loc: string?): number
 	return n
 end
 
-function DataService.MarkDiscovered(player: Player, petId: string): boolean
+-- 같은 펫·같은 등급이 몇 마리인지 (어디 있든)
+function DataService.CountSame(player: Player, petId: string, tier: number): number
+	local data = cache[player]
+	if not data then
+		return 0
+	end
+	local want = tierOf(tier)
+	local n = 0
+	for _, item in data.Items do
+		if item.Kind == "Pet" and item.Id == petId and (item.Tier or 1) == want then
+			n += 1
+		end
+	end
+	return n
+end
+
+-- 도감 기록. 새 펫이거나 더 높은 등급이면 true
+function DataService.MarkDiscovered(player: Player, petId: string, tier: number?): boolean
 	local data = cache[player]
 	if not data or not Config.Pets[petId] then
 		return false
 	end
-	if data.Index[petId] then
+	local t = tierOf(tier)
+	local seen = data.Index[petId] or 0
+	if seen >= t then
 		return false
 	end
-	data.Index[petId] = true
+	data.Index[petId] = t
 	return true
+end
+
+-- 집 받침대 펫들의 초당 수익 (환생 배율 포함)
+function DataService.GetIncome(player: Player): number
+	local data = cache[player]
+	if not data then
+		return 0
+	end
+	return incomeOf(data)
+end
+
+-- 환생 횟수 (데이터가 없으면 0)
+function DataService.GetRebirths(player: Player): number
+	local data = cache[player]
+	if not data then
+		return 0
+	end
+	return data.Rebirths
 end
 
 -- 한 프레임에 한 번만 보내요
@@ -550,9 +670,15 @@ function DataService.Sync(player: Player)
 			Coins = data.Coins,
 			Pending = data.Pending,
 			SlotsUnlocked = data.SlotsUnlocked,
+			Floors = data.Floors,
+			Theme = data.Theme,
+			Themes = data.Themes,
 			Items = data.Items,
 			Index = data.Index,
 			PlotIndex = if type(plotIndex) == "number" and plotIndex > 0 then plotIndex else nil,
+			Income = incomeOf(data),
+			Rebirths = data.Rebirths,
+			RebirthCost = Config.RebirthCost(data.Rebirths),
 		})
 	end)
 end

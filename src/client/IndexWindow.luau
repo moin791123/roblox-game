@@ -1,4 +1,4 @@
--- 📖 도감 창: 모든 펫, 찾은 펫은 모습이 보이고 못 찾은 펫은 그림자 + ???
+-- 📖 도감 창: 모든 펫을 희귀도별로. 찾은 펫은 최고 등급 모습, 못 찾은 펫은 그림자 + ???
 local UiKit = require(script.Parent.UiKit)
 local State = require(script.Parent.State)
 
@@ -11,56 +11,92 @@ type Entry = {
 	Frame: Frame,
 	Holder: Frame,
 	Name: TextLabel,
-	Discovered: boolean?,
+	Badge: Frame,
+	BadgeLabel: TextLabel,
+	Tier: number?, -- nil = 아직 안 그림, 0 = 미발견, 1~ = 발견한 최고 등급
 }
+
+type Group = { Rarity: string, Header: TextLabel, Section: Frame, Pets: { string } }
 
 local window: UiKit.Window
 local progressLabel: TextLabel
 local barFill: Frame
 local entries: { [string]: Entry } = {}
+local groups: { Group } = {}
 local dirty = true
 local lastCount = -1
 
-local function setDiscovered(petId: string, entry: Entry, discovered: boolean)
-	if entry.Discovered == discovered then
+local TIER_BADGE = { [2] = "✨", [3] = "🌈" }
+
+-- 도감 값 → 발견한 최고 등급 (예전 데이터 true = 1, 없으면 0)
+local function indexTier(value: any): number
+	if value == true then
+		return 1
+	end
+	local n = tonumber(value)
+	if n and n >= 1 then
+		return math.clamp(math.floor(n), 1, Config.MaxTier)
+	end
+	return 0
+end
+
+local function setTier(petId: string, entry: Entry, tier: number)
+	if entry.Tier == tier then
 		return
 	end
-	local wasKnown = entry.Discovered
-	entry.Discovered = discovered
+	local before = entry.Tier
+	entry.Tier = tier
 	for _, child in entry.Holder:GetChildren() do
 		if child:IsA("GuiObject") then -- UICorner 같은 꾸밈은 남김
 			child:Destroy()
 		end
 	end
-	UiKit.Viewport("Pet", petId, entry.Holder, not discovered)
+	local discovered = tier >= 1
+	UiKit.Viewport("Pet", petId, entry.Holder, not discovered, if discovered then tier else nil)
 	local def = Config.Pets[petId]
 	local rc = UiKit.RarityColor(def.Rarity)
 	if discovered then
-		entry.Name.Text = def.Name
-		entry.Frame.BackgroundColor3 = UiKit.Lighten(rc, 0.8)
-		if wasKnown == false then
-			UiKit.Pop(entry.Frame, 0.45)
+		entry.Name.Text = Config.PetDisplayName(petId, tier)
+		entry.Frame.BackgroundColor3 = UiKit.Lighten(if tier >= 2 then UiKit.TierColor(tier) else rc, 0.8)
+		if before ~= nil then
+			UiKit.Pop(entry.Frame, 0.45) -- 새로 찾았거나 등급이 올랐어요
 		end
 	else
-		entry.Name.Text = "???"
-		entry.Frame.BackgroundColor3 = Color3.fromRGB(225, 222, 235)
+		-- 비밀 펫은 힌트만 살짝
+		entry.Name.Text = if def.Rarity == "Secret" then "별빛 알에서… 🌌" else "???"
+		entry.Frame.BackgroundColor3 = if def.Rarity == "Secret" then Color3.fromRGB(40, 35, 80) else Color3.fromRGB(225, 222, 235)
+	end
+	local badge = TIER_BADGE[tier]
+	entry.Badge.Visible = badge ~= nil
+	if badge then
+		entry.BadgeLabel.Text = badge
+		entry.Badge.BackgroundColor3 = UiKit.TierColor(tier)
+		if before ~= nil then
+			UiKit.Pop(entry.Badge, 0.5)
+		end
 	end
 end
 
 local function rebuild()
 	dirty = false
 	local snap = State.Snapshot
-	local index = if snap then snap.Index else {}
+	local index: { [string]: any } = if snap then snap.Index else {}
 	local count = 0
-	for _, petId in Config.PetOrder do
-		local entry = entries[petId]
-		local found = index[petId] == true
-		if found then
-			count += 1
+	for _, group in groups do
+		local found = 0
+		for _, petId in group.Pets do
+			local tier = indexTier(index[petId])
+			if tier >= 1 then
+				found += 1
+				count += 1
+			end
+			local entry = entries[petId]
+			if entry then
+				setTier(petId, entry, tier)
+			end
 		end
-		if entry then
-			setDiscovered(petId, entry, found)
-		end
+		local rinfo = (Config.Rarities :: any)[group.Rarity]
+		group.Header.Text = string.format("%s  %d / %d", if rinfo then rinfo.Name else group.Rarity, found, #group.Pets)
 	end
 	local total = #Config.PetOrder
 	progressLabel.Text = string.format("📖 %d / %d", count, total)
@@ -69,6 +105,61 @@ local function rebuild()
 		UiKit.Bump(progressLabel, 0.25)
 	end
 	lastCount = count
+end
+
+local function createEntry(parent: Instance, petId: string, order: number): Entry
+	local def = Config.Pets[petId]
+	local rc = UiKit.RarityColor(def.Rarity)
+	local frame: Frame = Make("Frame", {
+		Name = petId,
+		LayoutOrder = order,
+		BackgroundColor3 = Color3.fromRGB(225, 222, 235),
+		Parent = parent,
+	})
+	UiKit.Corner(frame, UDim.new(0.12, 0))
+	UiKit.Stroke(frame, rc, 4, true)
+	local holder: Frame = Make("Frame", {
+		Name = "Viewport",
+		Position = UDim2.fromScale(0.07, 0.05),
+		Size = UDim2.fromScale(0.86, 0.62),
+		BackgroundColor3 = C.White,
+		BackgroundTransparency = 0.3,
+		ClipsDescendants = true,
+		Parent = frame,
+	})
+	UiKit.Corner(holder, UDim.new(0.2, 0))
+	local nameLabel = UiKit.Label({
+		Text = "???",
+		Position = UDim2.fromScale(0.05, 0.68),
+		Size = UDim2.fromScale(0.9, 0.15),
+		Parent = frame,
+	}, { Stroke = UiKit.Darken(rc, 0.5), MaxText = 24 })
+	local rinfo = (Config.Rarities :: any)[def.Rarity]
+	local rpill: Frame = Make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromScale(0.5, 0.84),
+		Size = UDim2.fromScale(0.64, 0.12),
+		BackgroundColor3 = rc,
+		Parent = frame,
+	})
+	UiKit.Corner(rpill, UDim.new(0.5, 0))
+	UiKit.Label({ Text = rinfo and rinfo.Name or "", Size = UDim2.fromScale(0.86, 0.8), Position = UDim2.fromScale(0.07, 0.1), Parent = rpill }, { Stroke = UiKit.Darken(rc, 0.45), MaxText = 18 })
+	-- 등급 배지 (✨ 황금 / 🌈 무지개), 오른쪽 위
+	local badge: Frame = Make("Frame", {
+		Name = "TierBadge",
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.fromScale(0.97, 0.03),
+		Size = UDim2.fromScale(0.24, 0.18),
+		BackgroundColor3 = C.Gold,
+		Visible = false,
+		ZIndex = 3,
+		Parent = frame,
+	})
+	Make("UIAspectRatioConstraint", { AspectRatio = 1, Parent = badge })
+	UiKit.Corner(badge, UDim.new(0.5, 0))
+	UiKit.Stroke(badge, C.White, 3, true)
+	local badgeLabel = UiKit.Label({ Text = "", Size = UDim2.fromScale(0.8, 0.8), Position = UDim2.fromScale(0.1, 0.1), ZIndex = 4, Parent = badge }, { MaxText = 30 })
+	return { Frame = frame, Holder = holder, Name = nameLabel, Badge = badge, BadgeLabel = badgeLabel, Tier = nil }
 end
 
 function IndexWindow.Init(gui: Instance)
@@ -114,47 +205,35 @@ function IndexWindow.Init(gui: Instance)
 		Parent = barFill,
 	})
 
-	local scroll = UiKit.Scroller(content, { Position = UDim2.new(0, 0, 0, 52), Size = UDim2.new(1, 0, 1, -52), ScrollBarImageColor3 = C.Sky })
-	UiKit.AutoGrid(scroll, 128, 1.3, 6)
+	local scroll = UiKit.ListScroller(content, { Position = UDim2.new(0, 0, 0, 52), Size = UDim2.new(1, 0, 1, -52), ScrollBarImageColor3 = C.Sky })
 
-	for i, petId in Config.PetOrder do
+	-- 희귀도별 묶음 (PetOrder 순서대로 처음 나온 희귀도 순)
+	local byRarity: { [string]: Group } = {}
+	for _, petId in Config.PetOrder do
 		local def = Config.Pets[petId]
-		local rarity = (Config.Rarities :: any)[def.Rarity]
-		local rc = UiKit.RarityColor(def.Rarity)
-		local frame: Frame = Make("Frame", {
-			Name = petId,
-			LayoutOrder = i,
-			BackgroundColor3 = Color3.fromRGB(225, 222, 235),
-			Parent = scroll,
-		})
-		UiKit.Corner(frame, UDim.new(0.12, 0))
-		UiKit.Stroke(frame, rc, 4, true)
-		local holder: Frame = Make("Frame", {
-			Name = "Viewport",
-			Position = UDim2.fromScale(0.07, 0.05),
-			Size = UDim2.fromScale(0.86, 0.62),
-			BackgroundColor3 = C.White,
-			BackgroundTransparency = 0.3,
-			ClipsDescendants = true,
-			Parent = frame,
-		})
-		UiKit.Corner(holder, UDim.new(0.2, 0))
-		local nameLabel = UiKit.Label({
-			Text = "???",
-			Position = UDim2.fromScale(0.05, 0.68),
-			Size = UDim2.fromScale(0.9, 0.15),
-			Parent = frame,
-		}, { Stroke = UiKit.Darken(rc, 0.5), MaxText = 24 })
-		local rpill: Frame = Make("Frame", {
-			AnchorPoint = Vector2.new(0.5, 0),
-			Position = UDim2.fromScale(0.5, 0.84),
-			Size = UDim2.fromScale(0.64, 0.12),
-			BackgroundColor3 = rc,
-			Parent = frame,
-		})
-		UiKit.Corner(rpill, UDim.new(0.5, 0))
-		UiKit.Label({ Text = rarity and rarity.Name or "", Size = UDim2.fromScale(0.86, 0.8), Position = UDim2.fromScale(0.07, 0.1), Parent = rpill }, { Stroke = UiKit.Darken(rc, 0.45), MaxText = 18 })
-		entries[petId] = { Frame = frame, Holder = holder, Name = nameLabel, Discovered = nil }
+		local group = byRarity[def.Rarity]
+		if not group then
+			local order = #groups
+			local rc = UiKit.RarityColor(def.Rarity)
+			local header = UiKit.SectionHeader(scroll, "", rc, order * 2 + 1)
+			local section: Frame = Make("Frame", {
+				Name = def.Rarity,
+				Size = UDim2.new(1, 0, 0, 0),
+				BackgroundTransparency = 1,
+				LayoutOrder = order * 2 + 2,
+				Parent = scroll,
+			})
+			group = { Rarity = def.Rarity, Header = header, Section = section, Pets = {} }
+			byRarity[def.Rarity] = group
+			table.insert(groups, group)
+		end
+		table.insert(group.Pets, petId)
+	end
+	for _, group in groups do
+		for i, petId in group.Pets do
+			entries[petId] = createEntry(group.Section, petId, i)
+		end
+		UiKit.SectionGrid(group.Section, scroll, 128, 1.3, 6)
 	end
 
 	window.OnOpen = function()
@@ -162,7 +241,7 @@ function IndexWindow.Init(gui: Instance)
 			rebuild()
 		end
 	end
-	-- 처음 열 때 만들어요 (시작할 때 18마리 뷰포트를 한꺼번에 만들면 잠깐 멈칫함)
+	-- 뷰포트는 처음 열 때 만들어요 (시작할 때 47마리를 한꺼번에 만들면 잠깐 멈칫함)
 end
 
 function IndexWindow.OnSync()

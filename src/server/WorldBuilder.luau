@@ -593,7 +593,7 @@ local function buildLobby(world: Instance)
 	local welcome = buildSignBoard(m, Vector3.new(LOBBY.X - 2, 0, LOBBY.Z + 12), lookAt, Vector2.new(16, 7), 3, COLORS.HotPink)
 	for _, face in { Enum.NormalId.Front, Enum.NormalId.Back } do
 		local frame = signFrame(welcome, face, 40, COLORS.Cream, COLORS.HotPink)
-		textLabel(frame, "🥚 알 훔치기 펫 월드 🐾", UDim2.fromScale(0.04, 0.08), UDim2.fromScale(0.92, 0.55), COLORS.HotPink)
+		textLabel(frame, "🥚 펫 월드 🐾", UDim2.fromScale(0.04, 0.08), UDim2.fromScale(0.92, 0.55), COLORS.HotPink)
 		textLabel(frame, "어서 와요! 귀여운 펫을 모아 봐요 💖", UDim2.fromScale(0.08, 0.65), UDim2.fromScale(0.84, 0.25), COLORS.Text)
 	end
 	ball(m, (welcome.CFrame * CFrame.new(-8, 3.5, 0)).Position, 1.6, COLORS.Lemon)
@@ -603,10 +603,10 @@ local function buildLobby(world: Instance)
 	local howto = buildSignBoard(m, Vector3.new(LOBBY.X - 2, 0, LOBBY.Z - 12), lookAt, Vector2.new(13, 10), 2, COLORS.Sky)
 	local lines = {
 		"1. 컨베이어에서 알 사기 🥚",
-		"2. 기지에서 부화 🐣",
-		"3. 펫이 코인을 벌어요 💰",
-		"4. 다른 기지의 알/펫을 훔쳐요! 🏃",
-		"5. 🔒 잠금으로 지키기",
+		"2. 들판에서 코인 줍기 💰",
+		"3. 펫 타기: 가방 → 타기 🏇",
+		"4. 합성: 같은 펫 3마리 ✨",
+		"5. 집 꾸미기: H 키 🏠",
 	}
 	local frame = signFrame(howto, Enum.NormalId.Front, 40, COLORS.Cream, Color3.fromRGB(110, 170, 255))
 	textLabel(frame, "📖 놀이 방법", UDim2.fromScale(0.05, 0.04), UDim2.fromScale(0.9, 0.2), Color3.fromRGB(80, 130, 230))

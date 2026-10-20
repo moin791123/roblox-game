@@ -1,4 +1,6 @@
 -- 컨베이어(알 공장 벨트): 알이 나와서 굴러가고, 프롬프트로 사요.
+-- 환생 알(MinRebirth)은 환생한 사람이 접속해 있을 때만 나오고, 환생 횟수가 모자라면 못 사요.
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
@@ -294,10 +296,47 @@ local function makeBillboard(adornee: BasePart, egg: any, price: number)
 		l.Parent = gui
 		return l
 	end
-	label(egg.Name, rarity.Color, 0, 0.4)
-	label("💰 " .. Config.FormatNumber(price), Color3.fromRGB(255, 225, 90), 0.4, 0.33)
-	label(rarity.Name, rarity.Color, 0.73, 0.27)
+	if egg.MinRebirth then
+		-- 환생 알: 한 줄 더 (환생 N 필요)
+		gui.Size = UDim2.new(7, 0, 3.9, 0)
+		gui.StudsOffsetWorldSpace = Vector3.new(0, 3.6, 0)
+		label(egg.Name, rarity.Color, 0, 0.31)
+		label("💰 " .. Config.FormatNumber(price), Color3.fromRGB(255, 225, 90), 0.31, 0.25)
+		label(rarity.Name, rarity.Color, 0.56, 0.21)
+		label("🔄 환생 " .. egg.MinRebirth .. " 필요", Color3.fromRGB(190, 230, 255), 0.77, 0.23)
+	else
+		label(egg.Name, rarity.Color, 0, 0.4)
+		label("💰 " .. Config.FormatNumber(price), Color3.fromRGB(255, 225, 90), 0.4, 0.33)
+		label(rarity.Name, rarity.Color, 0.73, 0.27)
+	end
 	gui.Parent = adornee
+end
+
+-- 접속 중인 사람들 중 가장 많이 환생한 횟수
+local function maxOnlineRebirths(): number
+	local best = 0
+	for _, player in Players:GetPlayers() do
+		best = math.max(best, DataService.GetRebirths(player))
+	end
+	return best
+end
+
+-- 지금 나올 수 있는 알 뽑기 (환생 알은 조건 맞는 사람이 있을 때만). 아무것도 없으면 Basic
+local function rollEggId(): string
+	local maxRebirth = maxOnlineRebirths()
+	local weights: { [string]: number } = {}
+	local any = false
+	for id, egg in Config.Eggs do
+		local minRebirth = tonumber(egg.MinRebirth) or 0
+		if minRebirth <= maxRebirth and egg.SpawnWeight > 0 then
+			weights[id] = egg.SpawnWeight
+			any = true
+		end
+	end
+	if not any then
+		return "Basic"
+	end
+	return Config.WeightedPick(weights, rng)
 end
 
 local function removeEntry(entry: EggEntry)
@@ -368,6 +407,11 @@ local function onBuy(entry: EggEntry, player: Player)
 	end
 
 	local egg = Config.Eggs[entry.EggId]
+	local rebirths = DataService.GetRebirths(player)
+	if egg.MinRebirth and rebirths < egg.MinRebirth then
+		notify(player, "환생 " .. egg.MinRebirth .. "회가 필요해요! 🔄", "warn")
+		return
+	end
 	local slot = PlotService.FreeSlot(player)
 	if not slot then
 		notify(player, "기지에 빈 자리가 없어요!", "warn")
@@ -388,7 +432,7 @@ local function onBuy(entry: EggEntry, player: Player)
 		Id = entry.EggId,
 		Loc = "Slot",
 		Slot = slot,
-		HatchAt = os.time() + egg.HatchTime,
+		HatchAt = os.time() + Config.RebirthHatchTime(entry.EggId, rebirths), -- 환생할수록 빨리 부화
 	})
 	if not uid or uid == "" then
 		-- 혹시 실패하면 환불
@@ -415,7 +459,7 @@ local function spawnEgg()
 	if not folder or #eggs >= Config.Conveyor.MaxEggs then
 		return
 	end
-	local eggId = Config.RollEgg(rng)
+	local eggId = rollEggId()
 	local egg = Config.Eggs[eggId]
 	local rarity = Config.Rarities[egg.Rarity]
 	local price = egg.Price
@@ -528,7 +572,7 @@ function ConveyorService.Start()
 	buildBelt(root)
 	root.Parent = workspace
 
-	game:GetService("Players").PlayerRemoving:Connect(function(player)
+	Players.PlayerRemoving:Connect(function(player)
 		buyDebounce[player] = nil
 	end)
 

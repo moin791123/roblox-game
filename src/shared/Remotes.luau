@@ -7,13 +7,17 @@ local NAMES = {
 	-- 서버 -> 클라이언트
 	"DataSync", -- (snapshot) 내 데이터 전체
 	"Notify", -- (text: string, kind: "info" | "good" | "warn" | "alert")
-	"HatchFx", -- (petId: string, position: Vector3, isNew: boolean)
+	"HatchFx", -- (petId: string, position: Vector3, isNew: boolean, tier: number?, mode: "Hatch" | "Fuse" | nil)
 	"CoinFx", -- (amount: number, position: Vector3)
+	"CoinField", -- (op: "Reset" | "Add" | "Remove", payload) 내 들판 코인 (CoinFieldService 참고)
 	-- 클라이언트 -> 서버
 	"RequestSync", -- ()
-	"PetAction", -- (uid: string, action: "Follow" | "Unfollow" | "ToBase" | "ToBag" | "Sell")
+	"PetAction", -- (uid: string, action: "Follow" | "Unfollow" | "ToBase" | "ToBag" | "Sell" | "Ride" | "Unride" | "Hold" | "Unhold" | "Fuse")
 	"BuySlot", -- ()
-	"LockBase", -- ()
+	"Rebirth", -- () 환생하기
+	"BuyFloor", -- () 2층 올리기
+	"SetTheme", -- (themeId: string) 집 테마 사기/적용
+	"PickupCoin", -- (coinId: number) 들판 코인 먹기 요청
 }
 
 local Remotes: { [string]: RemoteEvent } = {}

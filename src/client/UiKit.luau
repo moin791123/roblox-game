@@ -289,10 +289,22 @@ function UiKit.RarityColor(rarity: string?): Color3
 	return if r then r.Color else C.Grey
 end
 
--- 펫/알 뷰포트. PetModels 가 없거나 실패하면 이모지로 대신
-function UiKit.Viewport(kind: string, id: string, parent: GuiObject, silhouette: boolean?): (GuiObject, Model?)
+-- 등급(1 기본 / 2 황금 / 3 무지개) 강조색
+function UiKit.TierColor(tier: number?): Color3
+	local info = Config.TierInfo(tier)
+	return if info and info.Color then info.Color else C.White
+end
+
+-- 등급 숫자 정리 (nil/이상한 값 → 1)
+function UiKit.TierOf(tier: any): number
+	return math.clamp(math.floor(tonumber(tier) or 1), 1, Config.MaxTier)
+end
+
+-- 펫/알 뷰포트. PetModels 가 없거나 실패하면 이모지로 대신. tier 는 펫만 (황금/무지개 색)
+function UiKit.Viewport(kind: string, id: string, parent: GuiObject, silhouette: boolean?, tier: number?): (GuiObject, Model?)
 	if PetModels and PetModels.CreateViewport then
-		local ok, vp, model = pcall(PetModels.CreateViewport, kind, id, parent, silhouette == true)
+		local t: number? = if kind == "Pet" then UiKit.TierOf(tier) else nil
+		local ok, vp, model = pcall(PetModels.CreateViewport, kind, id, parent, silhouette == true, t)
 		if ok and typeof(vp) == "Instance" and vp:IsA("GuiObject") then
 			vp.AnchorPoint = Vector2.new(0.5, 0.5)
 			vp.Position = UDim2.fromScale(0.5, 0.5)
@@ -458,6 +470,32 @@ function UiKit.Window(gui: Instance, opts: { Title: string, Color: Color3, Name:
 	return win :: Window
 end
 
+-- 부모들의 UIScale 을 모두 곱한 값 (창이 튀어나오는 애니메이션 중에도 칸 크기가 흔들리지 않게)
+function UiKit.ScaleOf(start: Instance?): number
+	local s = 1
+	local node: Instance? = start
+	while node do
+		local sc = node:FindFirstChildOfClass("UIScale")
+		if sc and sc.Scale > 0.01 then
+			s *= sc.Scale
+		end
+		node = node.Parent
+	end
+	return s
+end
+
+-- 스크롤 안에서 격자에 쓸 수 있는 너비 (0 이하면 아직 모름)
+function UiKit.GridWidth(scroll: ScrollingFrame): number
+	return scroll.AbsoluteSize.X / UiKit.ScaleOf(scroll) - scroll.ScrollBarThickness - 12
+end
+
+-- 너비에 맞는 칸 수와 칸 크기: (cols, cellW, cellH)
+function UiKit.GridCell(width: number, minCell: number, ratio: number, maxCols: number?): (number, number, number)
+	local cols = math.clamp(math.floor(width / minCell), 2, maxCols or 6)
+	local cw = math.floor((width - (cols - 1) * 10) / cols)
+	return cols, cw, math.floor(cw * ratio)
+end
+
 -- 스크롤 격자: 너비에 맞게 칸 수/크기 자동 조절
 function UiKit.AutoGrid(scroll: ScrollingFrame, minCell: number, ratio: number, maxCols: number?)
 	local grid: UIGridLayout = Make("UIGridLayout", {
@@ -474,27 +512,93 @@ function UiKit.AutoGrid(scroll: ScrollingFrame, minCell: number, ratio: number, 
 		Parent = scroll,
 	})
 	local function update()
-		-- 창이 튀어나오는 애니메이션(UIScale) 중에도 칸 크기가 흔들리지 않게 배율을 나눠요
-		local s = 1
-		local node: Instance? = scroll
-		while node do
-			local sc = node:FindFirstChildOfClass("UIScale")
-			if sc and sc.Scale > 0.01 then
-				s *= sc.Scale
-			end
-			node = node.Parent
-		end
-		local w = scroll.AbsoluteSize.X / s - scroll.ScrollBarThickness - 12
+		local w = UiKit.GridWidth(scroll)
 		if w <= 0 then
 			return
 		end
-		local cols = math.clamp(math.floor(w / minCell), 2, maxCols or 6)
-		local cw = math.floor((w - (cols - 1) * 10) / cols)
-		grid.CellSize = UDim2.fromOffset(cw, math.floor(cw * ratio))
+		local _, cw, ch = UiKit.GridCell(w, minCell, ratio, maxCols)
+		grid.CellSize = UDim2.fromOffset(cw, ch)
 	end
 	scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(update)
 	update()
 	return grid
+end
+
+-- 세로 목록(UIListLayout) 스크롤. 머리글 + 격자 구역을 번갈아 넣을 때 써요
+function UiKit.ListScroller(parent: Instance, props: { [string]: any }?): ScrollingFrame
+	local scroll = UiKit.Scroller(parent, props)
+	Make("UIListLayout", {
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		Padding = UDim.new(0, 8),
+		Parent = scroll,
+	})
+	Make("UIPadding", {
+		PaddingTop = UDim.new(0, 8),
+		PaddingBottom = UDim.new(0, 12),
+		PaddingLeft = UDim.new(0, 4),
+		PaddingRight = UDim.new(0, 4),
+		Parent = scroll,
+	})
+	return scroll
+end
+
+-- 목록 스크롤 안의 격자 구역. 칸 크기와 구역 높이를 너비에 맞게 맞춰요.
+-- 돌려주는 함수를 부르면 다시 계산해요 (칸을 숨기거나 더한 뒤에)
+function UiKit.SectionGrid(section: GuiObject, scroll: ScrollingFrame, minCell: number, ratio: number, maxCols: number?): () -> ()
+	local grid: UIGridLayout = Make("UIGridLayout", {
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		CellPadding = UDim2.fromOffset(10, 10),
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		Parent = section,
+	})
+	local function relayout()
+		local w = UiKit.GridWidth(scroll)
+		if w <= 0 then
+			return
+		end
+		local cols, cw, ch = UiKit.GridCell(w, minCell, ratio, maxCols)
+		grid.CellSize = UDim2.fromOffset(cw, ch)
+		local n = 0
+		for _, child in section:GetChildren() do
+			if child:IsA("GuiObject") and child.Visible then
+				n += 1
+			end
+		end
+		local rows = math.ceil(n / cols)
+		section.Size = UDim2.new(1, 0, 0, if rows > 0 then rows * ch + (rows - 1) * 10 else 0)
+	end
+	scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayout)
+	relayout()
+	return relayout
+end
+
+-- 목록 스크롤에 넣는 머리글 알약 (희귀도 구역 제목 등)
+function UiKit.SectionHeader(scroll: Instance, text: string, color: Color3, order: number): TextLabel
+	local row: Frame = Make("Frame", {
+		Name = "Header",
+		Size = UDim2.new(1, 0, 0, 34),
+		BackgroundTransparency = 1,
+		LayoutOrder = order,
+		Parent = scroll,
+	})
+	local pill: Frame = Make("Frame", {
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 4, 0.5, 0),
+		Size = UDim2.new(0, 190, 0, 30),
+		BackgroundColor3 = color,
+		Parent = row,
+	})
+	UiKit.Corner(pill, UDim.new(0.5, 0))
+	UiKit.Gradient(pill)
+	UiKit.Stroke(pill, C.White, 3, true)
+	return UiKit.Label({
+		Text = text,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.9, 0.78),
+		Parent = pill,
+	}, { Stroke = UiKit.Darken(color, 0.45), MaxText = 22 })
 end
 
 function UiKit.Scroller(parent: Instance, props: { [string]: any }?): ScrollingFrame

@@ -1,4 +1,5 @@
 -- 🐣 부화 연출: 화면 어둡게 → 알 흔들흔들 → 번쩍 → 펫 등장 + 빙글빙글 + 색종이
+-- ✨ 합성 연출(mode "Fuse"): 알 대신 작은 펫 3마리가 가운데로 모여 합쳐진 뒤 다음 등급 펫 등장
 local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
 local UserInputService = game:GetService("UserInputService")
@@ -11,7 +12,7 @@ local Make, C = UiKit.Make, UiKit.Colors
 
 local HatchFx = {}
 
-type Job = { PetId: string, EggId: string, IsNew: boolean }
+type Job = { PetId: string, EggId: string, IsNew: boolean, Tier: number, Mode: string }
 
 local gui: ScreenGui
 local queue: { Job } = {}
@@ -36,7 +37,7 @@ function HatchFx.Init(playerGui: Instance)
 	end)
 end
 
--- 어떤 알에서 나왔는지 추측 (부화 직전 스냅샷의 기지 알 중 가장 먼저 부화하는 것)
+-- 어떤 알에서 나왔는지 추측 (부화 직전 스냅샷의 집 알 중 가장 먼저 부화하는 것)
 local function guessEgg(petId: string): string
 	local bestUid, bestId, bestAt = nil, nil, math.huge
 	for uid, item in State.Items() do
@@ -128,21 +129,138 @@ local function confetti(root: GuiObject)
 	end
 end
 
+-- 가운데에서 사방으로 튀는 반짝이 (합성 순간)
+local function sparkleBurst(stage: GuiObject, color: Color3)
+	local rng = Random.new()
+	for i = 1, 14 do
+		local ang = (i / 14) * math.pi * 2 + rng:NextNumber(-0.2, 0.2)
+		local dist = rng:NextNumber(0.35, 0.6)
+		local piece: Frame = Make("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromScale(0.07, 0.07),
+			Rotation = 45,
+			BackgroundColor3 = if i % 2 == 0 then color else C.White,
+			ZIndex = 7,
+			Parent = stage,
+		})
+		UiKit.Corner(piece, UDim.new(0.3, 0))
+		UiKit.Tween(piece, 0.55, {
+			Position = UDim2.fromScale(0.5 + math.cos(ang) * dist, 0.5 + math.sin(ang) * dist),
+			Size = UDim2.fromScale(0.015, 0.015),
+			BackgroundTransparency = 1,
+			Rotation = 45 + 180,
+		}, Enum.EasingStyle.Quad)
+		Debris:AddItem(piece, 0.6)
+	end
+end
+
+-- 1) 알 흔들기 (부화)
+local function eggStage(stage: GuiObject, job: Job, manyQueued: boolean)
+	local eggHolder: Frame = Make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.8, 0.8),
+		BackgroundTransparency = 1,
+		ZIndex = 6,
+		Parent = stage,
+	})
+	UiKit.Viewport("Egg", job.EggId, eggHolder, false)
+	UiKit.Pop(eggHolder, 0.35)
+	task.wait(0.4)
+	local eggScale = UiKit.Scale(eggHolder)
+	UiKit.Tween(eggScale, 1.6, { Scale = 1.2 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	local amps = if manyQueued
+		then { 8, -8, 14, -14, 20, -20 }
+		else { 5, -5, 7, -7, 10, -10, 13, -13, 16, -16, 20, -20, 24, -24 }
+	for i, a in amps do
+		local dt = math.max(0.06, 0.13 - i * 0.005)
+		UiKit.Tween(eggHolder, dt, { Rotation = a }, Enum.EasingStyle.Sine)
+		task.wait(dt)
+	end
+	eggHolder:Destroy()
+end
+
+-- 1') 펫 3마리가 가운데로 모여 합쳐지기 (합성)
+local function fuseStage(stage: GuiObject, job: Job, manyQueued: boolean, color: Color3)
+	local oldTier = math.max(1, job.Tier - 1)
+	local holders: { Frame } = {}
+	local xs = { 0.15, 0.5, 0.85 }
+	for i = 1, Config.FuseCount do
+		local x = xs[math.clamp(i, 1, #xs)]
+		local holder: Frame = Make("Frame", {
+			Name = "FusePet" .. i,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(x, 0.5),
+			Size = UDim2.fromScale(0.34, 0.34),
+			BackgroundTransparency = 1,
+			ZIndex = 6,
+			Parent = stage,
+		})
+		UiKit.Viewport("Pet", job.PetId, holder, false, oldTier)
+		table.insert(holders, holder)
+		task.delay((i - 1) * 0.12, function()
+			if holder.Parent then
+				UiKit.Pop(holder, 0.35)
+			end
+		end)
+	end
+	-- 둥실둥실
+	task.wait(if manyQueued then 0.45 else 0.8)
+	for i, holder in holders do
+		UiKit.Tween(holder, 0.25, { Position = UDim2.fromScale(xs[math.clamp(i, 1, #xs)], 0.44) }, Enum.EasingStyle.Sine)
+	end
+	task.wait(0.25)
+	-- 가운데로 모이기
+	local t = if manyQueued then 0.45 else 0.75
+	for i, holder in holders do
+		UiKit.Tween(holder, t, {
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromScale(0.18, 0.18),
+			Rotation = if i % 2 == 0 then 360 else -360,
+		}, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+	end
+	-- 모이는 동안 빛 고리
+	local ring: Frame = Make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.1, 0.1),
+		BackgroundTransparency = 1,
+		ZIndex = 5,
+		Parent = stage,
+	})
+	UiKit.Corner(ring, UDim.new(0.5, 0))
+	local ringStroke = UiKit.Stroke(ring, color, 6, true)
+	UiKit.Tween(ring, t, { Size = UDim2.fromScale(0.9, 0.9) }, Enum.EasingStyle.Quad)
+	UiKit.Tween(ringStroke, t, { Transparency = 1 }, Enum.EasingStyle.Quad)
+	Debris:AddItem(ring, t + 0.1)
+	task.wait(t)
+	for _, holder in holders do
+		holder:Destroy()
+	end
+	sparkleBurst(stage, color)
+end
+
 local function showOne(job: Job)
 	local def = Config.Pets[job.PetId]
 	local rarity = (Config.Rarities :: any)[def.Rarity]
 	local rc = UiKit.RarityColor(def.Rarity)
+	local tier = job.Tier
+	local tinfo = Config.TierInfo(tier)
+	local isFuse = job.Mode == "Fuse"
+	local tc = if tier >= 2 then UiKit.TierColor(tier) else rc -- 황금/무지개면 등급색으로 꾸며요
+	local displayName = Config.PetDisplayName(job.PetId, tier)
 
 	-- 입력을 막지 않는 Frame (모바일 조이스틱·점프가 계속 동작해야 함)
 	local root: Frame = Make("Frame", {
-		Name = "Hatch",
+		Name = if isFuse then "Fuse" else "Hatch",
 		Active = false,
 		Size = UDim2.fromScale(1, 1),
 		BackgroundColor3 = Color3.fromRGB(40, 20, 65),
 		BackgroundTransparency = 1,
 		Parent = gui,
 	})
-	local manyQueued = #queue > 0 -- 뒤에 기다리는 부화가 있으면 짧게
+	local manyQueued = #queue > 0 -- 뒤에 기다리는 연출이 있으면 짧게
 	UiKit.Tween(root, 0.3, { BackgroundTransparency = 0.45 })
 
 	-- 무대 (정사각형)
@@ -174,7 +292,7 @@ local function showOne(job: Job)
 			Position = UDim2.fromScale(0.5, 0.5),
 			Size = UDim2.fromScale(0.09, 1),
 			Rotation = i * 22.5,
-			BackgroundColor3 = UiKit.Lighten(rc, 0.4),
+			BackgroundColor3 = UiKit.Lighten(tc, 0.4),
 			BackgroundTransparency = 0.55,
 			ZIndex = 2,
 			Parent = rays,
@@ -183,7 +301,7 @@ local function showOne(job: Job)
 	end
 
 	local title = UiKit.Label({
-		Text = "두근두근...",
+		Text = if isFuse then "✨ 합성 중..." else "두근두근...",
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 0, -6),
 		Size = UDim2.fromScale(1.2, 0.16),
@@ -191,43 +309,26 @@ local function showOne(job: Job)
 		Parent = stage,
 	}, { StrokeThickness = 3, MaxText = 44 })
 
-	-- 1) 알 흔들기
-	local eggHolder: Frame = Make("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromScale(0.8, 0.8),
-		BackgroundTransparency = 1,
-		ZIndex = 6,
-		Parent = stage,
-	})
-	UiKit.Viewport("Egg", job.EggId, eggHolder, false)
-	UiKit.Pop(eggHolder, 0.35)
-	task.wait(0.4)
-	local eggScale = UiKit.Scale(eggHolder)
-	UiKit.Tween(eggScale, 1.6, { Scale = 1.2 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-	local amps = if manyQueued
-		then { 8, -8, 14, -14, 20, -20 }
-		else { 5, -5, 7, -7, 10, -10, 13, -13, 16, -16, 20, -20, 24, -24 }
-	for i, a in amps do
-		local dt = math.max(0.06, 0.13 - i * 0.005)
-		UiKit.Tween(eggHolder, dt, { Rotation = a }, Enum.EasingStyle.Sine)
-		task.wait(dt)
+	-- 1) 알 흔들기 / 펫 모으기
+	if isFuse then
+		fuseStage(stage, job, manyQueued, tc)
+	else
+		eggStage(stage, job, manyQueued)
 	end
 
 	-- 2) 번쩍!
 	local flash: Frame = Make("Frame", {
 		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundColor3 = if isFuse then UiKit.Lighten(tc, 0.6) else Color3.new(1, 1, 1),
 		BackgroundTransparency = 0,
 		ZIndex = 50,
 		Parent = root,
 	})
 	UiKit.Tween(flash, 0.6, { BackgroundTransparency = 1 })
 	Debris:AddItem(flash, 0.7)
-	eggHolder:Destroy()
-	UiKit.PlaySound("Hatch")
+	UiKit.PlaySound(if isFuse then "Buy" else "Hatch")
 
-	-- 3) 펫 등장
+	-- 3) 펫 등장 (등급 반영)
 	rays.Visible = true
 	UiKit.Pop(rays, 0.5)
 	local petHolder: Frame = Make("Frame", {
@@ -238,7 +339,7 @@ local function showOne(job: Job)
 		ZIndex = 6,
 		Parent = stage,
 	})
-	local _, model = UiKit.Viewport("Pet", job.PetId, petHolder, false)
+	local _, model = UiKit.Viewport("Pet", job.PetId, petHolder, false, tier)
 	UiKit.Pop(petHolder, 0.55)
 	local baseCf = if model then model:GetPivot() else nil
 	local t0 = os.clock()
@@ -251,15 +352,19 @@ local function showOne(job: Job)
 	end)
 	activeSpin = spin
 
-	title.Text = if job.IsNew then "새 친구가 태어났어요!" else "짜잔! 부화했어요!"
+	title.Text = if isFuse
+		then "✨ 합성 성공!"
+		elseif tier >= 2 then tinfo.Label .. " 펫이 태어났어요!" -- 운 좋게 상위 등급으로 부화
+		elseif job.IsNew then "새 친구가 태어났어요!"
+		else "짜잔! 부화했어요!"
 	UiKit.Bump(title, 0.3)
 
-	-- 희귀도 배너
+	-- 이름/등급/희귀도 배너
 	local banner: Frame = Make("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.new(0.5, 0, 1, 10),
 		Size = UDim2.fromScale(1.15, 0.28),
-		BackgroundColor3 = rc,
+		BackgroundColor3 = tc,
 		ZIndex = 9,
 		Parent = stage,
 	})
@@ -267,19 +372,20 @@ local function showOne(job: Job)
 	UiKit.Gradient(banner)
 	UiKit.Stroke(banner, C.White, 4, true)
 	UiKit.Label({
-		Text = def.Name,
+		Text = displayName,
 		Position = UDim2.fromScale(0.05, 0.06),
 		Size = UDim2.fromScale(0.9, 0.56),
 		ZIndex = 10,
 		Parent = banner,
-	}, { Stroke = UiKit.Darken(rc, 0.5), StrokeThickness = 3, MaxText = 50 })
+	}, { Stroke = UiKit.Darken(tc, 0.5), StrokeThickness = 3, MaxText = 50 })
+	local tierText = if tinfo.Label ~= "" then tinfo.Label .. " · " else ""
 	UiKit.Label({
-		Text = "⭐ " .. (if rarity then rarity.Name else "") .. " ⭐   💰 " .. Config.FormatNumber(def.Income) .. "/초",
+		Text = tierText .. "⭐ " .. (if rarity then rarity.Name else "") .. "   💰 " .. Config.FormatNumber(Config.PetIncome(job.PetId, tier)) .. "/초",
 		Position = UDim2.fromScale(0.05, 0.6),
 		Size = UDim2.fromScale(0.9, 0.32),
 		ZIndex = 10,
 		Parent = banner,
-	}, { Stroke = UiKit.Darken(rc, 0.5), MaxText = 28 })
+	}, { Stroke = UiKit.Darken(tc, 0.5), MaxText = 28 })
 	UiKit.Pop(banner, 0.5)
 
 	if job.IsNew then
@@ -323,7 +429,7 @@ local function showOne(job: Job)
 	}, { MaxText = 24 })
 	hint.Visible = true
 
-	-- 4) 탭/클릭하거나 시간이 지나면 닫기 (뒤에 기다리는 부화가 있으면 1초)
+	-- 4) 탭/클릭하거나 시간이 지나면 닫기 (뒤에 기다리는 연출이 있으면 1초)
 	local closed = false
 	local revealAt = os.clock()
 	local conn = UserInputService.InputBegan:Connect(function(input)
@@ -368,15 +474,24 @@ local function runQueue()
 	running = false
 end
 
-function HatchFx.Play(petId: any, position: any, isNew: any)
+-- mode: "Hatch"(기본) 또는 "Fuse". tier: 새 펫의 등급 (없으면 1)
+function HatchFx.Play(petId: any, position: any, isNew: any, tier: any, mode: any)
 	if type(petId) ~= "string" or not Config.Pets[petId] then
 		return
 	end
-	local rc = UiKit.RarityColor(Config.Pets[petId].Rarity)
+	local t = UiKit.TierOf(tier)
+	local m = if mode == "Fuse" then "Fuse" else "Hatch"
+	local color = if t >= 2 then UiKit.TierColor(t) else UiKit.RarityColor(Config.Pets[petId].Rarity)
 	if typeof(position) == "Vector3" then
-		worldBurst(position, rc)
+		worldBurst(position, color)
 	end
-	table.insert(queue, { PetId = petId, EggId = guessEgg(petId), IsNew = isNew == true })
+	table.insert(queue, {
+		PetId = petId,
+		EggId = if m == "Hatch" then guessEgg(petId) else "",
+		IsNew = isNew == true,
+		Tier = t,
+		Mode = m,
+	})
 	if not running then
 		task.spawn(runQueue)
 	end

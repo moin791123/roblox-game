@@ -948,6 +948,59 @@ end
 -- 마무리: 용접 + 피벗
 ----------------------------------------------------------------------
 
+----------------------------------------------------------------------
+-- 추가 펫/알 모듈: 이 폴더(PetModels) 안의 다른 ModuleScript 는
+-- function(Kit, PET_BUILDERS, EGG_BUILDERS) 를 돌려주고, 거기서 빌더를 등록해요.
+----------------------------------------------------------------------
+
+local Kit = {
+	V = V,
+	RGB = RGB,
+	EYE = EYE,
+	WHITE = WHITE,
+	BLACK = BLACK,
+	BLUSH = BLUSH,
+	MOUTH = MOUTH,
+	RAINBOW = RAINBOW,
+	SIDES = SIDES,
+	addPart = addPart,
+	ell = ell,
+	darker = darker,
+	surf = surf,
+	front = front,
+	facing = facing,
+	alongY = alongY,
+	alongX = alongX,
+	frameUp = frameUp,
+	tri = tri,
+	addEye = addEye,
+	chibi = chibi,
+	pointyEars = pointyEars,
+	roundEars = roundEars,
+	muzzle = muzzle,
+	smallNose = smallNose,
+	ballArc = ballArc,
+	EGG_S = EGG_S,
+	EGG_C = EGG_C,
+	eggBase = eggBase,
+	eggDot = eggDot,
+	eggRing = eggRing,
+}
+
+for _, child in script:GetChildren() do
+	if child:IsA("ModuleScript") then
+		local ok, err = pcall(function()
+			local register = (require :: any)(child)
+			if type(register) == "function" then
+				register(Kit, PET_BUILDERS, EGG_BUILDERS)
+			end
+		end)
+		if not ok then
+			warn("[PetModels] 추가 모듈 오류 (" .. child.Name .. "): " .. tostring(err))
+		end
+	end
+end
+
 -- 모델 안 모든 파트의 월드 AABB
 local function bounds(model: Model): (Vector3, Vector3)
 	local minV = V(math.huge, math.huge, math.huge)
@@ -996,7 +1049,79 @@ end
 -- 공개 API
 ----------------------------------------------------------------------
 
-function PetModels.BuildPet(petId: string): Model
+-- 눈/반짝이/볼터치는 등급 색을 입히지 않음
+local KEEP_COLOR = { Eye = true, Shine = true, Blush = true, EyeWhite = true, Pupil = true }
+
+local GOLD = RGB(255, 200, 60)
+
+-- 합성 등급 색 입히기. 2 = 황금, 3 = 무지개 (아래→위로 색이 바뀜)
+local function applyTier(model: Model, tier: number)
+	if tier < 2 then
+		return
+	end
+	local minV, maxV = bounds(model)
+	local span = math.max(maxV.Y - minV.Y, 0.01)
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") and not KEEP_COLOR[d.Name] and d.Transparency < 0.95 then
+			if tier == 2 then
+				d.Color = d.Color:Lerp(GOLD, 0.7)
+				d.Reflectance = 0.12
+			else
+				local t = (d.Position.Y - minV.Y) / span
+				local hue = (0.98 - t * 0.78) % 1 -- 위쪽은 빨강/주황, 아래쪽은 파랑/보라
+				d.Color = Color3.fromHSV(hue, 0.72, 1)
+				d.Reflectance = 0.08
+			end
+		end
+	end
+	local body = model.PrimaryPart
+	if not body then
+		return
+	end
+	local light = Instance.new("PointLight")
+	light.Name = "TierFx"
+	light.Color = if tier == 2 then GOLD else RGB(255, 170, 230)
+	light.Brightness = if tier == 2 then 0.6 else 1
+	light.Range = if tier == 2 then 6 else 8
+	light.Shadows = false
+	light.Parent = body
+
+	local pe = Instance.new("ParticleEmitter")
+	pe.Name = "TierFx"
+	pe.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+	if tier == 2 then
+		pe.Color = ColorSequence.new(GOLD, WHITE)
+	else
+		local kps = {}
+		for i, c in RAINBOW do
+			table.insert(kps, ColorSequenceKeypoint.new((i - 1) / (#RAINBOW - 1), c))
+		end
+		pe.Color = ColorSequence.new(kps)
+	end
+	pe.LightEmission = 1
+	pe.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, if tier == 2 then 0.22 else 0.3),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	pe.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.1),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	pe.Lifetime = NumberRange.new(0.8, 1.4)
+	pe.Rate = if tier == 2 then 6 else 12
+	pe.Shape = Enum.ParticleEmitterShape.Sphere
+	pe.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+	pe.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
+	pe.Speed = NumberRange.new(1, 2.5)
+	pe.SpreadAngle = Vector2.new(180, 180)
+	pe.Rotation = NumberRange.new(0, 360)
+	pe.RotSpeed = NumberRange.new(-90, 90)
+	pe.Drag = 1
+	pe.Parent = body
+end
+
+-- tier: 1(기본) / 2(황금) / 3(무지개). 생략하면 1
+function PetModels.BuildPet(petId: string, tier: number?): Model
 	local fn = PET_BUILDERS[petId]
 	if not fn then
 		warn("[PetModels] 알 수 없는 펫: " .. tostring(petId))
@@ -1004,7 +1129,17 @@ function PetModels.BuildPet(petId: string): Model
 	end
 	local b = newBuilder(petId)
 	fn(b)
-	return finish(b)
+	local model = finish(b)
+	applyTier(model, math.clamp(tier or 1, 1, 3))
+	return model
+end
+
+function PetModels.HasPet(petId: string): boolean
+	return PET_BUILDERS[petId] ~= nil
+end
+
+function PetModels.HasEgg(eggId: string): boolean
+	return EGG_BUILDERS[eggId] ~= nil
 end
 
 function PetModels.BuildEgg(eggId: string): Model
@@ -1081,7 +1216,7 @@ function PetModels.AddRarityEffects(model: Model, rarity: string)
 end
 
 -- UI 용 3D 미리보기. silhouette = true 면 새까만 그림자 (도감 미발견)
-function PetModels.CreateViewport(kind: string, id: string, parent: Instance, silhouette: boolean?): (ViewportFrame, Model)
+function PetModels.CreateViewport(kind: string, id: string, parent: Instance, silhouette: boolean?, tier: number?): (ViewportFrame, Model)
 	local vf = Instance.new("ViewportFrame")
 	vf.Name = "PetViewport"
 	vf.Size = UDim2.fromScale(1, 1)
@@ -1092,7 +1227,7 @@ function PetModels.CreateViewport(kind: string, id: string, parent: Instance, si
 	vf.LightColor = RGB(255, 250, 245)
 	vf.LightDirection = V(-0.4, -1, 0.8)
 
-	local model = if kind == "Egg" then PetModels.BuildEgg(id) else PetModels.BuildPet(id)
+	local model = if kind == "Egg" then PetModels.BuildEgg(id) else PetModels.BuildPet(id, tier)
 
 	if silhouette then
 		for _, d in model:GetDescendants() do

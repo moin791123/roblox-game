@@ -9,18 +9,14 @@ local DataService = require(script.DataService)
 local PlotService = require(script.PlotService)
 local FollowService = require(script.FollowService)
 local ConveyorService = require(script.ConveyorService)
-local CarryService = require(script.CarryService)
 local CoinFieldService = require(script.CoinFieldService)
 
 WorldBuilder.Build()
-
-PlotService.Callbacks.OnStealPrompt = CarryService.StartSteal
 
 DataService.Start()
 PlotService.Start()
 FollowService.Start()
 ConveyorService.Start()
-CarryService.Start()
 CoinFieldService.Start()
 
 local function onCharacterAdded(player: Player, character: Model)
@@ -65,7 +61,7 @@ end
 
 Players.PlayerRemoving:Connect(function(player)
 	-- 앞 단계에서 오류가 나도 저장(Release)은 반드시 실행
-	for _, fn in { CarryService.OnPlayerRemoving, FollowService.Clear, PlotService.ReleasePlot } do
+	for _, fn in { FollowService.Clear, PlotService.ReleasePlot } do
 		local ok, err = pcall(fn, player)
 		if not ok then
 			warn("[Server] PlayerRemoving 처리 오류:", err)
@@ -81,9 +77,8 @@ Remotes.RequestSync.OnServerEvent:Connect(function(player)
 end)
 
 game:BindToClose(function()
-	local ok, err = pcall(CarryService.ReturnAll)
+	local ok, err = pcall(DataService.SaveAll)
 	if not ok then
-		warn("[Server] ReturnAll 오류:", err)
+		warn("[Server] SaveAll 오류:", err)
 	end
-	DataService.SaveAll()
 end)

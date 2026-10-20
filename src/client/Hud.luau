@@ -1,10 +1,6 @@
--- 화면 고정 UI: 코인, 펫 수, 왼쪽 큰 버튼들 (가방/도감/받침대/잠금)
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
+-- 화면 고정 UI: 코인, 초당 수익, 펫 수, 왼쪽 큰 버튼들 (가방/도감/집/환생)
 local UiKit = require(script.Parent.UiKit)
 local State = require(script.Parent.State)
-local Toasts = require(script.Parent.Toasts)
-local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
 
 local Config = UiKit.Config
 local Make, C = UiKit.Make, UiKit.Colors
@@ -15,22 +11,24 @@ local coinPill: Frame
 local coinLabel: TextLabel
 local pawPill: Frame
 local pawLabel: TextLabel
-local slotCaption: TextLabel
-local lockButton: TextButton
-local lockEmoji: TextLabel
-local lockCaption: TextLabel
-local lockStatus: Frame
-local lockStatusLabel: TextLabel
+local incomePill: Frame
+local incomeLabel: TextLabel
 local pendingPill: Frame
 local pendingLabel: TextLabel
+local rebirthButton: TextButton
+local rebirthPill: Frame
+local rebirthPillLabel: TextLabel
 local lastPending = -1
+local lastIncome = -1
+local lastCanRebirth: boolean? = nil
 
 local coinValue = Instance.new("NumberValue")
 local targetCoins = -1
 local lastPets = -1
-local nextSlotPrice: number? = nil
 
-export type Actions = { ToggleBag: () -> (), ToggleIndex: () -> () }
+local BUTTON_COUNT = 4
+
+export type Actions = { ToggleBag: () -> (), ToggleIndex: () -> (), ToggleHouse: () -> (), ToggleRebirth: () -> () }
 
 -- 큰 네모 버튼 (이모지 + 아래 글자)
 local function bigButton(parent: Instance, emoji: string, caption: string, color: Color3, order: number, onClick: () -> ())
@@ -58,61 +56,26 @@ local function bigButton(parent: Instance, emoji: string, caption: string, color
 	return btn, emojiLabel, cap
 end
 
-local function lockState(): (string, number)
-	local plot = State.Plot
-	if not plot then
-		return "none", 0
-	end
-	local now = workspace:GetServerTimeNow()
-	local lu = tonumber(plot:GetAttribute("LockedUntil")) or 0
-	if lu > now then
-		return "locked", lu - now
-	end
-	local cd = tonumber(plot:GetAttribute("LockCooldownUntil"))
-	if not cd then
-		cd = if lu > 0 then lu + Config.Plot.LockCooldown else 0
-	end
-	if now < cd then
-		return "cooldown", cd - now
-	end
-	return "ready", 0
-end
-
-local lastLockState = ""
-local function updateLock()
-	local st, left = lockState()
-	local secs = math.max(0, math.ceil(left))
-	if st == "locked" then
-		lockStatusLabel.Text = string.format("잠김 %d초", secs)
-	elseif st == "cooldown" then
-		lockStatusLabel.Text = string.format("다시 잠금까지 %d초", secs)
-	end
-	if st == lastLockState then
-		return
-	end
-	lastLockState = st
-	if st == "locked" then
-		lockEmoji.Text = "🔒"
-		lockCaption.Text = "잠김"
-		lockButton.BackgroundColor3 = C.Mint
-		lockStatus.BackgroundColor3 = C.Mint
-		lockStatus.Visible = true
-		UiKit.Pop(lockStatus)
-	elseif st == "cooldown" then
-		lockEmoji.Text = "⏳"
-		lockCaption.Text = "잠금"
-		lockButton.BackgroundColor3 = C.Grey
-		lockStatus.BackgroundColor3 = C.Grey
-		lockStatus.Visible = true
-	else
-		lockEmoji.Text = "🔒"
-		lockCaption.Text = "잠금"
-		lockButton.BackgroundColor3 = C.Lavender
-		lockStatus.Visible = false
-		if st == "ready" then
-			UiKit.Bump(lockButton, 0.12)
-		end
-	end
+-- 작은 알약 (코인 아래 줄: 초당 수익 / 금고)
+local function smallPill(parent: Instance, name: string, color: Color3, order: number, width: number): (Frame, TextLabel)
+	local pill: Frame = Make("Frame", {
+		Name = name,
+		Size = UDim2.fromScale(width, 1),
+		BackgroundColor3 = color,
+		LayoutOrder = order,
+		Parent = parent,
+	})
+	UiKit.Corner(pill, UDim.new(0.5, 0))
+	UiKit.Gradient(pill)
+	UiKit.Stroke(pill, C.White, 2, true)
+	local label = UiKit.Label({
+		Text = "",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.9, 0.78),
+		Parent = pill,
+	}, { Stroke = UiKit.Darken(color, 0.5), MaxText = 22 })
+	return pill, label
 end
 
 local function updatePending()
@@ -129,7 +92,7 @@ local function updatePending()
 		return
 	end
 	if pending > 0 then
-		pendingLabel.Text = "🏦 기지 금고 +" .. Config.FormatNumber(pending)
+		pendingLabel.Text = "🏦 집 금고 +" .. Config.FormatNumber(pending)
 		if not pendingPill.Visible then
 			pendingPill.Visible = true
 			UiKit.Pop(pendingPill)
@@ -138,32 +101,6 @@ local function updatePending()
 		pendingPill.Visible = false
 	end
 	lastPending = pending
-end
-
-local function onLockPressed()
-	local st, left = lockState()
-	if st == "locked" then
-		Toasts.Show(string.format("벌써 잠겨 있어요! 🔒 (%d초)", math.ceil(left)), "info")
-		UiKit.Shake(lockButton, 6, 6)
-	elseif st == "cooldown" then
-		Toasts.Show(string.format("조금만 기다려요 ⏳ %d초", math.ceil(left)), "warn")
-		UiKit.Shake(lockButton, 6, 6)
-	else
-		Remotes.LockBase:FireServer()
-	end
-end
-
-local function onBuySlot()
-	local snap = State.Snapshot
-	if snap and not nextSlotPrice then
-		Toasts.Show("받침대를 모두 열었어요! 🎉", "info")
-		return
-	end
-	if snap and nextSlotPrice and (tonumber(snap.Coins) or 0) < nextSlotPrice then
-		Toasts.Show(string.format("코인이 %s 필요해요 💰", Config.FormatNumber(nextSlotPrice)), "warn")
-		return
-	end
-	Remotes.BuySlot:FireServer()
 end
 
 function Hud.Init(gui: ScreenGui, actions: Actions)
@@ -236,33 +173,34 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 		Parent = pawPill,
 	}, { Stroke = UiKit.Darken(C.Pink, 0.45), MaxText = 32 })
 
-	-- 기지 금고에 쌓인 코인 (Collector 속성 Pending 을 실시간으로)
-	pendingPill = Make("Frame", {
-		Name = "Pending",
+	-- 코인 아래 줄: 초당 수익(항상) + 집 금고에 쌓인 코인(있을 때만)
+	local subRow: Frame = Make("Frame", {
+		Name = "SubRow",
 		AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.new(0.5, 0, 1, 4),
-		Size = UDim2.fromScale(0.86, 0.52),
-		BackgroundColor3 = C.Mint,
-		Visible = false,
+		Size = UDim2.fromScale(1.3, 0.54),
+		BackgroundTransparency = 1,
 		Parent = coinPill,
 	})
-	UiKit.Corner(pendingPill, UDim.new(0.5, 0))
-	UiKit.Gradient(pendingPill)
-	UiKit.Stroke(pendingPill, C.White, 2, true)
-	pendingLabel = UiKit.Label({
-		Text = "",
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromScale(0.9, 0.78),
-		Parent = pendingPill,
-	}, { Stroke = UiKit.Darken(C.Mint, 0.5), MaxText = 22 })
+	Make("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = subRow,
+	})
+	incomePill, incomeLabel = smallPill(subRow, "Income", C.Mint, 1, 0.44)
+	incomeLabel.Text = "💰 +0/초"
+	pendingPill, pendingLabel = smallPill(subRow, "Pending", C.Orange, 2, 0.5)
+	pendingPill.Visible = false
 
 	coinValue.Changed:Connect(function(v: number)
 		coinLabel.Text = Config.FormatNumber(v)
 	end)
 
 	------------------------------------------------------------------
-	-- 왼쪽: 큰 버튼들 (화면이 낮으면 2x2)
+	-- 왼쪽: 큰 버튼들 (화면이 낮으면 2열)
 	------------------------------------------------------------------
 	local column: Frame = Make("Frame", {
 		Name = "SideButtons",
@@ -280,30 +218,28 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 
 	bigButton(column, "🎒", "가방", C.Pink, 1, actions.ToggleBag)
 	bigButton(column, "📖", "도감", C.Sky, 2, actions.ToggleIndex)
-	local _slotBtn, _slotEmoji, slotCap = bigButton(column, "➕", "받침대", C.Peach, 3, onBuySlot)
-	slotCaption = slotCap
-	local lb, le, lc = bigButton(column, "🔒", "잠금", C.Lavender, 4, onLockPressed)
-	lockButton, lockEmoji, lockCaption = lb, le, lc
+	bigButton(column, "🏠", "집", C.Peach, 3, actions.ToggleHouse)
+	rebirthButton = bigButton(column, "🔄", "환생", C.Lavender, 4, actions.ToggleRebirth)
 
-	lockStatus = Make("Frame", {
-		Name = "LockStatus",
+	-- 환생 비용 (버튼 오른쪽 작은 알약)
+	rebirthPill = Make("Frame", {
+		Name = "RebirthCost",
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(1, 8, 0.5, 0),
-		Size = UDim2.new(1.9, 0, 0.42, 0),
-		BackgroundColor3 = C.Mint,
-		Visible = false,
+		Size = UDim2.new(1.5, 0, 0.42, 0),
+		BackgroundColor3 = C.Grey,
 		ZIndex = 3,
-		Parent = lockButton,
+		Parent = rebirthButton,
 	})
-	UiKit.Corner(lockStatus, UDim.new(0.5, 0))
-	UiKit.Stroke(lockStatus, C.White, 3, true)
-	lockStatusLabel = UiKit.Label({
-		Text = "",
+	UiKit.Corner(rebirthPill, UDim.new(0.5, 0))
+	UiKit.Stroke(rebirthPill, C.White, 3, true)
+	rebirthPillLabel = UiKit.Label({
+		Text = "💰 ?",
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
 		Size = UDim2.fromScale(0.9, 0.7),
 		ZIndex = 4,
-		Parent = lockStatus,
+		Parent = rebirthPill,
 	}, { MaxText = 22 })
 
 	local function layout()
@@ -316,7 +252,7 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 			cols = 2
 			cell = math.clamp(math.floor(h * 0.19), 60, 76)
 		end
-		local rows = math.ceil(4 / cols)
+		local rows = math.ceil(BUTTON_COUNT / cols)
 		grid.CellSize = UDim2.fromOffset(cell, cell)
 		column.Size = UDim2.fromOffset(cols * cell + (cols - 1) * 10, rows * cell + (rows - 1) * 10)
 	end
@@ -325,7 +261,6 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 
 	task.spawn(function()
 		while true do
-			updateLock()
 			updatePending()
 			task.wait(0.2)
 		end
@@ -360,8 +295,26 @@ function Hud.Update(snap: State.Snapshot)
 	end
 	lastPets = pets
 
-	nextSlotPrice = Config.NextSlotPrice(tonumber(snap.SlotsUnlocked) or Config.Plot.StartSlots)
-	slotCaption.Text = if nextSlotPrice then "💰" .. Config.FormatNumber(nextSlotPrice) else "최대"
+	-- 초당 수익
+	local income = math.floor(tonumber(snap.Income) or 0)
+	incomeLabel.Text = "💰 +" .. Config.FormatNumber(income) .. "/초"
+	if lastIncome >= 0 and income > lastIncome then
+		UiKit.Bump(incomePill, 0.2)
+	end
+	lastIncome = income
+
+	-- 환생 비용 (살 수 있으면 민트색으로)
+	local rebirths = tonumber(snap.Rebirths) or 0
+	local cost = tonumber(snap.RebirthCost) or Config.RebirthCost(rebirths)
+	local maxed = rebirths >= Config.Rebirth.MaxRebirths
+	local can = not maxed and coins >= cost
+	rebirthPillLabel.Text = if maxed then "최대 ✅" else "💰 " .. Config.FormatNumber(cost)
+	rebirthPill.BackgroundColor3 = if can then C.Mint else C.Grey
+	if can and lastCanRebirth == false then
+		UiKit.Pop(rebirthPill, 0.4)
+		UiKit.Bump(rebirthButton, 0.15)
+	end
+	lastCanRebirth = can
 end
 
 return Hud
