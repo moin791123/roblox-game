@@ -26,7 +26,7 @@ local WALL_T = 1
 local GAP = 12 -- 입구 너비 (문 없음, 막는 것 없음)
 local CAP_TOP = FLOOR_TOP + WALL_H + 0.5 -- 벽 위 장식띠 윗면 (작은 장식을 올려 두는 자리)
 local PILLAR = 2 -- 모서리 기둥 두께
-local POST_H = 9.6 -- 입구 기둥 높이
+local POST_H = 8.6 -- 입구 기둥 높이 (공이 1층 처마(ROOF_Y1) 아래에 오도록)
 local PED_BASE_H = 0.6
 local PED_TOP_H = 1.0
 local PED_H = PED_BASE_H + PED_TOP_H -- 받침대 윗면 = 바닥 + 1.6 (1층: 1.8, 2층: 12.6)

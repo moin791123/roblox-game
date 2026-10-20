@@ -84,11 +84,11 @@ local function getHRP(): BasePart?
 	return nil
 end
 
--- 따라오는 펫 수 (스냅샷 기준)
+-- 따라오는 펫 수 + 타는 펫 (스냅샷 기준, 서버 FollowService.GetFollowerCount 와 같아야 해요)
 local function followerCount(): number
 	local n = 0
 	for _, item in State.Items() do
-		if item.Loc == "Follow" then
+		if item.Loc == "Follow" or item.Loc == "Ride" then
 			n += 1
 		end
 	end

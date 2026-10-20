@@ -332,6 +332,10 @@ function CoinFieldService.Start()
 
 	-- 클라이언트가 동기화를 요청하면 코인 목록도 다시 보내요
 	Remotes.RequestSync.OnServerEvent:Connect(function(player)
+		-- 데이터 로드가 늦어 들판이 아직 없으면 지금 만들어요
+		if not fields[player] and player.Parent and DataService.Get(player) then
+			buildField(player)
+		end
 		if fields[player] then
 			sendReset(player)
 		end

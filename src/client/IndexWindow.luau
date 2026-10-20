@@ -77,11 +77,16 @@ local function setTier(petId: string, entry: Entry, tier: number)
 	end
 end
 
+local rebuildGen = 0
+
 local function rebuild()
 	dirty = false
+	rebuildGen += 1
+	local myGen = rebuildGen
 	local snap = State.Snapshot
 	local index: { [string]: any } = if snap then snap.Index else {}
 	local count = 0
+	local built = 0
 	for _, group in groups do
 		local found = 0
 		for _, petId in group.Pets do
@@ -91,8 +96,16 @@ local function rebuild()
 				count += 1
 			end
 			local entry = entries[petId]
-			if entry then
+			if entry and entry.Tier ~= tier then
 				setTier(petId, entry, tier)
+				built += 1
+				-- 뷰포트(펫 모델) 만들기는 무거워서 6개마다 한 프레임 쉬어요 (처음 열 때 48개)
+				if built % 6 == 0 then
+					task.wait()
+					if rebuildGen ~= myGen then
+						return
+					end
+				end
 			end
 		end
 		local rinfo = (Config.Rarities :: any)[group.Rarity]

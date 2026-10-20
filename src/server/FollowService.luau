@@ -22,6 +22,7 @@ type State = {
 	hold: Model?, -- 머리 위에 든 펫
 	rideHumanoid: Humanoid?, -- HipHeight 를 올린 휴머노이드 (내릴 때 되돌리기용)
 	hipAdded: number,
+	hipBase: number?, -- 올리기 전 HipHeight (내릴 때 이 값으로 되돌려요)
 }
 
 local states: { [Player]: State } = {}
@@ -151,13 +152,13 @@ end
 -- 올렸던 HipHeight 되돌리기
 local function restoreHip(st: State)
 	local hum = st.rideHumanoid
-	if hum and st.hipAdded ~= 0 then
-		if hum.Parent then
-			hum.HipHeight = math.max(0, hum.HipHeight - st.hipAdded)
-		end
+	if hum and st.hipAdded ~= 0 and hum.Parent then
+		-- 빼기가 아니라 원래 값으로 (아바타 로드 등으로 HipHeight 가 바뀌어 있어도 안전)
+		hum.HipHeight = if st.hipBase ~= nil then st.hipBase else math.max(0, hum.HipHeight - st.hipAdded)
 	end
 	st.rideHumanoid = nil
 	st.hipAdded = 0
+	st.hipBase = nil
 end
 
 local function destroyModels(player: Player)
@@ -286,9 +287,11 @@ local function mountRide(player: Player, st: State, hrp: BasePart, hum: Humanoid
 	end
 
 	-- 캐릭터를 펫 등 높이만큼 올리기
+	local hipBase = hum.HipHeight
 	st.rideHumanoid = hum
+	st.hipBase = hipBase
 	st.hipAdded = Config.Ride.HipHeightAdd
-	hum.HipHeight += st.hipAdded
+	hum.HipHeight = hipBase + st.hipAdded
 
 	-- 펫 바닥(피벗)이 땅에 닿게: HRP 아래 (올라간 HipHeight + HRP 절반)
 	local depth = groundDepth(player, hrp)
@@ -367,8 +370,9 @@ end
 -- 공개 API
 ----------------------------------------------------------------------
 
+-- 따라오는 펫 수 (+ 타는 펫 1). 자석 반경·이동 속도 계산에 써요
 function FollowService.GetFollowerCount(player: Player): number
-	return #getFollowItems(player)
+	return #getFollowItems(player) + (if getRideItem(player) then 1 else 0)
 end
 
 -- 따라오는 펫 + 타는 펫 + 들고 있는 펫의 코인 보너스 합
@@ -430,7 +434,7 @@ function FollowService.Refresh(player: Player)
 		return
 	end
 
-	local st: State = { models = {}, targets = {}, tweens = {}, offsets = {}, ride = nil, hold = nil, rideHumanoid = nil, hipAdded = 0 }
+	local st: State = { models = {}, targets = {}, tweens = {}, offsets = {}, ride = nil, hold = nil, rideHumanoid = nil, hipAdded = 0, hipBase = nil }
 	states[player] = st
 
 	-- 타는 펫 먼저 (HipHeight 가 바뀌어야 따라오는 펫의 땅 높이가 맞아요)
@@ -547,6 +551,12 @@ local function hookPlayer(player: Player)
 					end
 				end
 			end)
+		end),
+		-- 아바타(몸 크기)가 늦게 적용되면 HipHeight 가 다시 써질 수 있어요 → 타던/들던 펫을 한 번 더 올려요
+		player.CharacterAppearanceLoaded:Connect(function()
+			if player.Parent and DataService.Get(player) and (getRideItem(player) or getHoldItem(player)) then
+				FollowService.Refresh(player)
+			end
 		end),
 	}
 end
