@@ -672,7 +672,7 @@ function UiKit.Window(gui: Instance, opts: WindowOpts): Window
 		win.Close()
 	end)
 
-	UiKit.Button({
+	local closeButton = UiKit.Button({
 		Name = "Close",
 		Text = "✖",
 		Color = C.Red,
@@ -686,6 +686,30 @@ function UiKit.Window(gui: Instance, opts: WindowOpts): Window
 			win.Close()
 		end,
 	})
+
+	-- 낮은 화면 (가로 폰, 화면 높이 < 500): 창을 거의 화면만큼 키우고 머리줄을 얇게 해서 내용 칸을 넓혀요
+	local compact: boolean? = nil
+	local function applyCompact()
+		local h = if gui:IsA("GuiBase2d") then (gui :: GuiBase2d).AbsoluteSize.Y else 0
+		local want = h > 0 and h < 500
+		if want == compact then
+			return
+		end
+		compact = want
+		local headerH = if want then 44 else 58
+		local pad = if want then 8 else 12
+		header.Size = UDim2.new(1, 0, 0, headerH)
+		content.Position = UDim2.new(0, pad, 0, headerH + pad - 4)
+		content.Size = UDim2.new(1, -2 * pad, 1, -(headerH + 2 * pad - 4))
+		closeButton.Size = if want then UDim2.fromOffset(38, 38) else UDim2.fromOffset(46, 46)
+		panel.Position = UDim2.fromScale(0.5, if want then 0.5 else 0.52)
+		local base = opts.Size or UDim2.fromScale(0.86, 0.86)
+		panel.Size = if want then UDim2.new(if opts.Size then base.X.Scale else 0.94, base.X.Offset, 0.95, 0) else base
+	end
+	if gui:IsA("GuiBase2d") then
+		gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(applyCompact)
+	end
+	applyCompact()
 
 	return win :: Window
 end

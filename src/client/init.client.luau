@@ -226,6 +226,7 @@ safeCall(DecorateMode, "OnChanged", function(on: boolean)
 		closeAll()
 	end
 	Hud.SetSideVisible(not on)
+	Tips.SetSuppressed(on)
 end)
 
 ----------------------------------------------------------------------

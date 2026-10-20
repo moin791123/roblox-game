@@ -584,11 +584,13 @@ local function onPlaceFurniture(player: Player, furnId: any, floor: any, x: any,
 	end
 	if (data.FurnitureInv[furnId] or 0) <= 0 then
 		notify(player, "가구 가방에 없어요! 🛍 상점에서 사 보세요", "warn")
+		DataService.Sync(player) -- 클라이언트가 미리 바꿔 둔 화면을 바로 되돌려요
 		return
 	end
 	local ok, reason = ShopService.CanPlace(player, furnId, floor, x, z, r, nil)
 	if not ok then
 		notify(player, "🙅 " .. (reason or REASON_BAD), "warn")
+		DataService.Sync(player)
 		return
 	end
 	if not DataService.TakeFurnitureInv(player, furnId) then
@@ -627,6 +629,7 @@ local function onMoveFurniture(player: Player, fid: any, floor: any, x: any, z: 
 		notify(player, "🙅 " .. (reason or REASON_BAD), "warn")
 		-- 클라이언트가 흐리게 해 둔 모델이 있으면 원래대로 보이게 다시 그려요
 		pcall(renderOne, player, plot, fid, f)
+		DataService.Sync(player)
 		return
 	end
 	f.Floor = floor
@@ -653,6 +656,7 @@ local function onPickupFurniture(player: Player, fid: any)
 	end
 	if not DataService.AddFurnitureInv(player, f.Id) then
 		notify(player, "가구 가방이 가득 찼어요!", "warn")
+		DataService.Sync(player)
 		return
 	end
 	data.Furniture[fid] = nil

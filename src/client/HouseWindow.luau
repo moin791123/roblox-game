@@ -672,7 +672,7 @@ local function buildPicker(gui: Instance)
 		OnClick = teleportHome,
 	})
 	UiKit.Button({
-		Text = "🛋️ 꾸미기",
+		Text = "🪑 가구 꾸미기",
 		Color = C.Pink,
 		Size = UDim2.new(0.31, 0, 1, 0),
 		LayoutOrder = 2,
@@ -759,7 +759,7 @@ function HouseWindow.Init(gui: Instance, houseActions: Actions?)
 	})
 	UiKit.Button({
 		Name = "AutoPlace",
-		Text = "⭐ 최고 펫 자동 배치",
+		Text = "✨ 좋은 펫 자동 배치",
 		Color = C.Gold,
 		Size = UDim2.new(0.34, -6, 1, 0),
 		LayoutOrder = 1,
@@ -771,7 +771,7 @@ function HouseWindow.Init(gui: Instance, houseActions: Actions?)
 	local clearTap: () -> () = function() end
 	local clearBtn, clearLabel = UiKit.Button({
 		Name = "ClearBase",
-		Text = "🧹 집 펫 모두 빼기",
+		Text = "📦 집 펫 모두 빼기",
 		Color = C.Sky,
 		Size = UDim2.new(0.34, -6, 1, 0),
 		LayoutOrder = 2,
@@ -786,10 +786,10 @@ function HouseWindow.Init(gui: Instance, houseActions: Actions?)
 			clearTap()
 		end,
 	})
-	clearTap = UiKit.TwoTap(clearBtn, clearLabel, "정말 다 뺄까요? 🧹", onClearBase)
+	clearTap = UiKit.TwoTap(clearBtn, clearLabel, "정말 다 뺄까요? 📦", onClearBase)
 	UiKit.Button({
 		Name = "Decorate",
-		Text = "🛋️ 꾸미기",
+		Text = "🪑 가구 꾸미기",
 		Color = C.Pink,
 		Size = UDim2.new(0.32, -6, 1, 0),
 		LayoutOrder = 3,

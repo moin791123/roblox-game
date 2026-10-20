@@ -440,6 +440,12 @@ function State.SetSnapshot(snap: any)
 		return
 	end
 	snap.Items = tableOr(snap.Items, {})
+	-- 모양이 이상한 아이템은 버려요 (가방·코인 루프가 item.Loc / item.Id 를 바로 읽어요)
+	for uid, item in snap.Items do
+		if type(uid) ~= "string" or type(item) ~= "table" or type(item.Kind) ~= "string" or type(item.Id) ~= "string" or type(item.Loc) ~= "string" then
+			snap.Items[uid] = nil
+		end
+	end
 	snap.Index = tableOr(snap.Index, {})
 	snap.Themes = tableOr(snap.Themes, { Basic = true })
 	snap.Wardrobe = tableOr(snap.Wardrobe, {})

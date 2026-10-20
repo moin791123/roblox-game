@@ -529,12 +529,8 @@ local function equip(uid: string, accId: string)
 		return
 	end
 	lastFire = os.clock()
+	-- 알림(입혔어요/벗겼어요)은 서버 ShopService 가 보내요 (여기서 또 띄우면 두 번 나와요)
 	Remotes.EquipAccessory:FireServer(uid, accId)
-	if accId == "" then
-		Toasts.Show("👕 옷을 벗었어요!", "info")
-	else
-		Toasts.Show("👕 " .. UiKit.Josa(UiKit.AccessoryName(accId) or "옷", "을", "를") .. " 입혔어요!", "good")
-	end
 	closeWardrobe()
 end
 
@@ -788,11 +784,8 @@ local function onAction(def: ActionDef, uid: string)
 			return
 		end
 		pendingFuse = { Id = item.Id, Tier = tierOf(item) + 1, At = os.clock() }
-	elseif def.Action == "Ride" then
-		Toasts.Show("🏇 " .. UiKit.Josa(Config.PetDisplayName(item.Id, tierOf(item)), "을", "를") .. " 타요!", "good")
-	elseif def.Action == "Hold" then
-		Toasts.Show("🙌 " .. UiKit.Josa(Config.PetDisplayName(item.Id, tierOf(item)), "을", "를") .. " 머리 위에 올려요!", "good")
 	end
+	-- 타기/들기 알림은 서버가 보내요 (가방이 가득 차서 안 될 때도 서버가 알려 줘요)
 	fire(uid, def.Action)
 end
 
@@ -1035,7 +1028,7 @@ local function rebuild()
 		emptyLabel.Text = if currentTab == "Egg"
 			then "알이 없어요 🥚\n컨베이어에서 사 보세요!"
 			elseif currentTab == "Pet" then "펫이 아직 없어요 🐣\n알을 집 받침대에 두면 부화해요!"
-			elseif currentTab == "Home" then "집 받침대가 비어 있어요 🏠\n'⭐ 최고 펫 자동 배치'를 눌러 보세요!"
+			elseif currentTab == "Home" then "집 받침대가 비어 있어요 🏠\n'✨ 좋은 펫 자동 배치'를 눌러 보세요!"
 			else "가방이 비어 있어요 🎒\n컨베이어에서 알을 사 보세요!"
 	end
 
@@ -1315,7 +1308,7 @@ function BagWindow.Init(gui: Instance, bagActions: Actions?)
 	})
 	UiKit.Button({
 		Name = "AutoPlace",
-		Text = "⭐ 최고 펫 자동 배치",
+		Text = "✨ 좋은 펫 자동 배치",
 		Color = C.Gold,
 		Size = UDim2.new(0.5, -3, 1, -2),
 		LayoutOrder = 1,
@@ -1327,7 +1320,7 @@ function BagWindow.Init(gui: Instance, bagActions: Actions?)
 	local clearTap: () -> () = function() end
 	local clearBtn, clearLabel = UiKit.Button({
 		Name = "ClearBase",
-		Text = "🧹 집 펫 모두 빼기",
+		Text = "📦 집 펫 모두 빼기",
 		Color = C.Sky,
 		Size = UDim2.new(0.5, -3, 1, -2),
 		LayoutOrder = 2,
@@ -1342,7 +1335,7 @@ function BagWindow.Init(gui: Instance, bagActions: Actions?)
 			clearTap()
 		end,
 	})
-	clearTap = UiKit.TwoTap(clearBtn, clearLabel, "정말 다 뺄까요? 🧹", onClearBase)
+	clearTap = UiKit.TwoTap(clearBtn, clearLabel, "정말 다 뺄까요? 📦", onClearBase)
 
 	-- 아래: 카드 목록 + 정보 칸
 	body = Make("Frame", {

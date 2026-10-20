@@ -3,6 +3,7 @@
 --  · 엘리베이터 프롬프트 (PromptAction "Elevator") → init.client 가 넣은 함수 (층 고르기 창)
 --  · 집 받침대 펫 살랑살랑 (Bob = true 모델, 가까운 것만, 루프 하나로 Body CFrame 만 움직여요)
 --  · 멀리 있는 받침대 펫의 반짝이/빛 끄기 (LOD)
+--  · 레인보우 등급(TierCycle) 색 돌리기: 가까운 받침대 펫 + 내가 데리고 다니는/탄/든 펫
 --  · +코인 떠오르는 숫자
 -- (들판 코인 그리기는 CoinField 모듈이 해요)
 local Players = game:GetService("Players")
@@ -339,7 +340,46 @@ local function step()
 	end
 end
 
+-- 내가 데리고 다니는/탄/든 펫 (workspace.FollowPets, OwnerUserId = 나) 중 레인보우 등급(TierCycle)
+local ownCycle: { [Model]: boolean } = {}
+
+local function considerOwn(child: Instance)
+	if child:IsA("Model") and child:GetAttribute("TierCycle") == true and tonumber(child:GetAttribute("OwnerUserId")) == myId then
+		ownCycle[child :: Model] = true
+	end
+end
+
+local function watchFollowFolder(folder: Instance)
+	for _, child in folder:GetChildren() do
+		considerOwn(child)
+	end
+	folder.ChildAdded:Connect(considerOwn)
+	folder.ChildRemoved:Connect(function(child)
+		ownCycle[child :: Model] = nil
+	end)
+end
+
+local function setupOwnCycle()
+	local folder = workspace:FindFirstChild("FollowPets")
+	if folder then
+		watchFollowFolder(folder)
+		return
+	end
+	-- 서버가 처음 펫을 데리고 다닐 때 폴더를 만들어요
+	local conn: RBXScriptConnection? = nil
+	conn = workspace.ChildAdded:Connect(function(child)
+		if child.Name == "FollowPets" and child:IsA("Folder") then
+			if conn then
+				conn:Disconnect()
+				conn = nil
+			end
+			watchFollowFolder(child)
+		end
+	end)
+end
+
 local function setupBob()
+	setupOwnCycle()
 	task.spawn(function()
 		local plots = workspace:WaitForChild("Plots")
 		for _, plot in plots:GetChildren() do
@@ -359,6 +399,13 @@ local function setupBob()
 				for _, info in active do
 					if info.Active and not info.Far and info.Model:GetAttribute("TierCycle") == true then
 						pcall(pm.CycleTierColors, info.Model, phase)
+					end
+				end
+				for model in ownCycle do
+					if model.Parent then
+						pcall(pm.CycleTierColors, model, phase)
+					else
+						ownCycle[model] = nil
 					end
 				end
 			end

@@ -133,6 +133,9 @@ local shopOpener: (() -> ())? = nil
 local pendingTaken: { [string]: number } = {}
 local pendingNew: { Piece } = {}
 local pendingOverride: { [string]: Piece | false } = {}
+-- 서버가 거절하면 Sync 가 안 와요 (알림만). 이만큼 지나도 답이 없으면 임시 기록을 버려요
+local PENDING_TTL = 4
+local pendingSince: number? = nil
 
 local lastFire = 0
 local lastTeleport = -100
@@ -281,6 +284,55 @@ local function isRug(furnId: string): boolean
 	return def ~= nil and def.Category == "Rug"
 end
 
+-- 서버 checkPlace 와 같은 본체 (테마·층 수·다른 가구를 받아요). x, z 는 Snap 된 값, r 은 0/90/180/270
+-- pre = 미리 구한 { Bounds, Blocked } (같은 층을 많이 검사할 때. HouseLayout 값이라 결과는 같아요)
+type Pre = { Bounds: any, Blocked: any }
+local function checkRules(theme: string, floors: number, furnId: string, floor: number, x: number, z: number, r: number, others: { [string]: Piece }, ignoreFid: string?, pre: Pre?): (boolean, string?)
+	if not Config.Furniture[furnId] then
+		return false, REASON_BAD
+	end
+	if floor ~= math.floor(floor) or floor < 1 or floor > floors or floor > Config.House.MaxFloors then
+		return false, REASON_BAD
+	end
+	local rect = footprintRect(furnId, x, z, r)
+
+	local okB, bounds = true, pre and pre.Bounds
+	if not pre then
+		okB, bounds = pcall(HouseLayout.FloorBounds, theme, floor)
+	end
+	if not okB or type(bounds) ~= "table" then
+		return false, REASON_BAD
+	end
+	local m = DECOR.WallMargin
+	local minX, maxX = (tonumber(bounds.MinX) or 0) + m, (tonumber(bounds.MaxX) or 0) - m
+	local minZ, maxZ = (tonumber(bounds.MinZ) or 0) + m, (tonumber(bounds.MaxZ) or 0) - m
+	if rect.MinX < minX - EPS or rect.MaxX > maxX + EPS or rect.MinZ < minZ - EPS or rect.MaxZ > maxZ + EPS then
+		return false, REASON_WALL
+	end
+
+	local okR, blocked = true, pre and pre.Blocked
+	if not pre then
+		okR, blocked = pcall(HouseLayout.BlockedRects, theme, floor)
+	end
+	if okR and type(blocked) == "table" then
+		for _, b in blocked do
+			if type(b) == "table" and overlaps(rect, b) then
+				return false, REASON_BLOCKED
+			end
+		end
+	end
+
+	local rug = isRug(furnId)
+	for fid, f in others do
+		if fid ~= ignoreFid and f.Floor == floor and not rug and not isRug(f.Id) then
+			if overlaps(rect, footprintRect(f.Id, f.X, f.Z, f.R)) then
+				return false, REASON_OVERLAP
+			end
+		end
+	end
+	return true, nil
+end
+
 local function canPlaceLocal(furnId: string, floor: number, x: number, z: number, r: number, ignoreFid: string?): (boolean, string?)
 	if not snapshot() or not Config.Furniture[furnId] then
 		return false, REASON_BAD
@@ -302,38 +354,71 @@ local function canPlaceLocal(furnId: string, floor: number, x: number, z: number
 			return false, REASON_MAX
 		end
 	end
-	local theme = themeId()
-	local rect = footprintRect(furnId, x, z, r)
+	return checkRules(themeId(), floorsCount(), furnId, floor, x, z, r, placed, ignoreFid)
+end
 
-	local okB, bounds = pcall(HouseLayout.FloorBounds, theme, floor)
-	if not okB or type(bounds) ~= "table" then
-		return false, REASON_BAD
-	end
-	local m = DECOR.WallMargin
-	local minX, maxX = (tonumber(bounds.MinX) or 0) + m, (tonumber(bounds.MaxX) or 0) - m
-	local minZ, maxZ = (tonumber(bounds.MinZ) or 0) + m, (tonumber(bounds.MaxZ) or 0) - m
-	if rect.MinX < minX - EPS or rect.MaxX > maxX + EPS or rect.MinZ < minZ - EPS or rect.MaxZ > maxZ + EPS then
-		return false, REASON_WALL
-	end
+-- 빈 집에 이 가구가 들어갈 자리가 하나라도 있나? (서버 ShopService fitsInHouse 와 똑같이: 1~2층, 0/90도,
+-- Snap 한 벽 끝에서 max(Snap, 1) 씩, 다른 가구 없이). 서버는 안 들어가는 가구는 팔지 않아요. 결과는 기억해요
+local NO_OTHERS: { [string]: Piece } = {}
+local fitCache: { [string]: boolean } = {}
 
-	local okR, blocked = pcall(HouseLayout.BlockedRects, theme, floor)
-	if okR and type(blocked) == "table" then
-		for _, b in blocked do
-			if type(b) == "table" and overlaps(rect, b) then
-				return false, REASON_BLOCKED
+local function snapHalf(v: number): number
+	local s = DECOR.Snap
+	return math.floor(v / s + 0.5) * s
+end
+
+function DecorateMode.FitsInHouse(theme: string, floors: number, furnId: string): boolean
+	local floorCount = math.floor(tonumber(floors) or 1)
+	local maxFloor = math.clamp(floorCount, 1, 2) -- 2층부터는 모양이 같아요
+	local key = tostring(theme) .. "|" .. maxFloor .. "|" .. furnId
+	local cached = fitCache[key]
+	if cached ~= nil then
+		return cached
+	end
+	local step = math.max(DECOR.Snap, 1)
+	local found = false
+	for floor = 1, maxFloor do
+		local okB, b = pcall(HouseLayout.FloorBounds, theme, floor)
+		if okB and type(b) == "table" then
+			local okR, blocked = pcall(HouseLayout.BlockedRects, theme, floor)
+			local pre: Pre = { Bounds = b, Blocked = if okR then blocked else nil }
+			local x0, x1 = snapHalf(tonumber(b.MinX) or 0), snapHalf(tonumber(b.MaxX) or 0)
+			local z0, z1 = snapHalf(tonumber(b.MinZ) or 0), snapHalf(tonumber(b.MaxZ) or 0)
+			for _, r in { 0, 90 } do
+				local x = x0
+				while x <= x1 and not found do
+					local z = z0
+					while z <= z1 do
+						if checkRules(theme, floorCount, furnId, floor, x, z, r, NO_OTHERS, nil, pre) then
+							found = true
+							break
+						end
+						z += step
+					end
+					x += step
+				end
+				if found then
+					break
+				end
 			end
 		end
-	end
-
-	local rug = isRug(furnId)
-	for fid, f in placed do
-		if fid ~= ignoreFid and f.Floor == floor and not rug and not isRug(f.Id) then
-			if overlaps(rect, footprintRect(f.Id, f.X, f.Z, f.R)) then
-				return false, REASON_OVERLAP
-			end
+		if found then
+			break
 		end
 	end
-	return true, nil
+	fitCache[key] = found
+	return found
+end
+
+-- 이 가구가 들어가는 가장 작은 집 테마 이름 (없으면 nil). 서버 알림과 같은 글
+function DecorateMode.SmallestThemeFor(furnId: string, floors: number): string?
+	for _, id in Config.House.ThemeOrder do
+		if DecorateMode.FitsInHouse(id, floors, furnId) then
+			local theme = Config.House.Themes[id]
+			return if theme then theme.Name else id
+		end
+	end
+	return nil
 end
 
 ----------------------------------------------------------------------
@@ -783,6 +868,7 @@ local function confirm()
 			return
 		end
 		Remotes.PlaceFurniture:FireServer(furnId, editFloor, x, z, rot)
+		pendingSince = pendingSince or os.clock()
 		pendingTaken[furnId] = (pendingTaken[furnId] or 0) + 1
 		table.insert(pendingNew, piece)
 		UiKit.PlaySound("Buy")
@@ -796,6 +882,7 @@ local function confirm()
 	elseif mode == "Move" and selFid then
 		local fid = selFid :: string
 		Remotes.MoveFurniture:FireServer(fid, editFloor, x, z, rot)
+		pendingSince = pendingSince or os.clock()
 		pendingOverride[fid] = piece
 		UiKit.PlaySound("Buy")
 		-- 서버가 새 모델을 그리면 흐린 옛 모델은 사라져요. 혹시 안 오면 다시 보이게
@@ -839,6 +926,7 @@ local function rotate()
 			return
 		end
 		Remotes.MoveFurniture:FireServer(fid, piece.Floor, piece.X, piece.Z, newR)
+		pendingSince = pendingSince or os.clock()
 		pendingOverride[fid] = { Id = piece.Id, Floor = piece.Floor, X = piece.X, Z = piece.Z, R = newR }
 		UiKit.PlaySound("Click")
 	else
@@ -853,6 +941,7 @@ local function pickup()
 		end
 		local fid = selFid :: string
 		Remotes.PickupFurniture:FireServer(fid)
+		pendingSince = pendingSince or os.clock()
 		pendingOverride[fid] = false
 		local m = if mode == "Move" then fadedModel else nil
 		fadedModel = nil
@@ -1060,6 +1149,10 @@ local function onRender()
 		return
 	end
 	lastCheck = now
+	if pendingSince and now - (pendingSince :: number) > PENDING_TTL then
+		-- 거절된 요청: 서버 스냅샷 그대로 다시 보여 줘요
+		DecorateMode.OnSync()
+	end
 	if now < teleportGraceUntil then
 		outsideSince = nil
 		return
@@ -1123,7 +1216,9 @@ local function onTouchTap(position: Vector2, processedByUI: boolean)
 	if not active or processedByUI or not isTouchInput() then
 		return
 	end
-	onWorldPress(position, true)
+	-- 터치 위치는 GUI 좌표(위쪽 GuiInset 제외)라서 뷰포트 좌표로 바꿔요 (ViewportPointToRay 용)
+	local inset = GuiService:GetGuiInset()
+	onWorldPress(position + inset, true)
 end
 
 ----------------------------------------------------------------------
@@ -1485,7 +1580,7 @@ local function ensureUi()
 	column = Make("Frame", {
 		Name = "Actions",
 		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -10, 0.42, 0),
+		Position = UDim2.new(1, -10, 0.36, 0), -- 폰 점프 버튼(오른쪽 아래) 위로
 		Size = UDim2.fromOffset(124, 5 * 56),
 		BackgroundTransparency = 1,
 		Visible = false,
@@ -1531,6 +1626,7 @@ local function onSync()
 	table.clear(pendingTaken)
 	table.clear(pendingNew)
 	table.clear(pendingOverride)
+	pendingSince = nil
 	syncVersion += 1
 	if not active then
 		return

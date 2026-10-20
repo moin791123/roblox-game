@@ -5,11 +5,21 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UiKit = require(script.Parent.UiKit)
 local State = require(script.Parent.State)
 local Toasts = require(script.Parent.Toasts)
-local DecorateMode = require(script.Parent.DecorateMode)
 local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
 
 local Config = UiKit.Config
 local Make, C = UiKit.Make, UiKit.Colors
+
+-- 꾸미기 모드는 없거나 오류가 나도 상점은 살아 있게 pcall 로 불러요
+local DecorateMode: any = nil
+do
+	local ok, result = pcall(require, script.Parent.DecorateMode)
+	if ok and type(result) == "table" then
+		DecorateMode = result
+	else
+		warn("[ShopWindow] DecorateMode 불러오기 실패:", result)
+	end
+end
 
 local ShopWindow = {}
 
@@ -44,6 +54,8 @@ type FurnCard = {
 	Stroke: UIStroke,
 	Holder: Frame,
 	Made: boolean,
+	Fits: boolean, -- 지금 집에 놓을 자리가 있나 (없으면 서버가 안 팔아요)
+	Price: Frame,
 	PriceLabel: TextLabel,
 	CountLabel: TextLabel,
 	BuyButton: TextButton,
@@ -117,6 +129,18 @@ local function needCoins(price: number, button: GuiObject)
 	UiKit.Shake(button, 6, 6)
 end
 
+-- 지금 집(테마·층 수)에 이 가구를 놓을 자리가 있나? 규칙은 DecorateMode (= 서버 fitsInHouse) 와 같아요.
+-- 결과는 DecorateMode 가 테마·층별로 기억해요. 모르면 true (서버가 다시 검사해요)
+local function fitsHouse(furnId: string): boolean
+	local snap = snapshot()
+	if not snap or not DecorateMode or type(DecorateMode.FitsInHouse) ~= "function" then
+		return true
+	end
+	local theme = if type(snap.Theme) == "string" then snap.Theme else "Basic"
+	local ok, fits = pcall(DecorateMode.FitsInHouse, theme, tonumber(snap.Floors) or 1, furnId)
+	return not ok or fits ~= false
+end
+
 local function samplePet(): string
 	if Config.Pets[SAMPLE_PET] then
 		return SAMPLE_PET
@@ -154,6 +178,10 @@ local function goDecorate(furnId: string?)
 		Toasts.Show("집이 있어야 꾸밀 수 있어요! 🏠", "warn")
 		return
 	end
+	if not DecorateMode then
+		Toasts.Show("🛋️ 꾸미기는 곧 열려요!", "info")
+		return
+	end
 	ShopWindow.Close()
 	DecorateMode.Enter(nil, furnId)
 end
@@ -161,7 +189,19 @@ end
 local function onBuyFurniture(furnId: string)
 	local def = Config.Furniture[furnId]
 	local card = furnCards[furnId]
-	if not snapshot() or not def or not card then
+	local snap = snapshot()
+	if not snap or not def or not card then
+		return
+	end
+	-- 지금 집에 자리가 없으면 서버가 안 팔아요 (서버 알림과 같은 말)
+	if not fitsHouse(furnId) then
+		local okT, better = pcall(DecorateMode.SmallestThemeFor, furnId, tonumber(snap.Floors) or 1)
+		if okT and type(better) == "string" then
+			Toasts.Show(string.format("🏠 지금 집에는 %s 안 들어가요! '%s' 이상으로 집을 바꾸면 놓을 수 있어요", UiKit.Josa(def.Name, "이", "가"), better), "warn")
+		else
+			Toasts.Show("🏠 이 가구는 아직 놓을 수 있는 집이 없어요", "warn")
+		end
+		UiKit.Shake(card.BuyButton, 6, 6)
 		return
 	end
 	if invOf(furnId) >= DECOR.MaxPerItem then
@@ -299,7 +339,7 @@ local function createFurnCard(parent: Instance, furnId: string, order: number, c
 		Parent = frame,
 	}, { Stroke = UiKit.Darken(color, 0.45), MaxText = 22 })
 
-	local _, priceLabel = UiKit.Pill(frame, "💰 " .. Config.FormatNumber(def.Price), C.Lemon, {
+	local price, priceLabel = UiKit.Pill(frame, "💰 " .. Config.FormatNumber(def.Price), C.Lemon, {
 		Name = "Price",
 		AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.fromScale(0.5, 0.55),
@@ -352,6 +392,8 @@ local function createFurnCard(parent: Instance, furnId: string, order: number, c
 		Stroke = stroke,
 		Holder = holder,
 		Made = false,
+		Fits = true,
+		Price = price,
 		PriceLabel = priceLabel,
 		CountLabel = countLabel,
 		BuyButton = buyButton,
@@ -398,7 +440,7 @@ local function refreshCoins()
 		end
 	end
 	for furnId, card in furnCards do
-		if invOf(furnId) < DECOR.MaxPerItem then
+		if card.Fits and invOf(furnId) < DECOR.MaxPerItem then
 			card.BuyButton.BackgroundColor3 = if money >= Config.Furniture[furnId].Price then C.Pink else C.Lavender
 		end
 	end
@@ -440,7 +482,14 @@ local function rebuild()
 		local here = placed[furnId] or 0
 		totalInv += have
 		card.CountLabel.Text = if here > 0 then string.format("🎒 가방에 %d개 · 🏠 %d", have, here) else string.format("🎒 가방에 %d개", have)
-		if have >= DECOR.MaxPerItem then
+		local fits = fitsHouse(furnId)
+		card.Fits = fits
+		card.PriceLabel.Text = if fits then "💰 " .. Config.FormatNumber(Config.Furniture[furnId].Price) else "🏠 더 큰 집 필요"
+		card.Price.BackgroundColor3 = if fits then C.Lemon else C.Peach
+		if not fits then
+			card.BuyLabel.Text = "구매"
+			card.BuyButton.BackgroundColor3 = C.Grey
+		elseif have >= DECOR.MaxPerItem then
 			card.BuyLabel.Text = "가득 🎒"
 			card.BuyButton.BackgroundColor3 = C.Grey
 		else
@@ -634,10 +683,12 @@ function ShopWindow.Init(gui: Instance)
 		end
 	end
 
-	-- 꾸미기 모드의 빈 가방 "🛍 상점" → 가구 탭
-	DecorateMode.SetShopOpener(function()
-		ShopWindow.Open("Furniture")
-	end)
+	-- 꾸미기 모드의 빈 가방 "🛍 상점" → 가구 탭 (init.client 가 창 닫기까지 하는 함수로 다시 넣어요)
+	if DecorateMode and type(DecorateMode.SetShopOpener) == "function" then
+		DecorateMode.SetShopOpener(function()
+			ShopWindow.Open("Furniture")
+		end)
+	end
 
 	-- 스냅샷/코인이 바뀌면 (init.client 가 OnSync 를 또 불러도 괜찮아요)
 	State.OnSync(function()
