@@ -1,5 +1,7 @@
-local Players = game:GetService("Players")
+local CoinService = require(script.CoinService)
+local PetService = require(script.PetService)
+local EggService = require(script.EggService)
 
-Players.PlayerAdded:Connect(function(player)
-	print(player.Name .. " 님이 입장했습니다")
-end)
+CoinService.Start()
+PetService.Start()
+EggService.Start()
