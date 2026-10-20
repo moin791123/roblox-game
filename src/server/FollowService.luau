@@ -2,6 +2,7 @@
 -- 타는 펫은 캐릭터 HumanoidRootPart 에 용접해서 플레이어가 펫 등 위에 올라탄 것처럼 보여요.
 -- 들고 있는 펫은 머리(Head)에 용접해서 머리 위에 둥실둥실 떠 있어요.
 -- 물리는 플레이어 클라이언트가 계산 (SetNetworkOwner) 해서 부드러워요.
+-- 펫은 입은 옷(Item.Acc)까지 같이 만들어요. WalkSpeed / HipHeight 를 정하는 곳은 여기뿐이에요. (설계: docs/DESIGN.md "FollowService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -12,7 +13,7 @@ local DataService = require(script.Parent.DataService)
 
 local FollowService = {}
 
-type PetEntry = { uid: string, id: string, tier: number, size: number, boost: number }
+type PetEntry = { uid: string, id: string, tier: number, size: number, boost: number, acc: string? }
 type State = {
 	models: { Model },
 	targets: { Attachment },
@@ -35,6 +36,7 @@ local HOVER = 0.4 -- 땅 위로 살짝 뜸
 local BOB = 0.7 -- 위아래 흔들림
 local HOLD_BOB = 0.25 -- 머리 위 펫 위아래 흔들림
 local SNAP_DISTANCE = 60 -- 이보다 멀어지면 순간이동
+local EFFECT_MIN_ORDER = 5 -- 타기/들기 펫 희귀도 효과: 전설 이상
 
 local function getFolder(): Folder
 	if folder and folder.Parent then
@@ -58,8 +60,43 @@ local function tierOf(v: any): number
 	return math.clamp(math.floor(tonumber(v) or 1), 1, Config.MaxTier)
 end
 
+-- 입은 옷 (진짜 있는 옷만. 옷장 검사는 DataService 가 해요)
+local function accOf(v: any): string?
+	if Config.AccessoryValid(v) then
+		return v
+	end
+	return nil
+end
+
 local function entryOf(uid: string, item: any): PetEntry
-	return { uid = uid, id = item.Id, tier = tierOf(item.Tier), size = Config.SizeOf(item), boost = Config.ItemBoost(item) }
+	return {
+		uid = uid,
+		id = item.Id,
+		tier = tierOf(item.Tier),
+		size = Config.SizeOf(item),
+		boost = Config.ItemBoost(item),
+		acc = accOf(item.Acc),
+	}
+end
+
+-- 희귀도 효과 (전설 이상)
+local function addRarityEffects(model: Model, petId: string)
+	local pet = Config.Pets[petId]
+	local rarity = if pet then pet.Rarity else nil
+	local info = if rarity then Config.Rarities[rarity] else nil
+	if rarity and info and info.Order >= EFFECT_MIN_ORDER then
+		pcall(PetModels.AddRarityEffects, model, rarity)
+	end
+end
+
+-- 모델 속성 (주인 / uid / 펫 / 등급 / 크기 / 옷)
+local function tagModel(m: Model, player: Player, entry: PetEntry)
+	m:SetAttribute("OwnerUserId", player.UserId)
+	m:SetAttribute("ItemUid", entry.uid)
+	m:SetAttribute("PetId", entry.id)
+	m:SetAttribute("Tier", entry.tier)
+	m:SetAttribute("Size", entry.size)
+	m:SetAttribute("Acc", entry.acc)
 end
 
 -- 데이터에서 따라다니는 펫 목록 (최대 MaxFollow)
@@ -238,7 +275,9 @@ local function makeNameTag(body: BasePart, model: Model, petId: string, tier: nu
 end
 
 local function buildPetModel(entry: PetEntry): (Model?, BasePart?)
-	local ok, built = pcall(PetModels.BuildPet, entry.id, entry.tier)
+	local ok, built = pcall(function()
+		return PetModels.BuildPet(entry.id, entry.tier, entry.acc)
+	end)
 	if not ok or typeof(built) ~= "Instance" or not built:IsA("Model") then
 		warn("[FollowService] 펫 모델을 만들 수 없어요:", entry.id, built)
 		return nil, nil
@@ -281,10 +320,7 @@ local function mountRide(player: Player, st: State, hrp: BasePart, hum: Humanoid
 		m:ScaleTo(entry.size * Config.Ride.Scale)
 	end)
 	setPhysicsFlags(m, b, true)
-	local rarity = Config.Pets[entry.id].Rarity
-	if rarity == "Legendary" or rarity == "Mythic" then
-		pcall(PetModels.AddRarityEffects, m, rarity)
-	end
+	addRarityEffects(m, entry.id)
 
 	-- 캐릭터를 펫 등 높이만큼 올리기
 	local hipBase = hum.HipHeight
@@ -305,11 +341,7 @@ local function mountRide(player: Player, st: State, hrp: BasePart, hum: Humanoid
 	weld.Parent = b
 
 	m.Name = "RideMount_" .. tostring(player.UserId)
-	m:SetAttribute("OwnerUserId", player.UserId)
-	m:SetAttribute("ItemUid", entry.uid)
-	m:SetAttribute("PetId", entry.id)
-	m:SetAttribute("Tier", entry.tier)
-	m:SetAttribute("Size", entry.size)
+	tagModel(m, player, entry)
 	m:SetAttribute("Ride", true)
 	m.Parent = getFolder()
 	st.ride = m
@@ -331,10 +363,7 @@ local function mountHold(player: Player, st: State, head: BasePart)
 		m:ScaleTo(entry.size * Config.Hold.Scale)
 	end)
 	setPhysicsFlags(m, b, true)
-	local rarity = Config.Pets[entry.id].Rarity
-	if rarity == "Legendary" or rarity == "Mythic" then
-		pcall(PetModels.AddRarityEffects, m, rarity)
-	end
+	addRarityEffects(m, entry.id)
 
 	-- 펫 바닥(피벗)이 머리 꼭대기에서 HeadOffset 만큼 위에 오게
 	local lift = head.Size.Y / 2 + Config.Hold.HeadOffset
@@ -348,11 +377,7 @@ local function mountHold(player: Player, st: State, head: BasePart)
 	weld.Parent = b
 
 	m.Name = "HoldPet_" .. tostring(player.UserId)
-	m:SetAttribute("OwnerUserId", player.UserId)
-	m:SetAttribute("ItemUid", entry.uid)
-	m:SetAttribute("PetId", entry.id)
-	m:SetAttribute("Tier", entry.tier)
-	m:SetAttribute("Size", entry.size)
+	tagModel(m, player, entry)
 	m:SetAttribute("Hold", true)
 	m.Parent = getFolder()
 	st.hold = m
@@ -392,7 +417,7 @@ function FollowService.GetBoost(player: Player): number
 	return boost
 end
 
--- 이동 속도(WalkSpeed)와 HipHeight 를 정하는 유일한 곳 (타기 배율 × 환생 배율)
+-- 이동 속도(WalkSpeed)와 HipHeight 를 정하는 유일한 곳 (타기 배율 × 환생 배율, 최대 Config.MaxWalkSpeed)
 function FollowService.UpdateSpeed(player: Player)
 	local ride = getRideItem(player)
 	local mult = if ride then Config.RideSpeedMultiplier(ride.id, ride.tier) else 1
@@ -405,7 +430,8 @@ function FollowService.UpdateSpeed(player: Player)
 	end
 	local count = FollowService.GetFollowerCount(player)
 	local rebirthMult = Config.RebirthSpeedMult(DataService.GetRebirths(player))
-	hum.WalkSpeed = (Config.BaseWalkSpeed + Config.WalkSpeedPerFollower * count) * mult * rebirthMult
+	local speed = (Config.BaseWalkSpeed + Config.WalkSpeedPerFollower * count) * mult * rebirthMult
+	hum.WalkSpeed = math.min(speed, Config.MaxWalkSpeed)
 end
 
 function FollowService.Clear(player: Player)
@@ -506,11 +532,7 @@ function FollowService.Refresh(player: Player)
 		makeNameTag(b, m, entry.id, entry.tier)
 
 		m.Name = player.Name .. "_" .. entry.id
-		m:SetAttribute("OwnerUserId", player.UserId)
-		m:SetAttribute("ItemUid", entry.uid)
-		m:SetAttribute("PetId", entry.id)
-		m:SetAttribute("Tier", entry.tier)
-		m:SetAttribute("Size", entry.size)
+		tagModel(m, player, entry)
 		m:PivotTo(hrp.CFrame * offset)
 		m.Parent = parentFolder
 

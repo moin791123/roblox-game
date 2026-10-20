@@ -1,8 +1,8 @@
--- 집(플롯): 외형(바닥/벽/받침대/2층/간판/수금 패드)은 HouseBuilder 가 짓고, 여기서는 배정·수입/부화 틱·수금·구매(받침대/2층/테마)·펫 행동(PetAction)을 처리해요.
--- (설계: docs/DESIGN.md "PlotService")
+-- 집(플롯): 외형(바닥/벽/받침대/층/계단/엘리베이터/간판/수금 패드)은 HouseBuilder 가 짓고, 여기서는 배정·수입/부화 틱·수금·
+-- 구매(받침대/층/테마)·환생·펫 행동(PetAction)·자동 배치(AutoPlace)·집 비우기(ClearBase)를 처리해요.
+-- (설계: docs/DESIGN.md "PlotService", §7)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local Remotes = require(ReplicatedStorage.Shared.Remotes)
@@ -18,12 +18,11 @@ local PlotService = {}
 ----------------------------------------------------------------------
 local HALF = Config.Layout.PlotSize / 2 -- 플롯 반 변 (GetPlotAt 의 사각형 판정용)
 local SLOTS_PER_FLOOR = Config.Plot.SlotsPerFloor
+local TOTAL_SLOTS = Config.Plot.TotalSlots
 
 local CLAIM_DEBOUNCE = 1
 local ACTION_THROTTLE = 0.15
-
--- 합성 때 먼저 쓰는 순서: 가방 → 집 → 따라옴 → 타기 → 들기
-local LOC_RANK = { Bag = 1, Slot = 2, Follow = 3, Ride = 4, Hold = 5 }
+local EFFECT_MIN_ORDER = 5 -- 받침대/타기 펫 희귀도 효과: 전설 이상 (반짝이가 너무 많아지지 않게)
 
 local rng = Random.new()
 
@@ -35,7 +34,6 @@ type Visual = {
 	Kind: string,
 	Slot: number,
 	HatchAt: number?,
-	Tween: Tween?,
 	Label: TextLabel?,
 }
 
@@ -44,7 +42,9 @@ export type Plot = {
 	Model: Model,
 	Owner: Player?,
 	Origin: CFrame,
-	Handles: HouseBuilder.Handles, -- HouseBuilder.Build 결과 (House / 받침대 / Collector / SpawnPoint)
+	Theme: string, -- 지금 지어진 집 테마 (받침대 위치가 이 테마를 따라요)
+	Floors: number, -- 지금 지어진 층 수
+	Handles: HouseBuilder.Handles, -- HouseBuilder.Build 결과 (House / 받침대 / Collector / SpawnPoint / 엘리베이터)
 	Collector: BasePart, -- = Handles.Collector (플롯 모델 바로 아래. 다시 지어도 재사용돼요)
 	CollectorLabel: TextLabel?, -- Collector > BillboardGui > "Amount"
 	CollectorConn: RBXScriptConnection?, -- Collector.Touched (bindCollector 가 관리)
@@ -56,9 +56,13 @@ export type Plot = {
 	ShownPending: number,
 }
 
+export type PlotChangeReason = "Assign" | "Rebuild" | "Release"
+type PlotListener = (player: Player, plot: Plot, reason: PlotChangeReason) -> ()
+
 local plots: { Plot } = {}
 local plotByPlayer: { [Player]: Plot } = {}
 local lastAction: { [Player]: number } = {}
+local listeners: { PlotListener } = {}
 local started = false
 
 ----------------------------------------------------------------------
@@ -109,17 +113,9 @@ local function isMounted(loc: any): boolean
 	return loc == "Follow" or loc == "Ride" or loc == "Hold"
 end
 
-local function uidNumber(uid: string): number
-	return tonumber(string.match(uid, "^i(%d+)$")) or 0
-end
-
--- 2층을 올리면 바로 열리는 받침대 번호까지 (가격표에 없는 13~18 → 18)
-local function floor2StartSlots(): number
-	local n = SLOTS_PER_FLOOR
-	while n < Config.Plot.TotalSlots and Config.Plot.SlotPrices[n + 1] == nil do
-		n += 1
-	end
-	return n
+local function rarityOrder(rarity: string?): number
+	local info = if rarity then Config.Rarities[rarity] else nil
+	return if info then info.Order else 0
 end
 
 local function makeBillboard(adornee: BasePart, offsetY: number, w: number, h: number, maxDist: number): (BillboardGui, TextLabel)
@@ -169,9 +165,22 @@ local function rootPart(player: Player): BasePart?
 	return nil
 end
 
--- 받침대 윗면 (아이템이 놓이는 곳). 받침대 배치는 HouseBuilder 가 알아요
+-- 플레이어 머리 위 (합성 이펙트 등). 캐릭터가 없으면 집 수금 패드 / 원점
+local function effectPosition(player: Player): Vector3
+	local hrp = rootPart(player)
+	if hrp then
+		return hrp.Position + Vector3.new(0, 3, 0)
+	end
+	local plot = plotByPlayer[player]
+	if plot then
+		return plot.Collector.Position + Vector3.new(0, 3, 0)
+	end
+	return Vector3.zero
+end
+
+-- 받침대 윗면 (아이템이 놓이는 곳). 받침대 배치는 테마 크기에 따라 HouseBuilder(HouseLayout) 가 알아요
 local function slotCFrameOf(plot: Plot, slot: number): CFrame
-	return HouseBuilder.SlotCFrame(plot.Origin, slot)
+	return HouseBuilder.SlotCFrame(plot.Origin, slot, plot.Theme)
 end
 
 -- Collector > BillboardGui > TextLabel "Amount" (HouseBuilder 가 만들어요)
@@ -193,6 +202,16 @@ local function signLabelOf(house: Model): TextLabel?
 		return label
 	end
 	return nil
+end
+
+-- 집이 바뀌었다고 알려요 (ShopService: 가구 검사/다시 그리기). 듣는 쪽 오류는 여기서 멈춰요
+local function fireChanged(player: Player, plot: Plot, reason: PlotChangeReason)
+	for _, fn in table.clone(listeners) do
+		local ok, err = pcall(fn, player, plot, reason)
+		if not ok then
+			warn("[PlotService] OnPlotChanged 오류 (" .. reason .. "):", err)
+		end
+	end
 end
 
 ----------------------------------------------------------------------
@@ -259,6 +278,26 @@ local function bindCollector(plot: Plot)
 	end)
 end
 
+-- 엘리베이터 프롬프트 주인 확인 (HouseBuilder 가 지을 때 OwnerUserId 를 읽지만, 혹시 몰라 한 번 더 맞춰요).
+-- 누르면 서버는 아무것도 안 해요: 클라이언트가 층 고르기 창을 열어요 (§6)
+local function syncElevatorOwner(plot: Plot, handles: HouseBuilder.Handles)
+	local elevators = (handles :: any).Elevators
+	if type(elevators) ~= "table" then
+		return
+	end
+	local ownerId = plot.Model:GetAttribute("OwnerUserId") or 0
+	for _, part in elevators do
+		if typeof(part) == "Instance" then
+			for _, d in part:GetDescendants() do
+				if d:IsA("ProximityPrompt") then
+					d:SetAttribute("PromptKind", "Owner")
+					d:SetAttribute("OwnerUserId", ownerId)
+				end
+			end
+		end
+	end
+end
+
 -- Build 결과를 플롯에 연결: 핸들, 수금 패드(+Touched), 스폰, 간판 글자, 수금 글자
 local function applyHandles(plot: Plot, handles: HouseBuilder.Handles)
 	plot.Handles = handles
@@ -266,15 +305,28 @@ local function applyHandles(plot: Plot, handles: HouseBuilder.Handles)
 	plot.CollectorLabel = collectorLabelOf(handles.Collector)
 	plot.SpawnPoint = handles.SpawnPoint
 	plot.SignLabel = signLabelOf(handles.House)
+	syncElevatorOwner(plot, handles)
 	bindCollector(plot)
 	setSign(plot)
 	plot.ShownPending = -1
 	updateCollector(plot)
 end
 
+-- 플롯 모델 속성 (Theme / Floors / ThemeSize). OwnerUserId 는 부르는 쪽이 짓기 전에 맞춰요
+local function setHouseAttributes(model: Model, themeId: string, floors: number)
+	model:SetAttribute("Theme", themeId)
+	model:SetAttribute("Floors", floors)
+	model:SetAttribute("ThemeSize", Config.ThemeSize(themeId))
+end
+
 -- 집을 (다시) 지어요. 받침대 위 아이템은 안 그려요 (필요하면 RefreshPlot)
-local function rebuildHouse(plot: Plot, themeId: string, floors: number, slotsUnlocked: number)
-	applyHandles(plot, HouseBuilder.Build(plot.Model, plot.Origin, themeId, floors, slotsUnlocked))
+local function buildHouse(plot: Plot, themeId: string, floors: number, slotsUnlocked: number)
+	local theme = if Config.House.Themes[themeId] then themeId else "Basic"
+	local floorCount = math.clamp(math.floor(floors), 1, Config.House.MaxFloors)
+	plot.Theme = theme
+	plot.Floors = floorCount
+	setHouseAttributes(plot.Model, theme, floorCount)
+	applyHandles(plot, HouseBuilder.Build(plot.Model, plot.Origin, theme, floorCount, slotsUnlocked))
 end
 
 local function buildPlot(index: number, origin: CFrame, parent: Instance): Plot
@@ -283,8 +335,7 @@ local function buildPlot(index: number, origin: CFrame, parent: Instance): Plot
 	model:SetAttribute("PlotIndex", index)
 	model:SetAttribute("OwnerUserId", 0)
 	model:SetAttribute("OwnerName", "")
-	model:SetAttribute("Theme", "Basic")
-	model:SetAttribute("Floors", 1)
+	setHouseAttributes(model, "Basic", 1)
 
 	-- 아이템 폴더 (받침대 위 알/펫 모델). House 와 달리 집을 다시 지어도 남아요
 	local items = Instance.new("Folder")
@@ -298,6 +349,8 @@ local function buildPlot(index: number, origin: CFrame, parent: Instance): Plot
 		Model = model,
 		Owner = nil,
 		Origin = origin,
+		Theme = "Basic",
+		Floors = 1,
 		Handles = handles,
 		Collector = handles.Collector,
 		CollectorLabel = nil,
@@ -340,9 +393,6 @@ local function itemLabelText(item: any): string
 end
 
 local function destroyVisual(v: Visual)
-	if v.Tween then
-		v.Tween:Cancel()
-	end
 	v.Model:Destroy()
 end
 
@@ -360,6 +410,8 @@ end
 
 local handlePetAction: (player: Player, uid: any, action: any) -> ()
 
+-- 받침대 위 알/펫 모델을 (다시) 그려요. 펫은 Body 를 받침대에 고정(Anchored)하고 Bob = true:
+-- 서버는 절대 움직이지 않고, 살랑살랑은 클라이언트(WorldFx)가 해요
 function PlotService.PlaceItem(player: Player, uid: string)
 	local plot = plotByPlayer[player]
 	if not plot then
@@ -370,7 +422,7 @@ function PlotService.PlaceItem(player: Player, uid: string)
 		return
 	end
 	local slot = item.Slot :: number
-	if slot < 1 or slot > Config.Plot.TotalSlots then
+	if slot < 1 or slot > TOTAL_SLOTS then
 		return
 	end
 	-- 이미 있던 모델 / 같은 자리에 남은 모델 정리
@@ -384,9 +436,10 @@ function PlotService.PlaceItem(player: Player, uid: string)
 
 	local isPet = item.Kind == "Pet"
 	local tier = if isPet then tierOf(item.Tier) else 1
+	local acc = if isPet then item.Acc else nil
 	local ok, model = pcall(function()
 		if isPet then
-			return PetModels.BuildPet(item.Id, tier)
+			return PetModels.BuildPet(item.Id, tier, acc)
 		end
 		return PetModels.BuildEgg(item.Id)
 	end)
@@ -397,7 +450,7 @@ function PlotService.PlaceItem(player: Player, uid: string)
 	local m = model :: Model
 	local size = if isPet then Config.SizeOf(item) else 1
 	if isPet then
-		-- 크기 (피벗 = 바닥 중심이라 받침대 위에 그대로 앉아요)
+		-- 크기 (피벗 = 바닥 중심이라 받침대 위에 그대로 앉아요. 옷도 같이 커져요)
 		pcall(function()
 			m:ScaleTo(size)
 		end)
@@ -410,6 +463,8 @@ function PlotService.PlaceItem(player: Player, uid: string)
 	if isPet then
 		m:SetAttribute("Tier", tier)
 		m:SetAttribute("Size", size)
+		m:SetAttribute("Acc", acc)
+		m:SetAttribute("Bob", true)
 	else
 		m:SetAttribute("HatchAt", item.HatchAt)
 	end
@@ -423,10 +478,12 @@ function PlotService.PlaceItem(player: Player, uid: string)
 		return
 	end
 	local bodyPart = body :: BasePart
+	m.PrimaryPart = bodyPart
 	local rarity = if isPet then Config.Pets[item.Id].Rarity else Config.Eggs[item.Id].Rarity
-	if isPet and (rarity == "Legendary" or rarity == "Mythic") then
+	if isPet and rarityOrder(rarity) >= EFFECT_MIN_ORDER then
 		pcall(PetModels.AddRarityEffects, m, rarity)
 	end
+	-- Body 만 고정, 나머지는 용접된 채로 (클라이언트가 Body 를 움직이면 같이 움직여요)
 	for _, d in m:GetDescendants() do
 		if d:IsA("BasePart") then
 			d.Anchored = d == bodyPart
@@ -436,7 +493,7 @@ function PlotService.PlaceItem(player: Player, uid: string)
 	end
 	m:PivotTo(slotCFrameOf(plot, slot))
 
-	-- 이름표 (황금/무지개 등급은 등급 색). 큰 펫은 조금 더 위에
+	-- 이름표 (브론즈 이상은 등급 색). 큰 펫은 조금 더 위에
 	local bb, label = makeBillboard(bodyPart, 3.2 * size, 6, if isPet then 1.1 else 1.8, 40)
 	bb.Name = "ItemTag"
 	label.TextColor3 = if isPet and tier >= 2 then Config.TierInfo(tier).Color else Config.Rarities[rarity].Color
@@ -452,22 +509,11 @@ function PlotService.PlaceItem(player: Player, uid: string)
 
 	m.Parent = plot.ItemsFolder
 
-	-- 펫은 살랑살랑 (서버 트윈 1개, 반복)
-	local tween: Tween? = nil
-	if isPet then
-		local start = bodyPart.CFrame
-		local info = TweenInfo.new(1.1 + math.random() * 0.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
-		local tw = TweenService:Create(bodyPart, info, { CFrame = start * CFrame.new(0, 0.35, 0) })
-		tw:Play()
-		tween = tw
-	end
-
 	plot.Visuals[uid] = {
 		Model = m,
 		Kind = item.Kind,
 		Slot = slot,
 		HatchAt = item.HatchAt,
-		Tween = tween,
 		Label = label,
 	}
 end
@@ -496,20 +542,36 @@ function PlotService.RefreshPlot(player: Player)
 	setSign(plot)
 end
 
--- 주인의 Theme/Floors/받침대에 맞게 집을 다시 짓고 (HouseBuilder) 아이템을 다시 그려요
+-- 주인 데이터(Theme/Floors/받침대)대로 집을 짓고 아이템을 다시 그려요 (알림 없음)
+local function rebuildOwned(player: Player, plot: Plot)
+	local data = DataService.Get(player)
+	local floors = if data then data.Floors else 1
+	local themeId = if data then data.Theme else "Basic"
+	local unlocked = if data then data.SlotsUnlocked else Config.Plot.StartSlots
+	buildHouse(plot, themeId, floors, unlocked)
+	PlotService.RefreshPlot(player)
+end
+
+-- 주인의 Theme/Floors/받침대에 맞게 집을 다시 짓고 (HouseBuilder) 아이템을 다시 그려요 → OnPlotChanged "Rebuild"
 function PlotService.RebuildHouse(player: Player)
 	local plot = plotByPlayer[player]
 	if not plot then
 		return
 	end
-	local data = DataService.Get(player)
-	local floors = if data then data.Floors else 1
-	local themeId = if data then data.Theme else "Basic"
-	local unlocked = if data then data.SlotsUnlocked else Config.Plot.StartSlots
-	plot.Model:SetAttribute("Theme", themeId)
-	plot.Model:SetAttribute("Floors", floors)
-	rebuildHouse(plot, themeId, floors, unlocked)
-	PlotService.RefreshPlot(player)
+	rebuildOwned(player, plot)
+	fireChanged(player, plot, "Rebuild")
+end
+
+-- 집이 바뀔 때 알려 줘요: "Assign" (집 받음, 다 지은 뒤), "Rebuild" (다시 지은 뒤), "Release" (비우기 직전).
+-- 돌려주는 함수를 부르면 그만 들어요
+function PlotService.OnPlotChanged(fn: PlotListener): () -> ()
+	table.insert(listeners, fn)
+	return function()
+		local i = table.find(listeners, fn)
+		if i then
+			table.remove(listeners, i)
+		end
+	end
 end
 
 ----------------------------------------------------------------------
@@ -540,7 +602,7 @@ function PlotService.FreeSlot(player: Player): number?
 			used[item.Slot] = true
 		end
 	end
-	for slot = 1, math.min(data.SlotsUnlocked, Config.Plot.TotalSlots) do
+	for slot = 1, math.min(data.SlotsUnlocked, TOTAL_SLOTS) do
 		if not used[slot] then
 			return slot
 		end
@@ -548,12 +610,14 @@ function PlotService.FreeSlot(player: Player): number?
 	return nil
 end
 
+-- 받침대 윗면 월드 CFrame (주인 집 테마 기준). 집이 없으면 로비
 function PlotService.GetSlotCFrame(player: Player, slot: number): CFrame
 	local plot = plotByPlayer[player]
 	if not plot then
 		return CFrame.new(Config.Layout.LobbySpawn + Vector3.new(0, 3, 0))
 	end
-	return slotCFrameOf(plot, math.clamp(slot, 1, Config.Plot.TotalSlots))
+	local s = math.clamp(math.floor(tonumber(slot) or 1), 1, TOTAL_SLOTS)
+	return slotCFrameOf(plot, s)
 end
 
 function PlotService.AssignPlot(player: Player): Plot?
@@ -576,10 +640,12 @@ function PlotService.AssignPlot(player: Player): Plot?
 	p.Owner = player
 	plotByPlayer[player] = p
 	p.LastClaim = 0
+	-- 주인 속성은 짓기 전에 (HouseBuilder 가 엘리베이터 프롬프트에 OwnerUserId 를 넣어요)
 	p.Model:SetAttribute("OwnerUserId", player.UserId)
 	p.Model:SetAttribute("OwnerName", player.DisplayName)
 	player:SetAttribute("PlotIndex", p.Index)
-	PlotService.RebuildHouse(player) -- 테마/층/받침대 반영 (HouseBuilder) + 아이템 그리기 + 간판
+	rebuildOwned(player, p) -- 테마/층/받침대 반영 (HouseBuilder) + 아이템 그리기 + 간판
+	fireChanged(player, p, "Assign")
 	return p
 end
 
@@ -589,6 +655,8 @@ function PlotService.ReleasePlot(player: Player)
 	if not plot then
 		return
 	end
+	-- 비우기 전에 알려요 (ShopService 가 가구 폴더를 치워요)
+	fireChanged(player, plot, "Release")
 	plotByPlayer[player] = nil
 	for uid, v in plot.Visuals do
 		plot.Visuals[uid] = nil
@@ -597,13 +665,11 @@ function PlotService.ReleasePlot(player: Player)
 	plot.Owner = nil
 	plot.Model:SetAttribute("OwnerUserId", 0)
 	plot.Model:SetAttribute("OwnerName", "")
-	plot.Model:SetAttribute("Theme", "Basic")
-	plot.Model:SetAttribute("Floors", 1)
 	if player.Parent then
 		player:SetAttribute("PlotIndex", nil)
 	end
 	-- 빈 집 모양으로 되돌려요 (기본 테마, 1층, 시작 받침대). 간판 "빈 집" / 수금 패드 글자도 초기화
-	rebuildHouse(plot, "Basic", 1, Config.Plot.StartSlots)
+	buildHouse(plot, "Basic", 1, Config.Plot.StartSlots)
 
 	-- 빈 집이 생겼으니 집 없이 기다리던 사람에게 바로 배정
 	for _, other in Players:GetPlayers() do
@@ -645,7 +711,7 @@ function PlotService.OnCharacterAdded(player: Player, character: Model)
 end
 
 ----------------------------------------------------------------------
--- 수금 / 받침대 구매 / 2층 / 테마
+-- 수금 / 받침대 구매 / 층 / 테마 / 환생
 ----------------------------------------------------------------------
 claim = function(plot: Plot, player: Player)
 	if plot.Owner ~= player then
@@ -665,11 +731,10 @@ claim = function(plot: Plot, player: Player)
 	end
 	plot.LastClaim = t
 	data.Pending -= amount
-	DataService.AddCoins(player, amount)
+	DataService.AddCoins(player, amount) -- 코인만 바뀌어서 CoinSync 로 충분해요
 	Remotes.CoinFx:FireClient(player, amount, plot.Collector.Position + Vector3.new(0, 3, 0))
 	notify(player, "💰 " .. Config.FormatNumber(amount) .. " 코인을 받았어요!", "good")
 	updateCollector(plot)
-	DataService.Sync(player)
 end
 
 -- 같은 사람이 너무 빨리 연타하면 무시
@@ -682,6 +747,10 @@ local function throttled(player: Player): boolean
 	return false
 end
 
+local function notEnoughCoins(player: Player, price: number)
+	notify(player, "코인이 부족해요! 💰" .. Config.FormatNumber(price) .. " 필요해요", "warn")
+end
+
 local function tryBuySlot(player: Player)
 	local plot = plotByPlayer[player]
 	local data = DataService.Get(player)
@@ -690,48 +759,61 @@ local function tryBuySlot(player: Player)
 	end
 	local price = Config.NextSlotPrice(data.SlotsUnlocked, data.Floors)
 	if not price then
-		if data.SlotsUnlocked >= Config.Plot.TotalSlots then
+		if data.SlotsUnlocked >= TOTAL_SLOTS then
 			notify(player, "받침대가 최대예요! 🎉", "info")
-		elseif data.Floors < 2 and data.SlotsUnlocked >= SLOTS_PER_FLOOR then
-			notify(player, "2층을 먼저 올려야 해요! 🏠", "warn")
+		elseif data.SlotsUnlocked >= data.Floors * SLOTS_PER_FLOOR then
+			notify(player, (data.Floors + 1) .. "층을 먼저 올려야 해요! 🏠", "warn")
 		else
 			notify(player, "지금은 받침대를 살 수 없어요", "warn")
 		end
 		return
 	end
 	if not DataService.TrySpend(player, price) then
-		notify(player, "코인이 부족해요! 💰" .. Config.FormatNumber(price) .. " 필요해요", "warn")
+		notEnoughCoins(player, price)
 		return
 	end
-	data.SlotsUnlocked += 1
+	data.SlotsUnlocked = math.min(data.SlotsUnlocked + 1, data.Floors * SLOTS_PER_FLOOR, TOTAL_SLOTS)
 	HouseBuilder.UpdatePedestals(plot.Handles, data.SlotsUnlocked, data.Floors)
 	notify(player, "새 받침대가 열렸어요! 🎉", "good")
 	DataService.Sync(player)
 end
 
+-- 다음 층 올리기 (§5 BuyFloor, §7 Floors): 아래층 받침대 전부 + 환생 수 + 가격. 새 층 첫 6개는 무료
 local function tryBuyFloor(player: Player)
 	local plot = plotByPlayer[player]
 	local data = DataService.Get(player)
 	if not plot or not data then
 		return
 	end
-	if data.Floors >= Config.House.MaxFloors then
-		notify(player, "이미 2층이 있어요! 🏠", "info")
+	local nextFloor = data.Floors + 1
+	local ok, reason = Config.CanBuyFloor(data.Floors, data.SlotsUnlocked, data.Rebirths)
+	if not ok then
+		if reason == "Max" then
+			notify(player, "이미 " .. Config.House.MaxFloors .. "층이에요! 🏰", "info")
+		elseif reason == "Slots" then
+			notify(player, "받침대 " .. (data.Floors * SLOTS_PER_FLOOR) .. "개를 먼저 다 열어야 해요!", "warn")
+		elseif reason == "Rebirth" then
+			local req = Config.FloorRequirement(nextFloor)
+			local need = if req then req.MinRebirth else 0
+			notify(player, "🔄 환생 " .. need .. "회가 필요해요!", "warn")
+		else
+			notify(player, "지금은 층을 올릴 수 없어요", "warn")
+		end
 		return
 	end
-	if data.SlotsUnlocked < SLOTS_PER_FLOOR then
-		notify(player, "1층 받침대 " .. SLOTS_PER_FLOOR .. "개를 먼저 다 열어야 해요!", "warn")
+	local req = Config.FloorRequirement(nextFloor)
+	if not req then
 		return
 	end
-	local price = Config.House.FloorPrice
+	local price = tonumber(req.Price) or 0
 	if not DataService.TrySpend(player, price) then
-		notify(player, "코인이 부족해요! 💰" .. Config.FormatNumber(price) .. " 필요해요", "warn")
+		notEnoughCoins(player, price)
 		return
 	end
-	data.Floors = 2
-	data.SlotsUnlocked = math.max(data.SlotsUnlocked, floor2StartSlots())
+	data.Floors = nextFloor
+	data.SlotsUnlocked = math.max(data.SlotsUnlocked, Config.FloorStartSlots(nextFloor))
 	PlotService.RebuildHouse(player)
-	notify(player, "🏠 2층이 생겼어요!", "good")
+	notify(player, "🏠 " .. nextFloor .. "층이 생겼어요!", "good")
 	DataService.Sync(player)
 end
 
@@ -751,7 +833,7 @@ local function trySetTheme(player: Player, themeId: any)
 	if not data.Themes[themeId] then
 		local price = tonumber(theme.Price) or 0
 		if not DataService.TrySpend(player, price) then
-			notify(player, "코인이 부족해요! 💰" .. Config.FormatNumber(price) .. " 필요해요", "warn")
+			notEnoughCoins(player, price)
 			return
 		end
 		data.Themes[themeId] = true
@@ -761,12 +843,13 @@ local function trySetTheme(player: Player, themeId: any)
 		return
 	end
 	data.Theme = themeId
+	-- 집 크기가 바뀌어요 → OnPlotChanged "Rebuild" 에서 ShopService 가 안 맞는 가구를 가구 가방으로 돌려보내요
 	PlotService.RebuildHouse(player)
 	notify(player, "🏠 " .. josaRo(theme.Name) .. " 꾸몄어요!", "good")
 	DataService.Sync(player)
 end
 
--- 환생: 코인(수금 대기 포함)을 0으로 돌리고 영구 보너스. 펫·집·받침대·테마는 그대로
+-- 환생: 코인(수금 대기 포함)을 0으로 돌리고 영구 보너스. 펫·집·받침대·테마·옷·가구는 그대로. 새 지역/층이 열리면 알려요
 local function tryRebirth(player: Player)
 	local data = DataService.Get(player)
 	if not data then
@@ -809,11 +892,23 @@ local function tryRebirth(player: Player)
 		),
 		"good"
 	)
+	-- 이번 환생으로 새로 열린 지역 / 올릴 수 있게 된 층
+	for _, zone in Config.Zones do
+		if zone.MinRebirth == r then
+			notify(player, "🗺 새 지역 " .. josa(zone.Name, "이", "가") .. " 열렸어요!", "good")
+		end
+	end
+	for f = 2, Config.House.MaxFloors do
+		local req = Config.FloorRequirement(f)
+		if req and req.MinRebirth == r and f > data.Floors then
+			notify(player, "🏗 이제 " .. f .. "층까지 올릴 수 있어요!", "good")
+		end
+	end
 	DataService.Sync(player)
 end
 
 ----------------------------------------------------------------------
--- 펫 행동 (PetAction)
+-- 자동 배치 / 집 비우기 (§7)
 ----------------------------------------------------------------------
 local function refreshFollow(player: Player)
 	local ok, err = pcall(function()
@@ -825,8 +920,218 @@ local function refreshFollow(player: Player)
 	end
 end
 
+-- 가방 + 받침대 펫 중 가장 좋은 펫들을 받침대에 (알 있는 받침대는 그대로, 따라옴/타기/들기는 안 건드려요)
+local function tryAutoPlace(player: Player)
+	local plot = plotByPlayer[player]
+	local data = DataService.Get(player)
+	if not data then
+		return
+	end
+	if not plot then
+		notify(player, "집이 없어요 😢", "warn")
+		return
+	end
+	local unlocked = math.min(data.SlotsUnlocked, TOTAL_SLOTS)
+	local eggSlots: { [number]: boolean } = {}
+	for _, item in data.Items do
+		if item.Loc == "Slot" and item.Kind == "Egg" and type(item.Slot) == "number" then
+			eggSlots[item.Slot :: number] = true
+		end
+	end
+	local open: { number } = {}
+	for s = 1, unlocked do
+		if not eggSlots[s] then
+			table.insert(open, s)
+		end
+	end
+	if #open == 0 then
+		notify(player, "빈 받침대가 없어요! 알이 부화하면 다시 해 보세요 🥚", "warn")
+		return
+	end
+	local cands = DataService.GetItemsSorted(player, function(_, item)
+		return item.Kind == "Pet" and (item.Loc == "Bag" or item.Loc == "Slot")
+	end)
+	if #cands == 0 then
+		notify(player, "집에 놓을 펫이 없어요! 🐣", "info")
+		return
+	end
+	local best: { [string]: boolean } = {}
+	for i = 1, math.min(#open, #cands) do
+		best[cands[i].Uid] = true
+	end
+
+	-- 1) best 가 아닌 받침대 펫 → 가방. best 인 받침대 펫은 그 자리에 그대로
+	local taken: { [number]: boolean } = {}
+	for _, entry in cands do
+		local item = entry.Item
+		if item.Loc == "Slot" then
+			if best[entry.Uid] then
+				if type(item.Slot) == "number" then
+					taken[item.Slot :: number] = true
+				end
+			else
+				PlotService.RemoveItemVisual(player, entry.Uid)
+				item.Loc = "Bag"
+				item.Slot = nil
+			end
+		end
+	end
+
+	-- 2) best 인 가방 펫 → 남은 빈 받침대 (번호 작은 순, 좋은 펫부터)
+	local placed = 0
+	local oi = 1
+	for _, entry in cands do
+		local item = entry.Item
+		if best[entry.Uid] and item.Loc == "Bag" then
+			while oi <= #open and taken[open[oi]] do
+				oi += 1
+			end
+			if oi > #open then
+				break
+			end
+			local s = open[oi]
+			oi += 1
+			taken[s] = true
+			item.Loc = "Slot"
+			item.Slot = s
+			PlotService.PlaceItem(player, entry.Uid)
+			placed += 1
+		end
+	end
+
+	if placed > 0 then
+		notify(player, "✨ 가장 좋은 펫 " .. placed .. "마리를 집에 놓았어요!", "good")
+	else
+		notify(player, "이미 가장 좋은 펫들이 집에 있어요! 😊", "info")
+	end
+	DataService.Sync(player)
+end
+
+-- 받침대 펫(알 제외)을 모두 가방으로. 약한 펫부터, 가방이 차면 멈춰요
+local function tryClearBase(player: Player)
+	local data = DataService.Get(player)
+	if not data then
+		return
+	end
+	local pets = DataService.GetItemsSorted(player, function(_, item)
+		return item.Kind == "Pet" and item.Loc == "Slot"
+	end)
+	if #pets == 0 then
+		notify(player, "집에 펫이 없어요", "info")
+		return
+	end
+	local space = DataService.BagSpace(player)
+	local moved = 0
+	for i = #pets, 1, -1 do
+		if moved >= space then
+			break
+		end
+		local entry = pets[i]
+		PlotService.RemoveItemVisual(player, entry.Uid)
+		entry.Item.Loc = "Bag"
+		entry.Item.Slot = nil
+		moved += 1
+	end
+	if moved == 0 then
+		notify(player, "가방이 가득 찼어요! 🎒", "warn")
+		return
+	end
+	if moved < #pets then
+		notify(player, "가방이 가득 차서 " .. moved .. "마리만 넣었어요! 🎒", "warn")
+	else
+		notify(player, "📦 펫 " .. moved .. "마리를 가방에 넣었어요", "good")
+	end
+	DataService.Sync(player)
+end
+
+----------------------------------------------------------------------
+-- 펫 행동 (PetAction)
+----------------------------------------------------------------------
+
+-- loc 에 있는 다른 펫을 가방으로 (타기/들기는 한 마리만). 옮긴 수
+local function bagOthersAt(data: DataService.Data, loc: string, exceptUid: string): number
+	local n = 0
+	for otherUid, other in data.Items do
+		if otherUid ~= exceptUid and other.Loc == loc then
+			other.Loc = "Bag"
+			other.Slot = nil
+			n += 1
+		end
+	end
+	return n
+end
+
+local function hasOtherAt(data: DataService.Data, loc: string, exceptUid: string): boolean
+	for otherUid, other in data.Items do
+		if otherUid ~= exceptUid and other.Loc == loc then
+			return true
+		end
+	end
+	return false
+end
+
+-- 합성 (§7): 누른 펫은 가방/따라옴/타기/들기만. 재료 = DataService.FusableUids (받침대 펫은 절대 안 써요)
+local function fuse(player: Player, data: DataService.Data, uid: string, item: DataService.Item): boolean
+	if item.Kind ~= "Pet" then
+		notify(player, "알은 합성할 수 없어요!", "warn")
+		return false
+	end
+	if not Config.CanFuseLoc(item.Loc) then
+		notify(player, "🏠 집에 있는 펫은 합성할 수 없어요! 가방에 넣고 해 보세요 🎒", "warn")
+		return false
+	end
+	local tier = tierOf(item.Tier)
+	if tier >= Config.MaxTier then
+		notify(player, "이미 최고 등급이에요! 🌌", "info")
+		return false
+	end
+	-- 같은 펫·같은 등급 (가방 → 따라옴 → 들기 → 타기, 오래된 것부터)
+	local others: { string } = {}
+	for _, cuid in DataService.FusableUids(player, item.Id, tier) do
+		if cuid ~= uid then
+			table.insert(others, cuid)
+		end
+	end
+	local have = #others + 1
+	if have < Config.FuseCount then
+		notify(player, "같은 펫 " .. Config.FuseCount .. "마리가 필요해요! (" .. have .. "/" .. Config.FuseCount .. ")", "warn")
+		return false
+	end
+	local consumed = { uid }
+	for i = 1, Config.FuseCount - 1 do
+		table.insert(consumed, others[i])
+	end
+	local newTier = tier + 1
+	-- 크기: 합친 펫 중 가장 큰 크기 + 0.02 (최대까지)
+	local maxSize = Config.PetSize.Min
+	for _, cuid in consumed do
+		maxSize = math.max(maxSize, Config.SizeOf(data.Items[cuid]))
+	end
+	local newSize = math.floor(math.min(maxSize + 0.02, Config.PetSize.Max) * 100 + 0.5) / 100
+	-- 새 펫은 누른 펫 자리에 (따라옴 / 타기 / 들기 / 가방), 옷도 그대로
+	local wasLoc = item.Loc
+	local newItem: DataService.Item = { Kind = "Pet", Id = item.Id, Tier = newTier, Size = newSize, Acc = item.Acc, Loc = wasLoc }
+	local needFollow = isMounted(wasLoc)
+	for _, cuid in consumed do
+		local removed = DataService.RemoveItem(player, cuid)
+		if removed and isMounted(removed.Loc) then
+			needFollow = true
+		end
+	end
+	DataService.AddItem(player, newItem)
+	local isNew = DataService.MarkDiscovered(player, item.Id, newTier)
+	data.Stats.Fused += 1
+	if needFollow then
+		refreshFollow(player)
+	end
+	Remotes.HatchFx:FireClient(player, item.Id, effectPosition(player), isNew, newTier, "Fuse")
+	local newName = Config.PetDisplayName(item.Id, newTier)
+	notify(player, "✨ 합성 성공! " .. josa(newName, "이", "가") .. " 되었어요!", "good")
+	return true
+end
+
 handlePetAction = function(player: Player, uid: any, action: any)
-	if type(uid) ~= "string" or type(action) ~= "string" or #uid > 32 then
+	if type(uid) ~= "string" or type(action) ~= "string" or #uid > 32 or #action > 32 then
 		return
 	end
 	if throttled(player) then
@@ -868,6 +1173,10 @@ handlePetAction = function(player: Player, uid: any, action: any)
 		if wasLoc ~= "Follow" then
 			return
 		end
+		if DataService.BagSpace(player) <= 0 then
+			notify(player, "가방이 가득 찼어요! 🎒", "warn")
+			return
+		end
 		item.Loc = "Bag"
 		item.Slot = nil
 		refreshFollow(player)
@@ -901,7 +1210,7 @@ handlePetAction = function(player: Player, uid: any, action: any)
 		if wasLoc == "Bag" then
 			return
 		end
-		if DataService.CountItems(player, "Bag") >= Config.MaxBagItems then
+		if DataService.BagSpace(player) <= 0 then
 			notify(player, "가방이 가득 찼어요! 🎒", "warn")
 			return
 		end
@@ -936,139 +1245,53 @@ handlePetAction = function(player: Player, uid: any, action: any)
 			Remotes.CoinFx:FireClient(player, price, hrp.Position + Vector3.new(0, 3, 0))
 		end
 		notify(player, josa(name, "을", "를") .. " 팔았어요! +💰" .. Config.FormatNumber(price), "good")
-	elseif action == "Ride" then
+	elseif action == "Ride" or action == "Hold" then
+		local riding = action == "Ride"
 		if item.Kind ~= "Pet" then
-			notify(player, "알은 탈 수 없어요!", "warn")
+			notify(player, if riding then "알은 탈 수 없어요!" else "알은 들 수 없어요!", "warn")
 			return
 		end
-		if wasLoc == "Ride" then
+		if wasLoc == action then
 			return
 		end
-		-- 타던 펫은 가방으로 (타는 펫은 한 마리만)
-		for otherUid, other in data.Items do
-			if otherUid ~= uid and other.Loc == "Ride" then
-				other.Loc = "Bag"
-				other.Slot = nil
-			end
+		-- 타던/들던 펫은 가방으로 (한 마리만). 새 펫이 가방에서 오는 게 아니면 가방 칸이 1 필요해요
+		if wasLoc ~= "Bag" and hasOtherAt(data, action, uid) and DataService.BagSpace(player) <= 0 then
+			notify(player, "가방이 가득 찼어요! 🎒", "warn")
+			return
 		end
+		bagOthersAt(data, action, uid)
 		if wasLoc == "Slot" then
 			PlotService.RemoveItemVisual(player, uid)
 		end
-		item.Loc = "Ride"
+		item.Loc = action
 		item.Slot = nil
 		refreshFollow(player)
-		notify(player, "🏇 " .. josa(name, "을", "를") .. " 탔어요! 더 빨라져요 💨", "good")
-	elseif action == "Unride" then
-		if wasLoc ~= "Ride" then
-			return
-		end
-		item.Loc = "Bag"
-		item.Slot = nil
-		refreshFollow(player)
-		notify(player, name .. "에서 내렸어요. 가방에 넣었어요 🎒", "info")
-	elseif action == "Hold" then
-		if item.Kind ~= "Pet" then
-			notify(player, "알은 들 수 없어요!", "warn")
-			return
-		end
-		if wasLoc == "Hold" then
-			return
-		end
-		-- 들고 있던 펫은 가방으로 (드는 펫은 한 마리만)
-		for otherUid, other in data.Items do
-			if otherUid ~= uid and other.Loc == "Hold" then
-				other.Loc = "Bag"
-				other.Slot = nil
-			end
-		end
-		if wasLoc == "Slot" then
-			PlotService.RemoveItemVisual(player, uid)
-		end
-		item.Loc = "Hold"
-		item.Slot = nil
-		refreshFollow(player)
-		notify(player, "🙌 " .. josa(name, "을", "를") .. " 머리 위에 올렸어요!", "good")
-	elseif action == "Unhold" then
-		if wasLoc ~= "Hold" then
-			return
-		end
-		item.Loc = "Bag"
-		item.Slot = nil
-		refreshFollow(player)
-		notify(player, josa(name, "을", "를") .. " 내려놓았어요. 가방에 넣었어요 🎒", "info")
-	elseif action == "Fuse" then
-		if item.Kind ~= "Pet" then
-			notify(player, "알은 합성할 수 없어요!", "warn")
-			return
-		end
-		local tier = tierOf(item.Tier)
-		if tier >= Config.MaxTier then
-			notify(player, "이미 최고 등급이에요! 🌈", "info")
-			return
-		end
-		-- 같은 펫·같은 등급 모으기
-		local others: { string } = {}
-		for otherUid, other in data.Items do
-			if otherUid ~= uid and other.Kind == "Pet" and other.Id == item.Id and tierOf(other.Tier) == tier then
-				table.insert(others, otherUid)
-			end
-		end
-		local have = #others + 1
-		if have < Config.FuseCount then
-			notify(player, "같은 펫 " .. Config.FuseCount .. "마리가 필요해요! (" .. have .. "/" .. Config.FuseCount .. ")", "warn")
-			return
-		end
-		-- 가방 → 집 → 따라옴 → 타기 순으로 먼저 써요 (같은 곳이면 오래된 것부터)
-		table.sort(others, function(a, b)
-			local ra = LOC_RANK[data.Items[a].Loc] or 9
-			local rb = LOC_RANK[data.Items[b].Loc] or 9
-			if ra ~= rb then
-				return ra < rb
-			end
-			return uidNumber(a) < uidNumber(b)
-		end)
-		local consumed = { uid }
-		for i = 1, Config.FuseCount - 1 do
-			table.insert(consumed, others[i])
-		end
-		local newTier = tier + 1
-		-- 크기: 합친 펫 중 가장 큰 크기 + 0.02 (최대까지)
-		local maxSize = Config.PetSize.Min
-		for _, cuid in consumed do
-			maxSize = math.max(maxSize, Config.SizeOf(data.Items[cuid]))
-		end
-		local newSize = math.floor(math.min(maxSize + 0.02, Config.PetSize.Max) * 100 + 0.5) / 100
-		-- 새 펫은 누른 펫 자리에 (같은 받침대 / 따라옴 / 타기 / 들기 / 가방)
-		local newItem: DataService.Item = { Kind = "Pet", Id = item.Id, Tier = newTier, Size = newSize, Loc = wasLoc, Slot = item.Slot }
-		local needFollow = false
-		for _, cuid in consumed do
-			local removed = DataService.RemoveItem(player, cuid)
-			if removed then
-				if removed.Loc == "Slot" then
-					PlotService.RemoveItemVisual(player, cuid)
-				elseif isMounted(removed.Loc) then
-					needFollow = true
-				end
-			end
-		end
-		local newUid = DataService.AddItem(player, newItem)
-		local isNew = DataService.MarkDiscovered(player, item.Id, newTier)
-		data.Stats.Fused += 1
-		local pos: Vector3
-		local plot = plotByPlayer[player]
-		if newItem.Loc == "Slot" and plot and type(newItem.Slot) == "number" then
-			PlotService.PlaceItem(player, newUid)
-			pos = slotCFrameOf(plot, newItem.Slot :: number).Position + Vector3.new(0, 2, 0)
+		if riding then
+			notify(player, "🏇 " .. josa(name, "을", "를") .. " 탔어요! 더 빨라져요 💨", "good")
 		else
-			local hrp = rootPart(player)
-			pos = if hrp then hrp.Position + Vector3.new(0, 3, 0) else Vector3.zero
+			notify(player, "🙌 " .. josa(name, "을", "를") .. " 머리 위에 올렸어요!", "good")
 		end
-		if isMounted(newItem.Loc) or needFollow then
-			refreshFollow(player)
+	elseif action == "Unride" or action == "Unhold" then
+		local loc = if action == "Unride" then "Ride" else "Hold"
+		if wasLoc ~= loc then
+			return
 		end
-		Remotes.HatchFx:FireClient(player, item.Id, pos, isNew, newTier, "Fuse")
-		local newName = Config.PetDisplayName(item.Id, newTier)
-		notify(player, "✨ 합성 성공! " .. josa(newName, "이", "가") .. " 되었어요!", "good")
+		if DataService.BagSpace(player) <= 0 then
+			notify(player, "가방이 가득 찼어요! 🎒", "warn")
+			return
+		end
+		item.Loc = "Bag"
+		item.Slot = nil
+		refreshFollow(player)
+		if loc == "Ride" then
+			notify(player, name .. "에서 내렸어요. 가방에 넣었어요 🎒", "info")
+		else
+			notify(player, josa(name, "을", "를") .. " 내려놓았어요. 가방에 넣었어요 🎒", "info")
+		end
+	elseif action == "Fuse" then
+		if not fuse(player, data, uid, item) then
+			return
+		end
 	else
 		return
 	end
@@ -1078,17 +1301,18 @@ end
 ----------------------------------------------------------------------
 -- 부화 / 수입 틱
 ----------------------------------------------------------------------
-local function hatch(player: Player, plot: Plot, uid: string, item: any)
+local function hatch(player: Player, plot: Plot, uid: string, item: DataService.Item)
 	local eggId = item.Id
 	local petId = Config.RollPet(eggId, rng)
-	local slot = item.Slot
-	-- 환생 운: 가끔 황금/무지개로 태어나요. 크기도 여기서 뽑아요
+	local slot = item.Slot or 1
+	-- 환생 운: 가끔 브론즈~골드로 태어나요. 크기도 여기서 뽑아요
 	local tier = Config.RollHatchTier(DataService.GetRebirths(player), rng)
 	local size = Config.RollPetSize(rng)
 	item.Kind = "Pet"
 	item.Id = petId
 	item.Tier = tier
 	item.Size = size
+	item.Acc = nil
 	item.Loc = "Slot"
 	item.HatchAt = nil
 	item.HatchLeft = nil
@@ -1118,30 +1342,29 @@ local function tickPlot(plot: Plot)
 		return
 	end
 
-	-- 수입 + 부화
-	local income = 0
+	-- 수입: 받침대 펫 × 환생 × 집 테마 보너스 (DataService.GetIncome 한 곳에서만 계산)
+	local income = DataService.GetIncome(owner)
+	if income > 0 then
+		data.Pending += income
+		DataService.SyncCoins(owner)
+	end
+
+	-- 부화 + 알 남은 시간 글자
 	local nowSec = os.time()
 	local toHatch = nil
 	for uid, item in data.Items do
-		if item.Loc ~= "Slot" then
+		if item.Loc ~= "Slot" or item.Kind ~= "Egg" then
 			continue
 		end
-		if item.Kind == "Pet" then
-			income += Config.ItemIncome(item)
-		elseif item.Kind == "Egg" then
-			if item.HatchAt and nowSec >= item.HatchAt and item.Slot then
-				toHatch = toHatch or {}
-				table.insert(toHatch, uid)
-			else
-				local v = plot.Visuals[uid]
-				if v and v.Label then
-					v.Label.Text = itemLabelText(item)
-				end
+		if item.HatchAt and nowSec >= item.HatchAt and item.Slot then
+			toHatch = toHatch or {}
+			table.insert(toHatch, uid)
+		else
+			local v = plot.Visuals[uid]
+			if v and v.Label then
+				v.Label.Text = itemLabelText(item)
 			end
 		end
-	end
-	if income > 0 then
-		data.Pending += income * Config.RebirthIncomeMult(data.Rebirths)
 	end
 	if toHatch then
 		for _, uid in toHatch do
@@ -1170,6 +1393,16 @@ end
 ----------------------------------------------------------------------
 -- 시작
 ----------------------------------------------------------------------
+-- 인자 없는 리모트: 연타 막고 처리
+local function connectSimple(remote: RemoteEvent, fn: (player: Player) -> ())
+	remote.OnServerEvent:Connect(function(player)
+		if throttled(player) then
+			return
+		end
+		fn(player)
+	end)
+end
+
 function PlotService.Start()
 	if started then
 		return
@@ -1191,30 +1424,17 @@ function PlotService.Start()
 	Remotes.PetAction.OnServerEvent:Connect(function(player, uid, action)
 		handlePetAction(player, uid, action)
 	end)
-	Remotes.BuySlot.OnServerEvent:Connect(function(player)
-		if throttled(player) then
-			return
-		end
-		tryBuySlot(player)
-	end)
-	Remotes.BuyFloor.OnServerEvent:Connect(function(player)
-		if throttled(player) then
-			return
-		end
-		tryBuyFloor(player)
-	end)
 	Remotes.SetTheme.OnServerEvent:Connect(function(player, themeId)
 		if throttled(player) then
 			return
 		end
 		trySetTheme(player, themeId)
 	end)
-	Remotes.Rebirth.OnServerEvent:Connect(function(player)
-		if throttled(player) then
-			return
-		end
-		tryRebirth(player)
-	end)
+	connectSimple(Remotes.BuySlot, tryBuySlot)
+	connectSimple(Remotes.BuyFloor, tryBuyFloor)
+	connectSimple(Remotes.Rebirth, tryRebirth)
+	connectSimple(Remotes.AutoPlace, tryAutoPlace)
+	connectSimple(Remotes.ClearBase, tryClearBase)
 
 	Players.PlayerRemoving:Connect(function(player)
 		lastAction[player] = nil
