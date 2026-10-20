@@ -1,4 +1,4 @@
--- 서버/클라이언트 통신용 RemoteEvent 모음. (v3, 설계: docs/DESIGN.md "Remotes")
+-- 서버/클라이언트 통신용 RemoteEvent 모음. (v4, 설계: docs/DESIGN.md "Remotes")
 -- 서버가 먼저 require 하면 만들어지고, 클라이언트는 만들어질 때까지 기다려요.
 -- 서버는 클라이언트가 보낸 값을 절대 믿지 않아요 (타입·소유·돈·거리·환생 수를 모두 검사).
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -13,6 +13,7 @@ local NAMES = {
 	"CoinFx", -- (amount: number, position: Vector3, silent: boolean?) silent 면 소리 없이 숫자만
 	"CoinField", -- (op: "Reset" | "Add" | "Remove", payload) 내 들판 코인 (CoinFieldService 참고, 코인마다 Zone 있음)
 	"LeaderboardSync", -- (board: { Income: {Row}, Rebirths: {Row}, Global: boolean, UpdatedAt: number }) ★
+	"EggAlert", -- (zone: number, eggId: string) 좋은 알(지역 맨 위 2칸)이 벨트에 나왔어요 → 배너 (Config.EggAlert 규칙) ★v4
 	-- 클라이언트 -> 서버
 	"RequestSync", -- ()
 	"PetAction", -- (uid: string, action: "Follow" | "Unfollow" | "ToBase" | "ToBag" | "Sell" | "Ride" | "Unride" | "Hold" | "Unhold" | "Fuse")

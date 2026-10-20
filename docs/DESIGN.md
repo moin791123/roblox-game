@@ -1,4 +1,4 @@
-# 펫 월드 (v3): design contract
+# 펫 월드 (v4): design contract
 
 Kid-friendly **pet-collecting simulator**. Rojo project, Luau. All player-facing text is **Korean**, cute and short.
 Code comments: short Korean comments (match existing files). Tabs, `task.*` (never `wait`/`spawn`/`delay`).
@@ -10,9 +10,23 @@ need is missing here, do the simplest thing that fits the contract and write it 
 file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/shared/Remotes.luau` and
 `src/server/DataService.luau` are **done** (read them; they are the source of truth for numbers and helpers).
 
-> **v3 changes (what this round does)** — ★ marks v3 throughout this file
+> **v4 changes (this round)** — v3 was less fun than v2 (few eggs, no "good egg!" moment, far-away maps). ★v4 marks v4 below.
+> 1. **Many eggs per map again**: **41 eggs** (all 16 old ids + 25 ★v4) — 6 in 숲 마을, 5 in every other zone (§11).
+>    Belt spawn-weight ladder 40 / 24 / 11 / 5 / 2 (zone 1: 40 / 24 / 12 / 6 / 3 / 1.5), price ×1 / 3 / 8 / 20 / 50.
+>    Each egg's pet weights are a **sliding rarity window**; every pet hatches in its own zone; secrets only from the top 1–2
+>    eggs; CosmicWhale only from 별빛 알 (0.25 %). New eggs carry `Egg.Look` (PetModels builds them from it).
+> 2. **Good-egg alarm**: an egg from a zone's **top two rungs** (`egg.Premium`) gets a 70-stud Neon **beacon** with a
+>    "✨ <egg name>!" sign (visible from the hub) and the server fires `Remotes.EggAlert(zone, eggId)` (§5, §9 ConveyorService);
+>    the client shows a banner with "🗺 바로 가기". The old "✨ …이 나타났어요!" Notify toast is gone.
+> 3. **Hub-and-spoke map** (§2): 숲 마을 stays in the centre (plots, home belt, lobby, leaderboards unchanged); zones 2–8 are
+>    160 × 160 islands around it, clockwise from the lobby, each reached by a **30-stud trail from the home edge** with its gate
+>    at the hub end (locked gates are visible from home). Lobby → any belt ≈ 10–21 s at walk speed 18.
+> 4. New Config: `Zone.Trail`, `Zone.SpawnLook`, `Egg.Rung` / `Rungs` / `Look`, `ZoneEggOrder`, `EggAlert`, `Conveyor.BeaconHeight`,
+>    helpers `ZoneEggs`, `EggRung`, `EggAlertKind` (§8). Pet ids/tiers, house/floor/furniture/accessory tables unchanged.
+>
+> **v3 changes** — ★ marks v3 throughout this file
 > 1. **7 tiers**: 기본 / 🥉 브론즈 / 🥈 실버 / 🥇 골드 / 🌈 레인보우 / 💎 다이아 / 🌌 갤럭시. Old saves remap 2→4, 3→5.
-> 2. **8 zones** in a chain, gated by rebirths (0,1,2,3,5,7,10,14): 숲 마을 (home, 6 houses) → 호수 → 정글 → 겨울 산 → 바다 → 캔디 랜드 → 구름 왕국 → 우주. Each has its own conveyor (2 eggs), field coins, spawn and a gate.
+> 2. **8 zones** in a chain, gated by rebirths (0,1,2,3,5,7,10,14): 숲 마을 (home, 6 houses) → 호수 → 정글 → 겨울 산 → 바다 → 캔디 랜드 → 구름 왕국 → 우주. Each has its own conveyor (2 eggs), field coins, spawn and a gate. (★v4: hub-and-spoke, 5–6 eggs per zone.)
 > 3. **66 pets** (48 old ids kept + 18 new), 8 per zone (zone 1 has 10), one **secret** per zone. **16 eggs** (12 old + 4 new).
 > 4. **Houses grow with the theme** (8 themes, side 26 → 52, income bonus 0 → +40 %), **up to 10 floors** (12 pedestals each, 120 total), rebirth-gated floors, an **elevator**, and an entrance you can **ride** through.
 > 5. **Bag/base**: sorted by income, `AutoPlace` (best pets on pedestals), `ClearBase` (all house pets → bag), bag 150.
@@ -53,29 +67,34 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 
 ---
 
-## 2. World layout (all Vector3s are in `Config.Zones` / `Config.Layout`)
+## 2. World layout (all Vector3s are in `Config.Zones` / `Config.Layout`) ★v4 hub-and-spoke
 
 Ground top surface is **y = 0 everywhere**. `Zone.Size.Y` is the ground slab thickness (slab top at y = 0).
-The zones are separate ground islands in a straight line along **+X**, joined by walkable **trails** (bridges)
-along **z = 0**, `Config.Layout.TrailLength` = 50 long, `TrailWidth` = 16 wide, with side rails ≥ 4 high.
-Between islands is decorative water (`Layout.SeaY` = −3, CanCollide **false**). Island edges get fences (≥ 4 high)
-except at trail mouths, so the only way into zone k is through its gate.
+숲 마을 (zone 1) is the **hub** in the middle; zones 2–8 are 160 × 160 islands around it. Each island is joined to the hub by one
+walkable **trail** (bridge) that starts on the home edge (`Zone.Trail.From`) and ends on the island edge (`Zone.Trail.To`):
+`Layout.TrailLength` = 30, `TrailWidth` = 16, side rails ≥ 4 high + invisible walls. Between the land is decorative water
+(`Layout.SeaY` = −3, CanCollide **false**; `FallResetY` = −30). Every land edge is fenced (≥ 4 high + invisible wall) except the
+trail mouths (home: 7 gaps, island: 1 gap), so the only way into zone k is its trail and gate.
+Order is **clockwise from the lobby** (standing at the lobby looking +X, starting behind-left).
 
-| # | Id | Name | Center | Size (X, Z) | Conveyor (start → end) | Field box | Spawn | Gate (CFrame pos, Size) |
-|---|---|---|---|---|---|---|---|---|
-| 1 | Village | 🌳 숲 마을 | (−22.5, 0, 0) | 315 × 250 | (−56,0,0) → (56,0,0) | (−110,−42)…(110,42) | (−140,0,0) | — |
-| 2 | Lake | 🦆 호수 | (285, 0, 0) | 200 × 200 | (225,0,−55) → (345,0,−55) | (193,−40)…(377,92) | (201,0,0) | (183, 8, 0), (2, 16, 20) |
-| 3 | Jungle | 🌴 정글 | (535, 0, 0) | 200 × 200 | cx ± 60, z −55 | cx ± 92, z −40…92 | (cx − 84, 0, 0) | (cx − 102, 8, 0) |
-| 4 | Snow | 🏔 겨울 산 | (785, 0, 0) | 〃 | 〃 | 〃 | 〃 | 〃 |
-| 5 | Ocean | 🌊 바다 | (1035, 0, 0) | 〃 | 〃 | 〃 | 〃 | 〃 |
-| 6 | Candy | 🍭 캔디 랜드 | (1285, 0, 0) | 〃 | 〃 | 〃 | 〃 | 〃 |
-| 7 | Cloud | ☁️ 구름 왕국 | (1535, 0, 0) | 〃 | 〃 | 〃 | 〃 | 〃 |
-| 8 | Space | 🚀 우주 | (1785, 0, 0) | 〃 | 〃 | 〃 | 〃 | 〃 |
+| # | Id | Name | Center | Size (X, Z) | Conveyor (start → end) | Field box (min…max) | Spawn | Trail From → To (Dir) | Gate pos |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | Village | 🌳 숲 마을 | (−22.5, 0) | 315 × 250 | (−56, 0) → (56, 0) | (−110, −42)…(110, 42) | (−140, 0) | — | — |
+| 2 | Lake | 🦆 호수 | (−290, −90) | 160 × 160 | (−236, −132) → (−336, −132) | (−340, −120)…(−222, −20) | (−226, −80) | (−180, −80) → (−210, −80) (−X) | (−181.5, 8, −80) |
+| 3 | Jungle | 🌴 정글 | (−105, −235) | 〃 | (−63, −181) → (−63, −281) | (−175, −285)…(−75, −167) | (−150, −171) | (−150, −125) → (−150, −155) (−Z) | (−150, 8, −126.5) |
+| 4 | Snow | 🏔 겨울 산 | (125, −235) | 〃 | (167, −181) → (167, −281) | (55, −285)…(155, −167) | (120, −171) | (120, −125) → (120, −155) (−Z) | (120, 8, −126.5) |
+| 5 | Ocean | 🌊 바다 | (245, 0) | 〃 | (191, 42) → (291, 42) | (177, −70)…(295, 30) | (181, 0) | (135, 0) → (165, 0) (+X) | (136.5, 8, 0) |
+| 6 | Candy | 🍭 캔디 랜드 | (125, 235) | 〃 | (167, 181) → (167, 281) | (55, 167)…(155, 285) | (120, 171) | (120, 125) → (120, 155) (+Z) | (120, 8, 126.5) |
+| 7 | Cloud | ☁️ 구름 왕국 | (−105, 235) | 〃 | (−63, 181) → (−63, 281) | (−175, 167)…(−75, 285) | (−150, 171) | (−150, 125) → (−150, 155) (+Z) | (−150, 8, 126.5) |
+| 8 | Space | 🚀 우주 | (−290, 90) | 〃 | (−236, 132) → (−336, 132) | (−340, 20)…(−222, 120) | (−226, 80) | (−180, 80) → (−210, 80) (−X) | (−181.5, 8, 80) |
 
-Zone k ≥ 2: centre x = 285 + (k − 2) × 250; island x ∈ [cx − 100, cx + 100]; the trail into it spans
-x ∈ [cx − 150, cx − 100]; zone 1's east edge is x = 135 (trail 1→2 = x 135…185). Inside zones 2–8 the **main
-road** runs along z = 0 from the west gate to the east trail (zone 8 has no east exit), the conveyor sits south
-(z = −55, with its egg chute/bin), the field coin area is the box above (the road crosses it; that is fine).
+All values are computed in Config by `island(def, { Mouth, Dir, Center })` in the island's local frame: u along `Trail.Dir` from
+the island entry, v along `Trail.Side` = (−Dir.Z, 0, Dir.X). Spawn u = 16 on the road (`SpawnLook` = Dir, into the island); the
+**main road** runs u −1…92 on v = 0 and ends in a round plaza (u ≈ 102); the conveyor runs parallel to the road at u 26…126 on the
+roomier side (`Trail.BeltSide`), 38 from that island edge, with its chute at the entry end; the field box spans from 12 in front of
+the belt to 10 from the opposite edge, u 12…130 (the road crosses it; fine). Behind the belt and beyond u 130 are the big-decoration
+strips. Zone rects are ≥ 25 apart; trails touch only their two edges. Lobby → belt start (straight-line walk): 1 ≈ 5 s, 2/8 ≈ 10 s,
+3/7 ≈ 14 s, 5 ≈ 20 s, 4/6 ≈ 21 s at walk speed 18 (faster with rebirth speed / followers / riding; kids usually start at their house).
 `Zone.Palette` = { Ground, Path, Accent, Trim, Sky, Water?, Deco = { kind strings } } for WorldBuilder/ZoneClient.
 
 **Home zone (숲 마을)**: 6 plots, `Layout.PlotSize` = 64, centres x ∈ {−72, 0, 72}, z = ±80 (north row 1–3, south
@@ -83,11 +102,14 @@ row 4–6), each `Layout.Plots[i]` CFrame looks at (x, 0, 0) (toward the conveyo
 centre, z 48…112 (north) / −112…−48 (south). Conveyor along z = 0, x −56…56 (width 8, the old belt). Field coins in
 x −110…110, |z| ≤ 42, not within `FieldConveyorClearance` (7) of any conveyor segment, not inside plots (+2 margin).
 Lobby / spawn plaza at (−140, 0, 0) (`Layout.LobbySpawn` = `Zones[1].Spawn`). Leaderboards: `Layout.Leaderboards.Income`
-at (−165, 0, −28) and `.Rebirths` at (−165, 0, 28), both facing +X (the lobby). The trail to zone 2 leaves the east
-edge at (135, 0, 0); WorldBuilder routes the home walkways around the conveyor's east bin to reach it.
+at (−165, 0, −28) and `.Rebirths` at (−165, 0, 28), both facing +X (the lobby). ★v4 exits on the home edge: west z = ±80
+(호수 / 우주), south and north at x = −150 (정글 / 구름 왕국) and x = 120 (겨울 산 / 캔디 랜드), east z = 0 (바다, the old
+east road past the conveyor bin). WorldBuilder adds walkways: lanes x = −150 / 120 (|z| from the plaza / road to the edge), west
+spurs at z = ±80, and the plot-row front paths extended to x −155…125.
 
-**Gates** (zones 2–8): WorldBuilder builds an arch over the trail mouth (arch beam ≥ 18 high so riders fit), a sign
-"🦆 호수 · 🔄 환생 1회" and the **barrier part** `workspace.World.Gates.Gate<k>` with `CFrame = Zone.Gate.CFrame`,
+**Gates** (zones 2–8): ★v4 at the **hub end** of each trail (`Gate.CFrame` = 1.5 into the trail, LookVector = Trail.Dir,
+`Size` = (20, 16, 2)). WorldBuilder builds an arch over it (arch beam ≥ 18 high so riders fit), a sign facing home
+"🦆 호수 · 🔄 환생 1회" (back: "← 🌳 숲 마을"), a "🔒 환생 N회" billboard (MaxDistance 450, so locked gates show from home) and the **barrier part** `workspace.World.Gates.Gate<k>` with `CFrame = Zone.Gate.CFrame`,
 `Size = Zone.Gate.Size`, attributes `ZoneIndex` (k) and `MinRebirth`, `Anchored = true`, **`CanCollide = false`**,
 `Transparency = 1` on the server. The client (`ZoneClient`) sets `CanCollide = true` and a visible pink force-field
 look **locally** on gates whose `MinRebirth > my Rebirths` (character physics is client-owned, so this blocks the
@@ -168,6 +190,7 @@ rebirth gates, and throttles each player (≈ 0.15 s per action, 1.5 s for Telep
 | CoinFx | S→C | amount, position, silent? | any | |
 | CoinField | S→C | op, payload: `"Reset", { {Id, Kind, Position, Zone}, … }` / `"Add", {Id, Kind, Position, Zone}` / `"Remove", Id` | CoinFieldService | Ids unique per player across zones |
 | LeaderboardSync ★ | S→C | `{ Income = {Row}, Rebirths = {Row}, Global = bool, UpdatedAt = os.time() }`, Row = `{ Rank, UserId, Name, Value }` | LeaderboardService | |
+| EggAlert ★v4 | S→C | zone: number, eggId: string | ConveyorService | a top-two-rung egg spawned on zone's belt (rules §9 ConveyorService). Client banner: `Zones[zone].Name`, `Eggs[eggId].Name`, button → `Teleport("Zone", zone)` |
 | RequestSync | C→S | — | init.server | full Sync |
 | PetAction | C→S | uid, action ("Follow","Unfollow","ToBase","ToBag","Sell","Ride","Unride","Hold","Unhold","Fuse") | PlotService | v2 rules + §7 fusion rule |
 | AutoPlace ★ | C→S | — | PlotService | §7 |
@@ -203,6 +226,7 @@ rebirth gates, and throttles each player (≈ 0.15 s per action, 1.5 s for Telep
 - ProximityPrompts: `PromptKind = "Owner"` (+ `OwnerUserId`) → shown only to the owner (client hides others locally);
   `PromptKind = "Buy"` → everyone (conveyor eggs). The server still validates.
 - ★ `workspace.Conveyors.Zone<k>` (Folder per zone): belt parts and egg models; egg Models have attributes `EggId`, `Price`, `Zone`.
+  ★v4 premium eggs also have an anchored Neon cylinder `EggBeacon` (child of the zone folder, follows the egg, BillboardGui `BeaconSign`).
 - ★ `workspace.World.Gates.Gate<k>` (see §2). `workspace.World` holds all WorldBuilder parts.
 - ★ `workspace.Leaderboards` (LeaderboardService): Models `IncomeBoard`, `RebirthBoard`.
 - `workspace.ClientCoins` (client-only, CoinField). `workspace.FollowPets` (followers, `RideMount_<userId>`, hold pets).
@@ -255,9 +279,11 @@ Existing names keep working: `WeightedPick`, `RollPet(eggId)`, `RollEgg(rng?, zo
 `CanFuseLoc(loc)`, `ThemeOf(id)`, `ThemeIncomeBonus(id)`, `ThemeSize(id)`, `IncomeMultiplier(rebirths, themeId)`,
 `FloorStartSlots(floor)`, `FloorRequirement(floor) -> {Price, MinRebirth}`, `CanBuyFloor(floors, slots, rebirths) -> (ok, "Max"|"Slots"|"Rebirth")`,
 `AccessoryValid(id)`, `FurnitureFootprint(furnId, r) -> (sx, sz)`.
+★v4: `ZoneEggs(zone) -> {eggId}` (ladder order, cheap → dear), `EggRung(eggId) -> (rung, rungs)`, `EggAlertKind(eggId) -> "Top" | "Second" | nil`;
+`RollEgg(rng, zone)` walks `ZoneEggOrder[zone]` by `SpawnWeight`.
 Data tables: `Rarities` (+`Boost`), `RarityOrder`, `Zones`, `MaxZone`, `Pets` (+`Zone`, `Boost` auto-filled), `PetOrder` (zone then rarity),
-`Eggs` (+`Zone`, `Premium`, `MinRebirth` auto = zone's), `EggOrder`, `Rebirth.Costs`, `HatchTierChance`, `MaxHatchTier`, `Tiers` (+`Visual`),
-`FuseLocs`, `Ride` (+`MaxStandHeight` 8.5), `Conveyor` (per belt; `FlyMaxDistance`), `Plot`, `FloorInfo`, `House` (`MaxFloors` 10,
+`Eggs` (+`Zone`, `Premium` = top 2 rungs, `MinRebirth` auto = zone's, ★v4 `Rung`, `Rungs`, `Look` on new eggs), `EggOrder`, ★v4 `ZoneEggOrder`, `EggAlert`, `Rebirth.Costs`, `HatchTierChance`, `MaxHatchTier`, `Tiers` (+`Visual`),
+`FuseLocs`, `Ride` (+`MaxStandHeight` 8.5), `Conveyor` (per belt; `FlyMaxDistance`, ★v4 `BeaconHeight`), `Plot`, `FloorInfo`, `House` (`MaxFloors` 10,
 `FloorHeight` 12, `Themes` with `Size`/`IncomeBonus`), `Accessories`, `AccessoryOrder`, `Furniture`, `FurnitureOrder`,
 `FurnitureCategories`, `Decor`, `Leaderboard`, `FieldCoins` (`CountPerZone`, `IncomeScale` 30, `MaxBoost` 3, `RenderDistance`), `Layout`, `Sounds`, `MaxWalkSpeed`.
 
@@ -355,7 +381,13 @@ is applied by CoinFieldService). The only place that sets WalkSpeed / HipHeight.
 `Config.ZoneUnlocked(k, rebirths)` (zone 1 always). Buy: prompt `PromptKind = "Buy"`, ActionText "구매 💰" .. price; server checks
 zone unlocked ("🔒 환생 N회가 필요해요!"), HRP within 20 studs of the egg, `PlotService.FreeSlot`, `TrySpend`; HatchAt =
 `now + Config.RebirthHatchTime(eggId, rebirths)`; egg flies to the slot when the plot is within `Conveyor.FlyMaxDistance`,
-otherwise sparkles away and appears on the pedestal. Premium eggs get a glow + bigger billboard.
+otherwise sparkles away and appears on the pedestal. Premium eggs (top 2 rungs) get a glow + bigger billboard.
+★v4 **beacon + alert**: a premium egg also gets `EggBeacon` (anchored Neon cylinder 0.8 × `Conveyor.BeaconHeight` 70, not
+wobbling, moved with the egg; `BeaconSign` BillboardGui 230 × 56 px, AlwaysOnTop, MaxDistance 700, "✨ <egg name>!"); destroyed
+when bought or when the egg falls into the bin. On spawn, `Config.EggAlertKind(eggId)`: **"Top"** → always alert; **"Second"** →
+only if this belt's last alert was ≥ `EggAlert.Gap` (15) s ago (any alert resets the timer). Recipients: data loaded,
+`ZoneUnlocked(zone)`, and (standing in that zone (`Zone` attribute) **or** zone > `MaxZoneFor(rebirths) − EggAlert.ZoneWindow` (2))
+so big kids are not spammed by low zones. `Remotes.EggAlert:FireClient(player, zone, eggId)`; **no Notify** for it.
 
 ### CoinFieldService (owner WORLD)
 ★ For each loaded player keep `FieldCoins.CountPerZone` virtual coins **per unlocked zone** (positions in that zone's field box,
@@ -398,7 +430,9 @@ send `"Add"` for coins of newly opened zones. `PickupCoin(id)`: coin exists & al
 - `LeaderboardService.SendTo(player)` (call after the player's data loads), `LeaderboardService.GetBoard() -> board`.
 
 ### WorldBuilder (owner WORLD)
-`WorldBuilder.Build()`: 8 islands (ground top y = 0, palette colours, fences), trails with rails, gates (§2), per-zone decorations from
+`WorldBuilder.Build()`: ★v4 hub + 7 islands (ground top y = 0, palette colours, fences open only at `Trail.From` / `Trail.To`),
+trails From → To with rails + invisible walls, gates at the hub end (§2), island roads/plaza/belt walkway in island-local u/v,
+sea decorations only in the outward half around each island and never on other land or trails, per-zone decorations from
 `Palette.Deco` (keep conveyors, field boxes, plots + 4, spawn, leaderboard spots ±10 clear), the lobby with the tutorial sign
 (알 사기, 코인 줍기, 펫 타기, 합성 (같은 펫 3마리, 가방 펫만), 🗺 지도로 이동, 🛍 상점 옷·가구, 환생하면 새 지역!), zone name signs,
 the sea plane, lighting. Part budget ≈ 2500 total. All parts under `workspace.World`.
@@ -451,20 +485,33 @@ Prompt filtering: only `PromptKind = "Owner"` hiding. Keys: B bag, N index, H ho
 | 7 구름 왕국 | Sheep 30K, ★CloudPuppy 36K | ★BabyCloud 45K | Dragon 66K | Unicorn 96K | ★Pegasus 135K | Phoenix 210K | ★AngelBunny 360K |
 | 8 우주 | Alien 150K, RobotPuppy 180K | MoonBunny 225K | SpaceCat 330K | ★AstroBear 480K | ★CometFox 675K | StarSlime 1.05M | CosmicWhale 2M |
 
-Eggs (cheap "zone egg" SpawnWeight 80 / premium SpawnWeight 20 on that zone's belt):
-| zone | cheap egg (price, hatch s) | premium egg (price, hatch s) |
-|---|---|---|
-| 1 | Basic 기본 알 (50, 8) | Forest 숲속 알 (500, 20) |
-| 2 | ★Lake 호수 알 (2K, 12) | Crystal 크리스탈 알 (16K, 30) |
-| 3 | ★Jungle 정글 알 (24K, 15) | Spotted 점박이 알 (200K, 40) |
-| 4 | Snow 겨울 알 (300K, 18) | Twilight 황혼 알 (2.4M, 50) |
-| 5 | Ocean 바다 알 (3M, 22) | ★Pearl 진주 알 (24M, 60) |
-| 6 | Candy 캔디 알 (30M, 26) | Rainbow 무지개 알 (240M, 70) |
-| 7 | ★Cloud 구름 알 (300M, 30) | Golden 황금 알 (2.4B, 80) |
-| 8 | Space 우주 알 (3B, 35) | Starlight 별빛 알 (400B, 100) |
+★v4 eggs: **41** (`Config.ZoneEggOrder[zone]` = ladder order). Cell = id name (price, hatch s, belt SpawnWeight). **Premium** =
+top two rungs (zones 2–8: rungs 4–5, zone 1: 5–6) → glow, beacon, EggAlert ("Top" = last rung, "Second" = the one before).
+| zone | rung 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| 1 숲 마을 | Basic 기본 알 (50, 8s, w 40) | ★Flower 꽃 알 (150, 10s, w 24) | ★Mushroom 버섯 알 (500, 14s, w 12) | Forest 숲속 알 (1.5K, 20s, w 6) | ★Fairy 요정 알 (5K, 28s, w 3) | ★Spirit 정령 알 (15K, 36s, w 1.5) |
+| 2 호수 | Lake 호수 알 (2K, 12s, w 40) | ★Lily 연꽃 알 (6K, 16s, w 24) | ★Bubble 물방울 알 (20K, 22s, w 11) | ★Moonlight 달빛 알 (40K, 29s, w 5) | Crystal 크리스탈 알 (100K, 36s, w 2) | — |
+| 3 정글 | Jungle 정글 알 (24K, 15s, w 40) | ★Leaf 나뭇잎 알 (75K, 20s, w 24) | Spotted 점박이 알 (200K, 27s, w 11) | ★Tropical 열대 알 (500K, 36s, w 5) | ★Tiger 호랑이 알 (1.2M, 45s, w 2) | — |
+| 4 겨울 산 | Snow 겨울 알 (300K, 18s, w 40) | ★Ice 얼음 알 (1M, 24s, w 24) | ★Snowflake 눈꽃 알 (2.5M, 32s, w 11) | ★Aurora 오로라 알 (6M, 43s, w 5) | Twilight 황혼 알 (15M, 54s, w 2) | — |
+| 5 바다 | Ocean 바다 알 (3M, 22s, w 40) | ★Shell 조개 알 (10M, 30s, w 24) | ★Coral 산호 알 (25M, 40s, w 11) | Pearl 진주 알 (60M, 53s, w 5) | ★DragonPalace 용궁 알 (150M, 66s, w 2) | — |
+| 6 캔디 랜드 | Candy 캔디 알 (30M, 26s, w 40) | ★Jelly 젤리 알 (100M, 35s, w 24) | ★Lollipop 막대사탕 알 (250M, 47s, w 11) | ★Cake 케이크 알 (600M, 62s, w 5) | Rainbow 무지개 알 (1.5B, 78s, w 2) | — |
+| 7 구름 왕국 | Cloud 구름 알 (300M, 30s, w 40) | ★Breeze 바람 알 (1B, 40s, w 24) | ★Feather 깃털 알 (2.5B, 54s, w 11) | ★Angel 천사 알 (6B, 72s, w 5) | Golden 황금 알 (15B, 90s, w 2) | — |
+| 8 우주 | Space 우주 알 (3B, 35s, w 40) | ★Moon 달 알 (10B, 47s, w 24) | ★Planet 행성 알 (25B, 63s, w 11) | ★Comet 혜성 알 (60B, 84s, w 5) | Starlight 별빛 알 (150B, 105s, w 2) | — |
 
-Cheap-egg weights: commons 60 % (split), U 22, R 11, E 5, L 1.6, M 0.35, S 0.05 (Space egg: no secret, Mythic 0.4).
-Premium weights: U 30, R 30, E 22, L 12.5, M 5, S 0.25 (Starlight: CosmicWhale **0.1 %**, the only source).
+Rarity labels (`Egg.Rarity`): zone 1 Common / Uncommon / Rare / Epic / Legendary / Mythic; zones 2–8 Common / Rare / Epic / Legendary / Mythic.
+Hatch = zone base × 1 / 1.35 / 1.8 / 2.4 / 3.0 (bases 12, 15, 18, 22, 26, 30, 35 s); price = base × 1 / 3 / 8 / 20 / 50 (rounded nicely).
+**Pet weights = sliding rarity window** (% per egg; C1/C2 = the zone's two commons):
+| rung | zones 2–8 |
+|---|---|
+| 1 | C1 35, C2 31, U 28, R 6 |
+| 2 | C1 12, C2 12, U 32, R 28, E 13, L 3 |
+| 3 | U 16, R 34, E 32, L 15, M 3 |
+| 4 | R 16, E 36, L 32, M 15.7, **S 0.3** |
+| 5 | E 24, L 42, M 33, **S 1** |
+Zone 8: 혜성 알 has no secret (M 16); 별빛 알 = E 24, L 42, M 33.75, **CosmicWhale 0.25** (the only source).
+Zone 1: 기본 Chick 17, Bunny 17, Hamster 16, Piglet 16, Puppy 27, Cat 7 · 꽃 Chick 7, Bunny 7, Hamster 9, Piglet 9, Puppy 32, Cat 26,
+Owl 8, Fox 2 · 버섯 Hamster 4, Piglet 4, Puppy 22, Cat 34, Owl 26, Fox 9, RainbowCat 1 · 숲속 Puppy 10, Cat 28, Owl 34, Fox 22,
+RainbowCat 6 · 요정 Cat 14, Owl 34, Fox 34, RainbowCat 17.5, **SpiritDeer 0.5** · 정령 Owl 23, Fox 42, RainbowCat 33, **SpiritDeer 2**.
 
 ---
 
@@ -508,12 +555,8 @@ Parts named `Eye`, `EyeWhite`, `Pupil`, `Shine`, `Blush` keep their colour. Part
 | CometFox | 혜성 여우 | deep-blue fox whose tail is a glowing comet trail (Neon cyan → white pieces), star mark on the forehead |
 
 ### New eggs
-| id | look |
-|---|---|
-| Lake | pale aqua egg with wavy blue water bands and a small green lily-pad patch on top |
-| Jungle | leaf-green egg with dark-green big-leaf patches and a yellow vine ring |
-| Pearl | pearly white-pink glossy egg (Reflectance), thin gold ring, tiny shell on top |
-| Cloud | white fluffy egg, soft lavender cloud puffs around the bottom, small golden star on top |
+v3 eggs keep their hand-made builders. ★v4: the 25 new eggs carry `Config.Eggs[id].Look = { Base, Accent, Accent2?, Pattern, Shine?, Glow? }`
+(Pattern ∈ the 16 names PetModels' pattern builder knows); `PetModels.BuildEgg` builds them from it (hand-made builders win).
 
 ### Accessories (`Config.Accessories`, Slot in brackets)
 PartyHat 고깔모자 [Head] pink cone, white polka dots, yellow pom-pom · Sunglasses 선글라스 [Face] black rounded shades ·
@@ -575,18 +618,21 @@ Put it in your report; do not edit those files. Keep player text Korean.
 
 ---
 
-## 16. Balance curve (scratchpad `v3/sim3.py`, active player, ~0.35 field coins/s, greedy buys, auto-fuse)
+## 16. Balance curve ★v4 (scratchpad `v4/sim4.py`: real Config units, Poisson belt spawns, buys from the belt only, active player)
 
-| milestone | play time |
-|---|---|
-| zone 2 호수 (rebirth 1) | ≈ 36 min |
-| zone 3 정글 (R2) | ≈ 1.3 h |
-| zone 4 겨울 산 (R3) | ≈ 2.2 h |
-| zone 5 바다 (R5) | ≈ 4.4 h |
-| zone 6 캔디 랜드 (R7) | ≈ 7 h |
-| zone 7 구름 왕국 (R10) | ≈ 12 h |
-| zone 8 우주 (R14) | ≈ 19.5 h |
-| CosmicWhale | ≈ 23–32 h (Starlight 400B each, 0.1 %) |
-| rebirth 25 / floor 10 | ≈ 70 h |
-Floors: 2 ≈ 0.7 h, 3 ≈ 1.4 h, 4 ≈ 2.4 h, 5 ≈ 4.5 h, 6 ≈ 8.5 h, 7 ≈ 13 h, 8 ≈ 29 h, 9 ≈ 46 h. Offline earnings (50 %, 2 h cap) come on top.
-If you change pet incomes or prices, re-run the sim (incomes there are Config ÷ 2).
+| milestone | v4 | (v3 same sim) |
+|---|---|---|
+| first egg (기본 알 50, hatch 8 s) | right away (start 200 coins) | |
+| first Rare+ pet | ≈ 23 s | 15 s |
+| zone 2 호수 (rebirth 1) | ≈ 37 min | 33 min |
+| zone 3 정글 (R2) | ≈ 1.3 h | 1.2 h |
+| zone 4 겨울 산 (R3) | ≈ 2.3 h | 2.0 h |
+| zone 5 바다 (R5) | ≈ 4.5 h | 4.1 h |
+| zone 6 캔디 랜드 (R7) | ≈ 6.9 h | 6.5 h |
+| zone 7 구름 왕국 (R10) | ≈ 11.6 h | 11.3 h |
+| zone 8 우주 (R14) | ≈ 19.2 h | 19.2 h |
+| R15 / R20 / R24 | 21 h / 36 h / 58 h | 32 h / 49 h / — |
+| CosmicWhale | ≈ 21–31 h (별빛 알 150B, 0.25 %) | |
+| first secret per zone 2…8 | 0.9, 1.6, 3.3, 5.8, 10.3, 13.6, 30 h | |
+Floors: 2 ≈ 0.7 h, 3 ≈ 1.5 h, 4 ≈ 2.7 h, 5 ≈ 4.6 h, 6 ≈ 8.4 h, 7 ≈ 13 h, 8 ≈ 22 h, 9 ≈ 36 h, 10 ≈ 52 h. Offline earnings come on top.
+Belt buys spread over the ladder (e.g. zone 4: 41 / 36 / 13 / 7 / 3 %). If you change pet incomes or prices, re-run `sim4.py v4 60`.

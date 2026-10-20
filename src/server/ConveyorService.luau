@@ -1,7 +1,9 @@
--- 컨베이어(알 공장 벨트): 지역마다 벨트 1개 (workspace.Conveyors.Zone<k>), 그 지역 알 2종만 나와요.
+-- 컨베이어(알 공장 벨트): 지역마다 벨트 1개 (workspace.Conveyors.Zone<k>), 그 지역 알 5~6종이 SpawnWeight 비율로 나와요.
 -- 그 지역이 열린 사람이 접속해 있을 때만 알이 나오고 (숲 마을은 항상), 지역이 잠긴 사람은 못 사요.
 -- 산 알은 집 받침대로 날아가요. 집이 아주 멀면 "뿅" 하고 사라졌다가 받침대에 바로 나타나요.
 -- 벨트 줄무늬 애니메이션은 클라이언트(ZoneClient)가 해요 (서버 복제 줄이기).
+-- ★v4 좋은 알(지역 맨 위 2칸, egg.Premium): 높은 네온 빛기둥 + 멀리서도 보이는 "✨ <알 이름>!" 간판,
+-- 그리고 Remotes.EggAlert(zone, eggId) 를 보내요 (Config.EggAlert 규칙, Notify 토스트는 따로 안 보내요).
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -26,7 +28,7 @@ local FLY_TIME_MAX = 1.8
 local STRIPE_SPACING = 8
 local BUY_DISTANCE = 20
 local WATCH_DISTANCE = 260 -- 이 안에 사람이 있는 벨트만 알을 매 프레임 움직여요
-local ANNOUNCE_GAP = 45 -- 좋은 알 등장 알림 간격 (벨트마다)
+local BEACON_WIDTH = 0.8
 
 type EggEntry = {
 	Model: Model,
@@ -37,6 +39,7 @@ type EggEntry = {
 	Claimed: boolean,
 	Done: boolean,
 	Wobble: number,
+	Beacon: BasePart?, -- 좋은 알 빛기둥 (벨트 폴더 아래, 알을 따라가요)
 }
 
 type Belt = {
@@ -52,7 +55,7 @@ type Belt = {
 	Active: boolean, -- 알이 나오는지 (지역이 열린 사람이 접속 중)
 	Watched: boolean, -- 근처에 사람이 있는지
 	NextSpawn: number,
-	LastAnnounce: number,
+	LastAlert: number, -- 마지막 EggAlert 시각 (둘째 칸 알은 Config.EggAlert.Gap 초에 한 번)
 }
 
 local rng = Random.new()
@@ -328,6 +331,83 @@ local function addPremiumGlow(main: BasePart, egg: any)
 	sparkle.Parent = main
 end
 
+-- 좋은 알 빛기둥: 앵커된 네온 기둥 + 멀리서도 보이는 간판. 알 모델 밖에 있어서 흔들리지 않아요
+local function beaconCFrame(pos: Vector3): CFrame
+	local h = Config.Conveyor.BeaconHeight
+	return CFrame.new(pos + Vector3.new(0, h / 2 + 1.5, 0)) * CFrame.Angles(0, 0, math.pi / 2)
+end
+
+local function makeBeacon(parent: Instance, egg: any, pos: Vector3): BasePart
+	local h = Config.Conveyor.BeaconHeight
+	local color = Config.Rarities[egg.Rarity].Color
+	local beam = makePart({
+		Name = "EggBeacon",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(h, BEACON_WIDTH, BEACON_WIDTH),
+		CFrame = beaconCFrame(pos),
+		Color = color,
+		Material = Enum.Material.Neon,
+		Transparency = 0.3,
+		CanCollide = false,
+		CanTouch = false,
+		CanQuery = false,
+		CastShadow = false,
+	})
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "BeaconSign"
+	gui.Size = UDim2.fromOffset(230, 56) -- 픽셀 크기: 멀리서도 똑같이 크게
+	gui.StudsOffsetWorldSpace = Vector3.new(0, h / 2 + 3, 0) -- 기둥 꼭대기 (월드 좌표 위쪽)
+	gui.AlwaysOnTop = true
+	gui.MaxDistance = 700
+	gui.LightInfluence = 0
+	gui.ResetOnSpawn = false
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.Font = Enum.Font.FredokaOne
+	label.TextScaled = true
+	label.Text = "✨ " .. egg.Name .. "!"
+	label.TextColor3 = color
+	label.TextStrokeTransparency = 0
+	label.TextStrokeColor3 = Color3.fromRGB(40, 30, 60)
+	label.Parent = gui
+	gui.Parent = beam
+	beam.Parent = parent
+	return beam
+end
+
+local function dropBeacon(entry: EggEntry)
+	if entry.Beacon then
+		entry.Beacon:Destroy()
+		entry.Beacon = nil
+	end
+end
+
+-- 좋은 알 알림 보내기: 맨 위 칸은 언제나, 둘째 칸은 벨트마다 Gap 초에 한 번.
+-- 받는 사람: 그 지역이 열렸고, 그 지역이 내 열린 지역 중 위에서 ZoneWindow 개 안이거나 지금 그 지역에 있을 때
+local function sendEggAlert(belt: Belt, eggId: string, now: number)
+	local kind = Config.EggAlertKind(eggId)
+	if not kind then
+		return
+	end
+	local rules = Config.EggAlert
+	if kind ~= "Top" and now - belt.LastAlert < rules.Gap then
+		return
+	end
+	belt.LastAlert = now
+	for _, player in Players:GetPlayers() do
+		if DataService.Get(player) then
+			local rebirths = DataService.GetRebirths(player)
+			if Config.ZoneUnlocked(belt.Zone, rebirths) then
+				local here = player:GetAttribute("Zone") == belt.Zone
+				if here or belt.Zone > Config.MaxZoneFor(rebirths) - rules.ZoneWindow then
+					Remotes.EggAlert:FireClient(player, belt.Zone, eggId)
+				end
+			end
+		end
+	end
+end
+
 local function removeEntry(belt: Belt, entry: EggEntry)
 	local i = table.find(belt.Eggs, entry)
 	if i then
@@ -457,6 +537,7 @@ local function onBuy(belt: Belt, entry: EggEntry, player: Player)
 	entry.Claimed = true
 	entry.Done = true
 	removeEntry(belt, entry)
+	dropBeacon(entry)
 
 	local uid = DataService.AddItem(player, {
 		Kind = "Egg",
@@ -554,20 +635,16 @@ local function spawnEgg(belt: Belt)
 		onBuy(belt, entry, player)
 	end)
 
-	model:PivotTo(beltCFrame(belt, 0, DROP_HEIGHT))
+	local startCF = beltCFrame(belt, 0, DROP_HEIGHT)
+	model:PivotTo(startCF)
 	model.Parent = belt.Folder
+	if egg.Premium then
+		entry.Beacon = makeBeacon(belt.Folder, egg, startCF.Position)
+	end
 	table.insert(belt.Eggs, entry)
 
-	-- 좋은 알 등장 알림: 그 지역에 있는 사람한테만, 가끔
-	local now = os.clock()
-	if egg.Premium and rarity.Order >= 5 and now - belt.LastAnnounce >= ANNOUNCE_GAP then
-		belt.LastAnnounce = now
-		for _, player in Players:GetPlayers() do
-			if player:GetAttribute("Zone") == belt.Zone then
-				notify(player, "✨ " .. egg.Name .. "이 나타났어요!", "info")
-			end
-		end
-	end
+	-- 좋은 알 알림 (배너는 클라이언트가 그려요. Notify 토스트는 따로 안 보내요)
+	sendEggAlert(belt, eggId, os.clock())
 end
 
 -- 벨트 하나의 알을 한 번에 움직여요 (근처에 아무도 없으면 시간만 세고 움직이진 않아요)
@@ -601,6 +678,7 @@ local function updateEggs(belt: Belt, now: number)
 		else
 			e.Done = true
 			table.remove(eggs, i)
+			dropBeacon(e)
 			e.Model:Destroy()
 			continue
 		end
@@ -608,7 +686,11 @@ local function updateEggs(belt: Belt, now: number)
 			local phase = e.Wobble
 			local wobble = CFrame.Angles(0, now * 0.8 + phase, 0)
 				* CFrame.Angles(math.sin(now * 5 + phase) * 0.07, 0, math.sin(now * 4 + phase) * 0.1)
-			e.Model:PivotTo(beltCFrame(belt, s, y) * wobble)
+			local cf = beltCFrame(belt, s, y)
+			e.Model:PivotTo(cf * wobble)
+			if e.Beacon then
+				e.Beacon.CFrame = beaconCFrame(cf.Position)
+			end
 		end
 	end
 end
@@ -690,7 +772,7 @@ function ConveyorService.Start()
 			Active = k == 1,
 			Watched = false,
 			NextSpawn = os.clock() + (k - 1) * 0.3,
-			LastAnnounce = -math.huge,
+			LastAlert = -math.huge,
 		}
 		buildBelt(belt)
 		table.insert(belts, belt)

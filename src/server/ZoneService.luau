@@ -57,7 +57,8 @@ end
 local function zoneSpawnCFrame(zone: number): CFrame
 	local def = Config.Zones[zone] or Config.Zones[1]
 	local pos = def.Spawn + Vector3.new(0, 3, 0)
-	return CFrame.lookAt(pos, pos + Vector3.xAxis)
+	local look: Vector3 = def.SpawnLook or Vector3.xAxis -- v4: 섬 안쪽(숲 마을 반대쪽)을 봐요
+	return CFrame.lookAt(pos, pos + look)
 end
 
 -- 캐릭터 옮기기 (타는 펫은 용접돼 있어서 같이 와요)

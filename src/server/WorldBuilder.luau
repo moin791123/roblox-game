@@ -1,4 +1,5 @@
--- 귀여운 파스텔 월드 (v3): 지역 8개 섬 + 섬 사이 다리 + 지역 문(Gate) + 테마 장식 + 로비 + 바다 + 조명
+-- 귀여운 파스텔 월드 (v4): 가운데 숲 마을 + 둘레 섬 7개 + 숲 마을 가장자리에서 섬으로 가는 짧은 길(Trail) + 길 입구 문(Gate)
+-- + 테마 장식 + 로비 + 바다 + 조명. 모든 자리는 Config.Zones (Center/Size/Trail/Gate/Spawn/Conveyor/Field) 에서 읽어요
 -- 집(플롯)/컨베이어/코인/순위표는 다른 서비스가 만들어요. 여기서는 그 자리를 비워 둬요.
 -- 모든 파트는 workspace.World 아래. 문은 workspace.World.Gates.Gate<k> (서버에서는 CanCollide 끔, 클라이언트가 잠근 사람만 막아요)
 local Lighting = game:GetService("Lighting")
@@ -14,6 +15,7 @@ local HALF_PLOT = Layout.PlotSize / 2
 local LOBBY = Layout.LobbySpawn
 local HALF_TRAIL = Layout.TrailWidth / 2
 local SEA_Y = Layout.SeaY
+local HOME_CENTER = Zones[1].Center
 
 local FENCE_H = 4.6 -- 울타리 기둥 높이 (≥ 4)
 local WALL_H = 60 -- 투명 벽 높이 (뛰어서 못 넘게)
@@ -390,6 +392,82 @@ end
 local function zoneRect(def: any): Rect
 	local c, s = def.Center, def.Size
 	return rect(c.X - s.X / 2, c.X + s.X / 2, c.Z - s.Z / 2, c.Z + s.Z / 2)
+end
+
+-- 축 방향 띠 a → b (폭 반 = halfW) 를 사각형으로
+local function stripRect(a: Vector3, b: Vector3, halfW: number): Rect
+	local d = b - a
+	if math.abs(d.X) >= math.abs(d.Z) then
+		return rect(math.min(a.X, b.X), math.max(a.X, b.X), math.min(a.Z, b.Z) - halfW, math.max(a.Z, b.Z) + halfW)
+	end
+	return rect(math.min(a.X, b.X) - halfW, math.max(a.X, b.X) + halfW, math.min(a.Z, b.Z), math.max(a.Z, b.Z))
+end
+
+-- 지역 2~8 섬 안 좌표 (Config 의 island 와 같아요): u = 섬 입구에서 안쪽(Trail.Dir)으로, v = 길 중심선에서 Trail.Side 쪽으로
+local function localPoint(def: any, u: number, v: number): Vector3
+	local t = def.Trail
+	return t.To + t.Dir * u + t.Side * v
+end
+
+local function localRect(def: any, u0: number, u1: number, v0: number, v1: number): Rect
+	local a, b = localPoint(def, u0, v0), localPoint(def, u1, v1)
+	return rect(math.min(a.X, b.X), math.max(a.X, b.X), math.min(a.Z, b.Z), math.max(a.Z, b.Z))
+end
+
+-- 컨베이어의 v, 시작/끝 u (섬 안 좌표)
+local function beltLocal(def: any): (number, number, number)
+	local t = def.Trail
+	local v = (def.ConveyorStart - t.To):Dot(t.Side)
+	local u0 = (def.ConveyorStart - t.To):Dot(t.Dir)
+	local u1 = (def.ConveyorEnd - t.To):Dot(t.Dir)
+	return v, math.min(u0, u1), math.max(u0, u1)
+end
+
+local function rectPart(parent: Instance, r: Rect, top: number, color: Color3, material: Enum.Material?): Part
+	return flatRect(parent, r.MinX, r.MaxX, r.MinZ, r.MaxZ, top, color, material)
+end
+
+-- 바다 위 배경 장식이 겹치면 안 되는 곳 (숲 마을, 섬, 길). Build 가 맨 처음 채워요
+local seaBlocks: { Rect } = {}
+local seaPlaced: { Spot } = {} -- 이미 놓은 바다 위 장식 (서로 안 겹치게)
+
+local function seaFree(x: number, z: number, r: number): boolean
+	for _, b in seaBlocks do
+		if inRect(b, x, z, r) then
+			return false
+		end
+	end
+	for _, s in seaPlaced do
+		local dx, dz = s.x - x, s.z - z
+		if dx * dx + dz * dz < (s.r + r) ^ 2 then
+			return false
+		end
+	end
+	return true
+end
+
+-- 섬 밖 바다 위 자리: 숲 마을 반대쪽(바깥) 반원에서 섬 가장자리로부터 minDist..maxDist.
+-- 다른 섬·길·숲 마을과 r + 6 이상, 이미 놓은 바다 장식과도 안 겹치게. 못 찾으면 그만큼 적게 돌려줘요
+local function outerSpots(ctx: Ctx, n: number, minDist: number, maxDist: number, r: number): { Vector3 }
+	local c = ctx.Def.Center
+	local base = math.atan2(c.Z - HOME_CENTER.Z, c.X - HOME_CENTER.X)
+	local hx, hz = ctx.Def.Size.X / 2, ctx.Def.Size.Z / 2
+	local list: { Vector3 } = {}
+	for _ = 1, n * 30 do
+		if #list >= n then
+			break
+		end
+		local a = base + rng:NextNumber(-1.45, 1.45)
+		local dx, dz = math.cos(a), math.sin(a)
+		local edge = math.min(hx / math.max(math.abs(dx), 1e-3), hz / math.max(math.abs(dz), 1e-3))
+		local d = edge + rng:NextNumber(minDist, maxDist)
+		local x, z = c.X + dx * d, c.Z + dz * d
+		if seaFree(x, z, r + 6) then
+			table.insert(seaPlaced, { x = x, z = z, r = r })
+			table.insert(list, Vector3.new(x, 0, z))
+		end
+	end
+	return list
 end
 
 -- small = true 면 코인 들판 안에도 놓을 수 있어요 (납작하거나 작은 장식만)
@@ -1078,8 +1156,8 @@ local function fenceLine(parent: Instance, a: Vector3, b: Vector3, postColor: Co
 	wall.CastShadow = false
 end
 
--- 섬 둘레 울타리 (서쪽/동쪽 길 입구 |z| ≤ 길 폭/2 는 비워요)
-local function buildIslandFence(ctx: Ctx, westGap: boolean, eastGap: boolean)
+-- 섬 둘레 울타리. gaps = 길이 닿는 점들 (그 점이 있는 변에서 길 폭만큼 비워요)
+local function buildIslandFence(ctx: Ctx, gaps: { Vector3 })
 	local f = folder("Fence", ctx.Folder)
 	local r = ctx.Rect
 	local pal = ctx.Pal
@@ -1088,16 +1166,38 @@ local function buildIslandFence(ctx: Ctx, westGap: boolean, eastGap: boolean)
 	local function line(x0: number, z0: number, x1: number, z1: number)
 		fenceLine(f, Vector3.new(x0, 0, z0), Vector3.new(x1, 0, z1), pal.Trim, pal.Accent, rail, every)
 	end
-	line(r.MinX, r.MaxZ, r.MaxX, r.MaxZ)
-	line(r.MinX, r.MinZ, r.MaxX, r.MinZ)
-	for _, side in { { X = r.MinX, Gap = westGap }, { X = r.MaxX, Gap = eastGap } } do
-		if side.Gap then
-			line(side.X, r.MinZ, side.X, -HALF_TRAIL)
-			line(side.X, HALF_TRAIL, side.X, r.MaxZ)
-		else
-			line(side.X, r.MinZ, side.X, r.MaxZ)
+	-- 변 하나: 고정 좌표(fixed)와 따라가는 축(along: "X" | "Z"), lo..hi
+	local function side(along: string, fixed: number, lo: number, hi: number)
+		local cuts: { number } = {}
+		for _, g in gaps do
+			local onSide = if along == "X" then math.abs(g.Z - fixed) < 1 else math.abs(g.X - fixed) < 1
+			local t = if along == "X" then g.X else g.Z
+			if onSide and t > lo and t < hi then
+				table.insert(cuts, t)
+			end
 		end
+		table.sort(cuts)
+		local from = lo
+		local function seg(a: number, b: number)
+			if b - a < 1 then
+				return
+			end
+			if along == "X" then
+				line(a, fixed, b, fixed)
+			else
+				line(fixed, a, fixed, b)
+			end
+		end
+		for _, t in cuts do
+			seg(from, t - HALF_TRAIL)
+			from = t + HALF_TRAIL
+		end
+		seg(from, hi)
 	end
+	side("X", r.MaxZ, r.MinX, r.MaxX)
+	side("X", r.MinZ, r.MinX, r.MaxX)
+	side("Z", r.MinX, r.MinZ, r.MaxZ)
+	side("Z", r.MaxX, r.MinZ, r.MaxZ)
 end
 
 -- 섬 땅 + 절벽
@@ -1125,34 +1225,28 @@ local function buildIsland(ctx: Ctx)
 	cliff.Name = "Cliff"
 end
 
--- 다리 (지역 k-1 동쪽 끝 → 지역 k 서쪽 끝)
+-- 다리 (숲 마을 가장자리 Trail.From → 섬 입구 Trail.To)
 local function buildTrail(parent: Instance, k: number)
-	local prev, def = Zones[k - 1], Zones[k]
+	local def = Zones[k]
+	local t = def.Trail
 	local pal = def.Palette
-	local x0 = prev.Center.X + prev.Size.X / 2
-	local x1 = def.Center.X - def.Size.X / 2
+	local from, to, dir, side = t.From, t.To, t.Dir, t.Side
 	local m = model("Trail" .. k, parent)
-	local deck = flatRect(m, x0 - 1, x1 + 1, -HALF_TRAIL, HALF_TRAIL, 0.16, lighten(pal.Trim, 0.25), Enum.Material.WoodPlanks)
+	local deck = rectPart(m, stripRect(from - dir, to + dir, HALF_TRAIL), 0.16, lighten(pal.Trim, 0.25), Enum.Material.WoodPlanks)
 	deck.Name = "Deck"
 	-- 물속 다리 기둥
+	local mid = (from + to) / 2
 	for _, sz in { -1, 1 } do
-		column(m, Vector3.new((x0 + x1) / 2, SEA_Y - 8, sz * (HALF_TRAIL - 2)), 8, 2.4, darken(pal.Trim, 0.15))
+		column(m, mid + side * (sz * (HALF_TRAIL - 2)) + Vector3.new(0, SEA_Y - 8, 0), 8, 2.4, darken(pal.Trim, 0.15))
 	end
-	-- 양옆 난간 (높이 ≥ 4) + 투명 벽
+	-- 양옆 난간 (높이 ≥ 4) + 투명 벽. 숲 마을 울타리와 섬 울타리에 딱 붙어요
 	for _, sz in { -1, 1 } do
-		fenceLine(
-			m,
-			Vector3.new(x0, 0, sz * (HALF_TRAIL + 0.5)),
-			Vector3.new(x1, 0, sz * (HALF_TRAIL + 0.5)),
-			pal.Trim,
-			pal.Accent,
-			COLORS.White,
-			17
-		)
+		local off = side * (sz * (HALF_TRAIL + 0.5))
+		fenceLine(m, from + off, to + off, pal.Trim, pal.Accent, COLORS.White, 15)
 	end
 end
 
--- 지역 문: 아치 + 큰 간판 + 막는 판 (Gates/Gate<k>)
+-- 지역 문 (숲 마을 쪽 길 입구): 아치 + 큰 간판 + 막는 판 (Gates/Gate<k>)
 local function buildGate(arches: Instance, gates: Instance, k: number)
 	local def = Zones[k]
 	local gateDef = def.Gate
@@ -1160,35 +1254,40 @@ local function buildGate(arches: Instance, gates: Instance, k: number)
 		return
 	end
 	local pal = def.Palette
-	local gx = gateDef.CFrame.Position.X
-	local pillarZ = gateDef.Size.Z / 2 + 1.6
+	local t = def.Trail
+	local dir, side = t.Dir, t.Side
+	local base = gateDef.CFrame.Position
+	local g0 = Vector3.new(base.X, 0, base.Z)
+	local pillarOff = gateDef.Size.X / 2 + 1.6
 	local m = model("Arch" .. k, arches)
 	local ringH = 4
 	local rings = math.ceil(ARCH_BEAM_Y / ringH)
 	for _, sz in { -1, 1 } do
+		local p = g0 + side * (sz * pillarOff)
 		-- 물속까지 내려가는 받침 (기둥이 떠 보이지 않게)
-		column(m, Vector3.new(gx, SEA_Y - 2, sz * pillarZ), 2 - SEA_Y, 3.4, darken(pal.Trim, 0.1))
+		column(m, p + Vector3.new(0, SEA_Y - 2, 0), 2 - SEA_Y, 3.4, darken(pal.Trim, 0.1))
 		for i = 0, rings - 1 do
-			local p = column(m, Vector3.new(gx, i * ringH, sz * pillarZ), ringH, 2.6, if i % 2 == 0 then pal.Accent else COLORS.White)
-			p.CanCollide = true
+			local ring = column(m, p + Vector3.new(0, i * ringH, 0), ringH, 2.6, if i % 2 == 0 then pal.Accent else COLORS.White)
+			ring.CanCollide = true
 		end
-		ball(m, Vector3.new(gx, rings * ringH + 2.6 + 3.2, sz * pillarZ), 2.6, pal.Trim)
+		ball(m, p + Vector3.new(0, rings * ringH + 2.6 + 3.2, 0), 2.6, pal.Trim)
 	end
 	local beamY = rings * ringH
-	local beam = newPart(m, Vector3.new(2.6, 2, pillarZ * 2 + 3), CFrame.new(gx, beamY + 1, 0), pal.Trim)
+	local beamPos = g0 + Vector3.new(0, beamY + 1, 0)
+	local beam = newPart(m, Vector3.new(2.6, 2, pillarOff * 2 + 3), CFrame.lookAt(beamPos, beamPos + side), pal.Trim)
 	beam.CanCollide = true
-	-- 큰 간판: 앞면은 서쪽(들어오는 사람), 뒷면은 지역 안쪽
-	local signY = beamY + 2 + 3.6
-	local sign = newPart(m, Vector3.new(26, 7, 0.8), CFrame.lookAt(Vector3.new(gx, signY, 0), Vector3.new(gx - 10, signY, 0)), pal.Accent)
+	-- 큰 간판: 앞면은 숲 마을 쪽(집에서 보여요), 뒷면은 섬 쪽
+	local signPos = g0 + Vector3.new(0, beamY + 2 + 3.6, 0)
+	local sign = newPart(m, Vector3.new(26, 7, 0.8), CFrame.lookAt(signPos, signPos - dir), pal.Accent)
 	sign.Name = "ZoneSign"
 	local stroke = darken(pal.Accent, 0.25)
 	local front = signFrame(sign, Enum.NormalId.Front, 30, COLORS.Cream, stroke)
 	textLabel(front, def.Emoji .. " " .. def.Name, UDim2.fromScale(0.04, 0.06), UDim2.fromScale(0.92, 0.58), stroke)
 	textLabel(front, "🔄 환생 " .. def.MinRebirth .. "회", UDim2.fromScale(0.1, 0.66), UDim2.fromScale(0.8, 0.28), COLORS.Text)
-	local prev = Zones[k - 1]
+	local home = Zones[1]
 	local back = signFrame(sign, Enum.NormalId.Back, 30, COLORS.Cream, stroke)
 	textLabel(back, def.Emoji .. " " .. def.Name, UDim2.fromScale(0.04, 0.06), UDim2.fromScale(0.92, 0.58), stroke)
-	textLabel(back, "← " .. prev.Emoji .. " " .. prev.Name, UDim2.fromScale(0.1, 0.66), UDim2.fromScale(0.8, 0.28), COLORS.Text)
+	textLabel(back, "← " .. home.Emoji .. " " .. home.Name, UDim2.fromScale(0.1, 0.66), UDim2.fromScale(0.8, 0.28), COLORS.Text)
 
 	-- 막는 판: 서버에서는 안 막아요 (환생 모자란 사람만 ZoneClient 가 로컬로 막아요)
 	local gate = Instance.new("Part")
@@ -1209,7 +1308,7 @@ local function buildGate(arches: Instance, gates: Instance, k: number)
 	bb.Name = "LockInfo"
 	bb.Size = UDim2.new(14, 0, 3.2, 0)
 	bb.StudsOffsetWorldSpace = Vector3.new(0, 1, 0)
-	bb.MaxDistance = 140
+	bb.MaxDistance = 450 -- 숲 마을 어디서든 잠긴 문이 보여요
 	bb.LightInfluence = 0
 	bb.Parent = gate
 	local label = Instance.new("TextLabel")
@@ -1218,7 +1317,7 @@ local function buildGate(arches: Instance, gates: Instance, k: number)
 	label.Size = UDim2.fromScale(1, 1)
 	label.Font = FONT
 	label.TextScaled = true
-	label.Text = "🔒 환생 " .. def.MinRebirth .. "회 필요"
+	label.Text = "🔒 환생 " .. def.MinRebirth .. "회"
 	label.TextColor3 = COLORS.White
 	label.TextStrokeColor3 = RGB(200, 60, 140)
 	label.TextStrokeTransparency = 0
@@ -1227,39 +1326,48 @@ local function buildGate(arches: Instance, gates: Instance, k: number)
 	partCount += 1
 end
 
--- 바다 / 구름 바다 / 우주 (CanCollide 끔: 떨어지면 ZoneService 가 스폰으로 돌려보내요)
+-- 바다 (CanCollide 끔: 떨어지면 ZoneService 가 스폰으로 돌려보내요). 숲 마을 + 섬 7개를 모두 덮는 물 한 장,
+-- 구름 왕국 둘레는 구름 바다, 우주 둘레는 별이 반짝이는 우주 (물보다 살짝 위, 높이가 달라서 겹쳐도 안 깜빡여요)
 local function buildSea(world: Instance)
 	local f = folder("Sea", world)
-	local zDepth = 900
-	local function plane(x0: number, x1: number, top: number, color: Color3, transparency: number, material: Enum.Material?)
-		local p = newPart(f, Vector3.new(x1 - x0, 1, zDepth), CFrame.new((x0 + x1) / 2, top - 0.5, 0), color, nil, material)
+	local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
+	for _, def in Zones do
+		local r = zoneRect(def)
+		minX, maxX = math.min(minX, r.MinX), math.max(maxX, r.MaxX)
+		minZ, maxZ = math.min(minZ, r.MinZ), math.max(maxZ, r.MaxZ)
+	end
+	local pad = 170
+	local function plane(r: Rect, top: number, color: Color3, transparency: number, material: Enum.Material?): Part
+		local p = newPart(f, Vector3.new(r.MaxX - r.MinX, 1, r.MaxZ - r.MinZ), CFrame.new((r.MinX + r.MaxX) / 2, top - 0.5, (r.MinZ + r.MaxZ) / 2), color, nil, material)
 		p.Transparency = transparency
 		p.CastShadow = false
 		return p
 	end
-	-- 지역 1~6: 물 (길이 2048 을 넘지 않게 나눠요)
-	local waterEnd = Zones[6].Center.X + 125
-	local water = plane(-460, waterEnd, SEA_Y, Zones[2].Palette.Water or RGB(90, 180, 235), 0.2)
+	local all = rect(minX - pad, maxX + pad, minZ - pad, maxZ + pad)
+	local water = plane(all, SEA_Y, Zones[2].Palette.Water or RGB(90, 180, 235), 0.2)
 	water.Name = "Water"
 	water.Reflectance = 0.12
-	plane(-460, waterEnd, SEA_Y - 9, RGB(45, 120, 185), 0).Name = "SeaBed"
-	-- 지역 7: 구름 바다
-	local cloudEnd = Zones[7].Center.X + 125
-	plane(waterEnd, cloudEnd, SEA_Y - 1, RGB(250, 248, 255), 0.1).Name = "CloudSea"
-	plane(waterEnd, cloudEnd, SEA_Y - 10, RGB(215, 205, 255), 0).Name = "CloudBed"
-	-- 지역 8: 우주
-	local spaceEnd = Zones[8].Center.X + 340
-	local void = plane(cloudEnd, spaceEnd, SEA_Y - 8, RGB(18, 14, 45), 0)
-	void.Name = "SpaceVoid"
-	emitter(void, {
-		Rate = 25,
-		Lifetime = NumberRange.new(2, 4),
-		Speed = NumberRange.new(0, 0),
-		Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 1.2), NumberSequenceKeypoint.new(1, 0) }),
-		Color = ColorSequence.new(RGB(255, 255, 255), RGB(180, 200, 255)),
-		LightEmission = 1,
-		EmissionDirection = Enum.NormalId.Top,
-	})
+	plane(all, SEA_Y - 9, RGB(45, 120, 185), 0).Name = "SeaBed"
+	local margin = 14
+	for _, def in Zones do
+		local r = zoneRect(def)
+		local around = rect(r.MinX - margin, r.MaxX + margin, r.MinZ - margin, r.MaxZ + margin)
+		if def.Id == "Cloud" then
+			plane(around, SEA_Y + 0.3, RGB(250, 248, 255), 0.05).Name = "CloudSea"
+		elseif def.Id == "Space" then
+			local void = plane(around, SEA_Y + 0.6, RGB(18, 14, 45), 0)
+			void.Name = "SpaceVoid"
+			emitter(void, {
+				Rate = 12,
+				Lifetime = NumberRange.new(2, 4),
+				Speed = NumberRange.new(0, 0),
+				Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 1.2), NumberSequenceKeypoint.new(1, 0) }),
+				Color = ColorSequence.new(RGB(255, 255, 255), RGB(180, 200, 255)),
+				LightEmission = 1,
+				EmissionDirection = Enum.NormalId.Top,
+			})
+		end
+	end
 end
 
 ----------------------------------------------------------------------
@@ -1412,10 +1520,11 @@ local function buildHome(ctx: Ctx)
 	local def, pal = ctx.Def, ctx.Pal
 	local paths = folder("Paths", ctx.Folder)
 	local conv0, conv1 = def.ConveyorStart.X, def.ConveyorEnd.X
-	local east = ctx.Rect.MaxX
+	local r = ctx.Rect
+	local east = r.MaxX
 	local pathColor, sideColor = pal.Path, COLORS.PathDark
 
-	-- 로비 → 알 공장 큰길, 컨베이어 양옆 산책로, 알 통을 돌아서 지역 2 다리까지 큰길
+	-- 로비 → 알 공장 큰길, 컨베이어 양옆 산책로, 알 통을 돌아서 바다 길(동쪽)까지 큰길
 	flatRect(paths, LOBBY.X + 10, conv0 - 6, -HALF_TRAIL, HALF_TRAIL, 0.1, pathColor)
 	for _, side in { 1, -1 } do
 		flatRect(paths, conv0 - 8, conv1 + 10, side * WALK_IN, side * WALK_OUT, 0.12, pathColor)
@@ -1433,8 +1542,63 @@ local function buildHome(ctx: Ctx)
 		plotMinX = math.min(plotMinX, cf.Position.X - HALF_PLOT)
 		plotMaxX = math.max(plotMaxX, cf.Position.X + HALF_PLOT)
 	end
+
+	-- 섬 길 입구로 가는 길 (v4): 숲 마을 가장자리 길 입구(Trail.From)마다 숲 마을 안쪽 길과 이어요.
+	--   북/남쪽 입구 → 세로 길 (x = 입구 x), 서쪽 입구 → 가로 길 (z = 입구 z) → 가까운 세로 길
+	--   세로 길은 집 줄 앞길(|z| ≈ 45)을 지나 로비 광장 / 동쪽 큰길까지
+	local LANE = 5 -- 세로 길 폭 반
+	local laneXs: { number } = {}
+	local function addLane(x: number)
+		for _, lx in laneXs do
+			if math.abs(lx - x) < 1 then
+				return
+			end
+		end
+		table.insert(laneXs, x)
+	end
+	for k = 2, #Zones do
+		local t = Zones[k].Trail
+		if t and math.abs(t.Dir.Z) > 0.5 then
+			addLane(t.From.X)
+		end
+	end
+	table.sort(laneXs)
+	local function laneInner(x: number): number
+		-- 세로 길 안쪽 끝 |z|: 로비 광장에 닿으면 광장 가장자리, 아니면 큰길 가장자리
+		if math.abs(x - LOBBY.X) < PLAZA_R then
+			return PLAZA_R - 1
+		end
+		return HALF_TRAIL - 0.5
+	end
+	local laneMin, laneMax = plotMinX, plotMaxX
+	for _, x in laneXs do
+		laneMin, laneMax = math.min(laneMin, x - LANE), math.max(laneMax, x + LANE)
+		for _, side in { 1, -1 } do
+			local z0, z1 = side * laneInner(x), side * (r.MaxZ + 1)
+			flatRect(paths, x - LANE, x + LANE, math.min(z0, z1), math.max(z0, z1), 0.11, pathColor)
+		end
+	end
+	local spurs: { Rect } = {}
+	for k = 2, #Zones do
+		local t = Zones[k].Trail
+		if t and math.abs(t.Dir.X) > 0.5 then
+			-- 동쪽 입구는 큰길이 이미 닿아요 (z = 0)
+			if math.abs(t.From.Z) > HALF_TRAIL then
+				local nearest = laneXs[1] or LOBBY.X
+				for _, x in laneXs do
+					if math.abs(x - t.From.X) < math.abs(nearest - t.From.X) then
+						nearest = x
+					end
+				end
+				local x0, x1 = math.min(t.From.X, nearest), math.max(t.From.X, nearest)
+				local s = rect(x0 - (if t.Dir.X < 0 then 1 else 0), x1 + LANE, t.From.Z - HALF_TRAIL, t.From.Z + HALF_TRAIL)
+				flatRect(paths, s.MinX, s.MaxX, s.MinZ, s.MaxZ, 0.1, pathColor)
+				table.insert(spurs, s)
+			end
+		end
+	end
 	for _, side in { 1, -1 } do
-		flatRect(paths, plotMinX, plotMaxX, side * (rowFront - 5), side * (rowFront - 1), 0.12, pathColor)
+		flatRect(paths, laneMin, laneMax, side * (rowFront - 5), side * (rowFront - 1), 0.12, pathColor)
 	end
 	-- 캔디 가로등
 	for _, x in { -44, -20, 20, 44 } do
@@ -1455,7 +1619,20 @@ local function buildHome(ctx: Ctx)
 		table.insert(blocks, rect(p.X - 7, p.X + 7, math.min(sign * WALK_OUT, p.Z), math.max(sign * WALK_OUT, p.Z)))
 	end
 	for _, side in { 1, -1 } do
-		table.insert(blocks, rect(plotMinX - 2, plotMaxX + 2, math.min(side * (rowFront - 7), side * rowFront), math.max(side * (rowFront - 7), side * rowFront)))
+		table.insert(blocks, rect(laneMin - 2, laneMax + 2, math.min(side * (rowFront - 7), side * rowFront), math.max(side * (rowFront - 7), side * rowFront)))
+	end
+	for _, x in laneXs do
+		table.insert(blocks, rect(x - LANE - 2, x + LANE + 2, r.MinZ, r.MaxZ))
+	end
+	for _, s in spurs do
+		table.insert(blocks, rect(s.MinX, s.MaxX, s.MinZ - 2, s.MaxZ + 2))
+	end
+	-- 길 입구 앞 (문 아치 앞이 막히지 않게)
+	for k = 2, #Zones do
+		local t = Zones[k].Trail
+		if t then
+			table.insert(blocks, stripRect(t.From, t.From - t.Dir * 22, HALF_TRAIL + 6))
+		end
 	end
 	-- 순위표 자리 (±10 + 판 너비)
 	for _, cf in { Layout.Leaderboards.Income, Layout.Leaderboards.Rebirths } do
@@ -1482,50 +1659,56 @@ local function decorateVillage(ctx: Ctx)
 	for _ = 1, 7 do
 		buildCloud(ctx.Deco, Vector3.new(rng:NextNumber(r.MinX, r.MaxX), rng:NextNumber(50, 75), rng:NextNumber(r.MinZ, r.MaxZ)))
 	end
-	-- 울타리 밖 언덕
+	-- 섬 사이 바다 위 작은 언덕 (숲 마을·섬·길과 안 겹치는 빈 바다에만)
 	local hills = folder("Hills", ctx.Folder)
-	local spots = {
-		Vector3.new(-238, 0, -60),
-		Vector3.new(-240, 0, 55),
-		Vector3.new(-150, 0, 165),
-		Vector3.new(-40, 0, 170),
-		Vector3.new(80, 0, 165),
-		Vector3.new(-120, 0, -168),
-		Vector3.new(10, 0, -172),
-		Vector3.new(100, 0, -165),
-	}
-	for _, s in spots do
-		local c = pick(BUSH_COLORS):Lerp(COLORS.Lemon, rng:NextNumber(0, 0.2))
-		buildHill(hills, s, Vector3.new(rng:NextNumber(50, 80), rng:NextNumber(26, 40), rng:NextNumber(45, 70)), c, Enum.Material.Grass)
+	local placed = 0
+	for _ = 1, 400 do
+		if placed >= 6 then
+			break
+		end
+		local x = rng:NextNumber(r.MinX - 120, r.MaxX + 120)
+		local z = rng:NextNumber(r.MinZ - 120, r.MaxZ + 120)
+		local hr = rng:NextNumber(14, 20)
+		if seaFree(x, z, hr + 8) then
+			table.insert(seaPlaced, { x = x, z = z, r = hr })
+			local c = pick(BUSH_COLORS):Lerp(COLORS.Lemon, rng:NextNumber(0, 0.2))
+			buildHill(hills, Vector3.new(x, 0, z), Vector3.new(hr * 2, rng:NextNumber(18, 28), hr * 1.8), c, Enum.Material.Grass)
+			placed += 1
+		end
 	end
 end
 
 ----------------------------------------------------------------------
--- 지역 2~8 공통: 큰길, 컨베이어 앞 산책로, 스폰 자리
+-- 지역 2~8 공통: 큰길, 컨베이어 앞 산책로, 스폰 자리 (섬 안 좌표 u/v 로 그려요, Config 의 island 와 같아요)
 ----------------------------------------------------------------------
 
 local function buildZoneRoads(ctx: Ctx)
 	local def, pal = ctx.Def, ctx.Pal
 	local f = folder("Paths", ctx.Folder)
-	local r = ctx.Rect
-	local cx = def.Center.X
+	local t = def.Trail
+	local bs = t.BeltSide
 	local last = ctx.Index >= Config.MaxZone
-	local roadEnd = if last then cx + 66 else r.MaxX + 1
-	flatRect(f, r.MinX - 1, roadEnd, -HALF_TRAIL, HALF_TRAIL, 0.1, pal.Path)
+	local vb, u0, u1 = beltLocal(def)
+	local roadEnd = 92 -- 큰길 끝 (동그란 광장)
+	local plazaU = roadEnd + 10
+	-- 큰길: 섬 입구 → 섬 안쪽 광장
+	rectPart(f, localRect(def, -1, roadEnd, -HALF_TRAIL, HALF_TRAIL), 0.1, pal.Path)
+	disc(f, localPoint(def, plazaU, 0) + Vector3.new(0, 0.06, 0), 26, 0.3, pal.Path, Enum.Material.Sand).CanCollide = true
 	if last then
-		-- 마지막 지역: 길 끝 동그란 광장
-		disc(f, Vector3.new(roadEnd, 0.06, 0), 26, 0.3, pal.Path, Enum.Material.Sand).CanCollide = true
-		-- 네온 길 테두리
+		-- 마지막 지역: 네온 길 테두리
 		for _, sz in { -1, 1 } do
-			local strip = newPart(f, Vector3.new(roadEnd - r.MinX, 0.1, 0.5), CFrame.new((r.MinX + roadEnd) / 2, 0.15, sz * (HALF_TRAIL - 0.3)), pal.Accent, nil, Enum.Material.Neon)
+			local a = localPoint(def, 0, sz * (HALF_TRAIL - 0.3))
+			local b = localPoint(def, roadEnd, sz * (HALF_TRAIL - 0.3))
+			local mid = (a + b) / 2 + Vector3.new(0, 0.15, 0)
+			local strip = newPart(f, Vector3.new(0.5, 0.1, (b - a).Magnitude), CFrame.lookAt(mid, mid + t.Dir), pal.Accent, nil, Enum.Material.Neon)
 			strip.CastShadow = false
 		end
 	end
 	-- 컨베이어 앞 산책로 + 큰길에서 내려가는 길
-	local cs, ce = def.ConveyorStart, def.ConveyorEnd
-	local wz = cs.Z + 8
-	flatRect(f, cs.X - 10, ce.X + 10, wz - 3, wz + 3, 0.12, pal.Path)
-	flatRect(f, cs.X - 15, cs.X - 7, wz, -HALF_TRAIL + 0.5, 0.14, darken(pal.Path, 0.05))
+	local wv = vb - bs * 8
+	rectPart(f, localRect(def, u0 - 10, u1 + 10, wv - 3, wv + 3), 0.12, pal.Path)
+	local roadEdge = bs * (HALF_TRAIL - 0.5)
+	rectPart(f, localRect(def, u0 - 8, u0, roadEdge, wv), 0.14, darken(pal.Path, 0.05))
 	-- 스폰 자리 (납작한 원판 2장)
 	local sp = def.Spawn
 	disc(f, Vector3.new(sp.X, 0.08, sp.Z), 12, 0.3, pal.Accent).CanCollide = true
@@ -1533,10 +1716,11 @@ local function buildZoneRoads(ctx: Ctx)
 
 	-- 장식 금지 구역
 	local blocks = ctx.Blocks
-	table.insert(blocks, rect(r.MinX, roadEnd + 13, -HALF_TRAIL - 2, HALF_TRAIL + 2))
-	table.insert(blocks, rect(cs.X - 12, ce.X + 14, cs.Z - 10, wz + 4))
-	table.insert(blocks, rect(cs.X - 17, cs.X - 5, wz, -HALF_TRAIL))
-	table.insert(blocks, rect(r.MinX, r.MinX + 14, -18, 18)) -- 문 아치 앞
+	table.insert(blocks, localRect(def, 0, roadEnd, -HALF_TRAIL - 2, HALF_TRAIL + 2))
+	table.insert(ctx.Circles, { X = localPoint(def, plazaU, 0).X, Z = localPoint(def, plazaU, 0).Z, R = 16 })
+	table.insert(blocks, localRect(def, u0 - 12, u1 + 14, vb + bs * 10, wv - bs * 4))
+	table.insert(blocks, localRect(def, u0 - 10, u0 + 2, roadEdge, wv))
+	table.insert(blocks, localRect(def, 0, 14, -18, 18)) -- 섬 입구 앞
 	table.insert(ctx.Circles, { X = sp.X, Z = sp.Z, R = 10 })
 end
 
@@ -1551,17 +1735,11 @@ local function skyClouds(ctx: Ctx, n: number, color: Color3?)
 	end
 end
 
--- 섬 밖 배경 자리 (북쪽/남쪽 바다 위)
-local function backdropSpots(ctx: Ctx, n: number, minDist: number, maxDist: number): { Vector3 }
-	local cx = ctx.Def.Center.X
-	local list = {}
-	for i = 1, n do
-		local north = i % 2 == 0
-		local x = cx + (i / (n + 1) - 0.5) * 220 + rng:NextNumber(-15, 15)
-		local z = (if north then 1 else -1) * (ctx.Rect.MaxZ + rng:NextNumber(minDist, maxDist))
-		table.insert(list, Vector3.new(x, 0, z))
-	end
-	return list
+-- 섬 가운데에서 숲 마을 반대쪽(바깥) 방향
+local function outward(ctx: Ctx): Vector3
+	local d = ctx.Def.Center - HOME_CENTER
+	d = Vector3.new(d.X, 0, d.Z)
+	return if d.Magnitude > 1e-3 then d.Unit else Vector3.xAxis
 end
 
 local THEMES: { [string]: (Ctx) -> () } = {}
@@ -1581,15 +1759,12 @@ THEMES.Lake = function(ctx)
 		buildRock(p, pos, COLORS.Rock, nil)
 	end)
 	scatter(ctx, 8, 1.6, true, ctx.Field, buildFlowers)
-	-- 바다 위 연잎
-	for i = 1, 14 do
-		local north = i % 2 == 0
-		local x = ctx.Def.Center.X + rng:NextNumber(-115, 115)
-		local z = (if north then 1 else -1) * (ctx.Rect.MaxZ + rng:NextNumber(5, 40))
-		buildLilyPad(ctx.Deco, Vector3.new(x, SEA_Y, z))
+	-- 섬 밖 언덕 + 바다 위 연잎
+	for _, s in outerSpots(ctx, 5, 30, 60, 30) do
+		buildHill(ctx.Deco, s, Vector3.new(rng:NextNumber(50, 64), rng:NextNumber(24, 36), rng:NextNumber(40, 56)), pick(GREEN_CROWNS), Enum.Material.Grass)
 	end
-	for _, s in backdropSpots(ctx, 5, 30, 60) do
-		buildHill(ctx.Deco, s, Vector3.new(rng:NextNumber(50, 75), rng:NextNumber(24, 36), rng:NextNumber(40, 60)), pick(GREEN_CROWNS), Enum.Material.Grass)
+	for _, s in outerSpots(ctx, 14, 3, 40, 2.5) do
+		buildLilyPad(ctx.Deco, Vector3.new(s.X, SEA_Y, s.Z))
 	end
 	skyClouds(ctx, 3)
 end
@@ -1604,17 +1779,19 @@ THEMES.Jungle = function(ctx)
 		buildRock(p, pos, RGB(140, 145, 150), RGB(110, 185, 95))
 	end)
 	scatter(ctx, 8, 1.4, true, ctx.Field, buildTropicalFlower)
-	local hills = backdropSpots(ctx, 5, 30, 55)
+	local hills = outerSpots(ctx, 5, 30, 55, 32)
 	for _, s in hills do
-		buildHill(ctx.Deco, s, Vector3.new(rng:NextNumber(55, 80), rng:NextNumber(40, 60), rng:NextNumber(45, 60)), pick({ RGB(70, 160, 80), RGB(90, 175, 85) }), Enum.Material.LeafyGrass)
+		buildHill(ctx.Deco, s, Vector3.new(rng:NextNumber(55, 66), rng:NextNumber(40, 60), rng:NextNumber(45, 60)), pick({ RGB(70, 160, 80), RGB(90, 175, 85) }), Enum.Material.LeafyGrass)
 	end
-	-- 폭포 (북쪽 언덕 하나)
-	local h = hills[2]
+	-- 폭포 (섬을 바라보는 언덕 하나)
+	local h = hills[2] or hills[1]
 	if h then
-		local fall = newPart(ctx.Deco, Vector3.new(6, 24, 1), CFrame.new(h.X, SEA_Y + 11, h.Z - 20), RGB(170, 225, 255), nil, Enum.Material.Glass)
+		local toward = Vector3.new(ctx.Def.Center.X - h.X, 0, ctx.Def.Center.Z - h.Z).Unit
+		local at = h + toward * 20 + Vector3.new(0, SEA_Y + 11, 0)
+		local fall = newPart(ctx.Deco, Vector3.new(6, 24, 1), CFrame.lookAt(at, at + toward), RGB(170, 225, 255), nil, Enum.Material.Glass)
 		fall.Transparency = 0.3
 		fall.Name = "Waterfall"
-		blob(ctx.Deco, Vector3.new(h.X, SEA_Y + 0.5, h.Z - 22), Vector3.new(10, 3, 6), COLORS.White).Name = "Foam"
+		blob(ctx.Deco, h + toward * 22 + Vector3.new(0, SEA_Y + 0.5, 0), Vector3.new(10, 3, 10), COLORS.White).Name = "Foam"
 	end
 	skyClouds(ctx, 2)
 end
@@ -1633,16 +1810,15 @@ THEMES.Snow = function(ctx)
 	end)
 	scatter(ctx, 8, 1.6, true, ctx.Field, buildSnowPile)
 	-- 큰 눈 덮인 산 (겨울 산!)
-	for _, s in backdropSpots(ctx, 6, 40, 70) do
-		buildMountain(ctx.Deco, s, rng:NextNumber(60, 85), rng:NextNumber(40, 62))
+	for _, s in outerSpots(ctx, 6, 40, 70, 40) do
+		buildMountain(ctx.Deco, s, rng:NextNumber(60, 80), rng:NextNumber(40, 62))
 	end
 	-- 바다 위 빙산
-	for i = 1, 4 do
-		local z = (if i % 2 == 0 then 1 else -1) * (ctx.Rect.MaxZ + rng:NextNumber(10, 25))
-		blob(ctx.Deco, Vector3.new(ctx.Def.Center.X + rng:NextNumber(-90, 90), SEA_Y, z), Vector3.new(rng:NextNumber(8, 14), rng:NextNumber(5, 9), rng:NextNumber(8, 12)), RGB(225, 240, 255), Enum.Material.Ice).Name = "Iceberg"
+	for _, s in outerSpots(ctx, 4, 10, 25, 7) do
+		blob(ctx.Deco, Vector3.new(s.X, SEA_Y, s.Z), Vector3.new(rng:NextNumber(8, 14), rng:NextNumber(5, 9), rng:NextNumber(8, 12)), RGB(225, 240, 255), Enum.Material.Ice).Name = "Iceberg"
 	end
 	-- 눈 내리기
-	local snow = newPart(ctx.Deco, Vector3.new(ctx.Def.Size.X, 1, ctx.Def.Size.Z), CFrame.new(ctx.Def.Center.X, 70, 0), COLORS.White)
+	local snow = newPart(ctx.Deco, Vector3.new(ctx.Def.Size.X, 1, ctx.Def.Size.Z), CFrame.new(ctx.Def.Center.X, 70, ctx.Def.Center.Z), COLORS.White)
 	snow.Name = "Snowfall"
 	snow.Transparency = 1
 	snow.CastShadow = false
@@ -1674,16 +1850,20 @@ THEMES.Ocean = function(ctx)
 	end)
 	scatter(ctx, 6, 1.4, true, ctx.Field, buildStarfish)
 	scatter(ctx, 6, 1.1, true, ctx.Field, buildShell)
-	-- 바다 속 산호 (물 위로 살짝)
-	for i = 1, 4 do
-		local z = (if i % 2 == 0 then 1 else -1) * (ctx.Rect.MaxZ + rng:NextNumber(8, 30))
-		buildCoral(ctx.Deco, Vector3.new(ctx.Def.Center.X + rng:NextNumber(-90, 90), SEA_Y - 2.5, z))
+	-- 등대 + 야자수 작은 섬 (섬 바깥 바다)
+	local light = outerSpots(ctx, 1, 30, 45, 6)[1]
+	if light then
+		buildLighthouse(ctx.Deco, light)
 	end
-	buildLighthouse(ctx.Deco, Vector3.new(ctx.Def.Center.X + 60, 0, ctx.Rect.MaxZ + 45))
-	-- 야자수 작은 섬
-	local islet = Vector3.new(ctx.Def.Center.X - 50, 0, ctx.Rect.MinZ - 40)
-	blob(ctx.Deco, Vector3.new(islet.X, SEA_Y, islet.Z), Vector3.new(22, 5, 18), pal.Ground, Enum.Material.Sand).Name = "Islet"
-	buildPalm(ctx.Deco, islet + Vector3.new(0, SEA_Y + 2, 0), 1.3)
+	local islet = outerSpots(ctx, 1, 30, 50, 12)[1]
+	if islet then
+		blob(ctx.Deco, Vector3.new(islet.X, SEA_Y, islet.Z), Vector3.new(22, 5, 18), pal.Ground, Enum.Material.Sand).Name = "Islet"
+		buildPalm(ctx.Deco, islet + Vector3.new(0, SEA_Y + 2, 0), 1.3)
+	end
+	-- 바다 속 산호 (물 위로 살짝)
+	for _, s in outerSpots(ctx, 4, 8, 30, 3) do
+		buildCoral(ctx.Deco, Vector3.new(s.X, SEA_Y - 2.5, s.Z))
+	end
 	skyClouds(ctx, 2)
 end
 
@@ -1703,11 +1883,11 @@ THEMES.Candy = function(ctx)
 		buildDonut(p, pos, pal)
 	end)
 	scatter(ctx, 10, 1.2, true, ctx.Field, buildGumDrop)
-	for _, s in backdropSpots(ctx, 4, 30, 55) do
-		buildHill(ctx.Deco, s, Vector3.new(rng:NextNumber(45, 70), rng:NextNumber(26, 40), rng:NextNumber(40, 60)), pick({ RGB(255, 190, 220), RGB(190, 240, 215), RGB(255, 245, 250) }))
+	for _, s in outerSpots(ctx, 4, 30, 55, 30) do
+		buildHill(ctx.Deco, s, Vector3.new(rng:NextNumber(45, 60), rng:NextNumber(26, 40), rng:NextNumber(40, 56)), pick({ RGB(255, 190, 220), RGB(190, 240, 215), RGB(255, 245, 250) }))
 	end
 	-- 바다에 꽂힌 큰 막대사탕
-	for _, s in backdropSpots(ctx, 4, 12, 22) do
+	for _, s in outerSpots(ctx, 4, 12, 22, 4) do
 		buildLollipop(ctx.Deco, Vector3.new(s.X, SEA_Y, s.Z), rng:NextNumber(2.4, 3.2))
 	end
 	-- 솜사탕 구름
@@ -1719,35 +1899,56 @@ end
 
 THEMES.Cloud = function(ctx)
 	local def = ctx.Def
-	-- 섬 둘레 몽글몽글 구름
+	local t = def.Trail
+	-- 섬 둘레 몽글몽글 구름 (숲 마을 쪽 입구 변은 비워요)
 	local r = ctx.Rect
-	for i = 0, 9 do
-		local t = i / 10
-		local x = r.MinX + (r.MaxX - r.MinX) * ((t * 2) % 1)
-		local z = if t < 0.5 then r.MaxZ + 3 else r.MinZ - 3
-		blob(ctx.Folder, Vector3.new(x + 10, -1.5, z), Vector3.new(34, 9, 16), RGB(250, 248, 255)).Name = "EdgeCloud"
+	local edges = {
+		{ A = Vector3.new(r.MinX, 0, r.MaxZ), B = Vector3.new(r.MaxX, 0, r.MaxZ), N = Vector3.zAxis },
+		{ A = Vector3.new(r.MinX, 0, r.MinZ), B = Vector3.new(r.MaxX, 0, r.MinZ), N = -Vector3.zAxis },
+		{ A = Vector3.new(r.MinX, 0, r.MinZ), B = Vector3.new(r.MinX, 0, r.MaxZ), N = -Vector3.xAxis },
+		{ A = Vector3.new(r.MaxX, 0, r.MinZ), B = Vector3.new(r.MaxX, 0, r.MaxZ), N = Vector3.xAxis },
+	}
+	for _, e in edges do
+		if e.N:Dot(t.Dir) > -0.5 then
+			local along = (e.B - e.A).Unit
+			for i = 0, 3 do
+				local p = e.A + (e.B - e.A) * ((i + 0.5) / 4) + e.N * 3 + Vector3.new(0, -1.5, 0)
+				blobCF(ctx.Folder, CFrame.lookAt(p, p + along), Vector3.new(16, 9, 34), RGB(250, 248, 255)).Name = "EdgeCloud"
+			end
+		end
 	end
 	scatter(ctx, 6, 4, false, ctx.South, function(p, pos)
 		buildCloudPuff(p, pos)
 	end)
 	-- 큰길 위 무지개 다리 (파트는 안 막아요)
-	buildRainbowArc(ctx.Deco, Vector3.new(def.Center.X - 30, 0, 0), 16, Vector3.zAxis, 5, 7)
+	local across = Vector3.new(math.abs(t.Side.X), 0, math.abs(t.Side.Z))
+	buildRainbowArc(ctx.Deco, localPoint(def, 50, 0), 16, across, 5, 7)
 	scatter(ctx, 5, 2, false, ctx.South, buildPillar)
 	local castle = findSpot(ctx, 9, false, ctx.South)
 	if castle then
 		buildCastle(ctx.Deco, castle)
 	end
-	-- 들판 위에 떠 있는 별 (높이 떠 있어서 코인 자리를 막지 않아요)
-	for _ = 1, 9 do
+	-- 들판 위에 떠 있는 별 (높이 떠 있고 큰길 위는 비워요)
+	local placed = 0
+	for _ = 1, 60 do
+		if placed >= 9 then
+			break
+		end
 		local x = rng:NextNumber(ctx.Field.MinX + 6, ctx.Field.MaxX - 6)
-		local z = rng:NextNumber(HALF_TRAIL + 6, ctx.Field.MaxZ - 6)
-		buildStar(ctx.Deco, Vector3.new(x, rng:NextNumber(9, 16), z), rng:NextNumber(1.6, 2.4))
+		local z = rng:NextNumber(ctx.Field.MinZ + 6, ctx.Field.MaxZ - 6)
+		local v = (Vector3.new(x, 0, z) - t.To):Dot(t.Side)
+		if math.abs(v) > HALF_TRAIL + 6 then
+			buildStar(ctx.Deco, Vector3.new(x, rng:NextNumber(9, 16), z), rng:NextNumber(1.6, 2.4))
+			placed += 1
+		end
 	end
-	-- 큰 구름 위 성 (북쪽 배경)
-	local bigCloud = Vector3.new(def.Center.X + 30, 0, r.MaxZ + 55)
-	blob(ctx.Deco, bigCloud + Vector3.new(0, 2, 0), Vector3.new(60, 12, 40), COLORS.White).Name = "BigCloud"
-	buildCastle(ctx.Deco, bigCloud + Vector3.new(0, 6, 0), 2)
-	for _, s in backdropSpots(ctx, 5, 25, 60) do
+	-- 큰 구름 위 성 (바깥 배경)
+	local bigCloud = outerSpots(ctx, 1, 40, 60, 32)[1]
+	if bigCloud then
+		blob(ctx.Deco, bigCloud + Vector3.new(0, 2, 0), Vector3.new(60, 12, 40), COLORS.White).Name = "BigCloud"
+		buildCastle(ctx.Deco, bigCloud + Vector3.new(0, 6, 0), 2)
+	end
+	for _, s in outerSpots(ctx, 5, 25, 60, 10) do
 		buildCloud(ctx.Deco, Vector3.new(s.X, rng:NextNumber(0, 8), s.Z))
 	end
 	skyClouds(ctx, 3, RGB(245, 240, 255))
@@ -1756,6 +1957,7 @@ end
 THEMES.Space = function(ctx)
 	local pal = ctx.Pal
 	local def = ctx.Def
+	local t = def.Trail
 	scatter(ctx, 6, 4.5, false, ctx.South, function(p, pos)
 		buildCrater(p, pos, pal)
 	end)
@@ -1768,29 +1970,35 @@ THEMES.Space = function(ctx)
 	scatter(ctx, 8, 3, true, ctx.Field, function(p, pos)
 		buildCrater(p, pos, pal)
 	end)
-	-- 떠 있는 작은 행성
+	-- 떠 있는 작은 행성 (컨베이어 뒤 하늘)
+	local vb = beltLocal(def)
+	local behind = localRect(def, 10, 150, vb + t.BeltSide * 12, vb + t.BeltSide * 32)
 	for _ = 1, 4 do
-		local x = def.Center.X + rng:NextNumber(-90, 90)
-		local z = rng:NextNumber(-95, -70)
+		local x = rng:NextNumber(behind.MinX, behind.MaxX)
+		local z = rng:NextNumber(behind.MinZ, behind.MaxZ)
 		buildPlanet(ctx.Deco, Vector3.new(x, rng:NextNumber(14, 24), z), rng:NextNumber(3, 6), rng:NextNumber() < 0.5)
 	end
 	-- 큰 행성 / 달 (배경)
-	for i, s in backdropSpots(ctx, 6, 40, 90) do
+	for i, s in outerSpots(ctx, 6, 40, 90, 20) do
 		buildPlanet(ctx.Deco, Vector3.new(s.X, rng:NextNumber(20, 60), s.Z), rng:NextNumber(16, 34), i % 2 == 0)
 	end
-	local moon = ball(ctx.Deco, Vector3.new(def.Center.X - 40, 95, -def.Size.Z), 30, RGB(255, 245, 200), Enum.Material.Neon)
+	local out = outward(ctx)
+	local moonAt = def.Center + out * def.Size.X + Vector3.new(0, 95, 0)
+	local moon = ball(ctx.Deco, moonAt, 30, RGB(255, 245, 200), Enum.Material.Neon)
 	moon.Name = "Moon"
 	moon.CastShadow = false
 	-- 하늘 별
 	for _ = 1, 10 do
-		local s = ball(ctx.Deco, Vector3.new(def.Center.X + rng:NextNumber(-140, 140), rng:NextNumber(45, 90), rng:NextNumber(-140, 140)), rng:NextNumber(0.6, 1.4), pick({ COLORS.White, RGB(255, 240, 160), RGB(170, 220, 255) }), Enum.Material.Neon)
+		local s = ball(ctx.Deco, Vector3.new(def.Center.X + rng:NextNumber(-140, 140), rng:NextNumber(45, 90), def.Center.Z + rng:NextNumber(-140, 140)), rng:NextNumber(0.6, 1.4), pick({ COLORS.White, RGB(255, 240, 160), RGB(170, 220, 255) }), Enum.Material.Neon)
 		s.CastShadow = false
 	end
-	-- 동쪽 끝 너머: 발사대 위 큰 로켓
-	local padPos = Vector3.new(def.Center.X + def.Size.X / 2 + 34, 0, 0)
+	-- 섬 맨 끝 너머 바다: 발사대 위 큰 로켓
+	local vc = (def.Center - t.To):Dot(t.Side)
+	local padPos = localPoint(def, def.Size.X + 34, vc)
 	disc(ctx.Deco, padPos + Vector3.new(0, -1.5, 0), 30, 3, RGB(120, 115, 150), Enum.Material.Metal).Name = "LaunchPad"
 	disc(ctx.Deco, padPos + Vector3.new(0, 0.05, 0), 18, 0.2, pal.Accent, Enum.Material.Neon).CastShadow = false
 	buildRocket(ctx.Deco, padPos, 3)
+	table.insert(seaPlaced, { x = padPos.X, z = padPos.Z, r = 16 })
 end
 
 ----------------------------------------------------------------------
@@ -1844,6 +2052,22 @@ end
 
 ----------------------------------------------------------------------
 
+-- 지역 k 울타리에서 비울 곳: 숲 마을은 모든 길의 시작점, 섬은 자기 길 끝
+local function fenceGaps(k: number): { Vector3 }
+	local gaps: { Vector3 } = {}
+	if k == 1 then
+		for j = 2, Config.MaxZone do
+			local t = Zones[j].Trail
+			if t then
+				table.insert(gaps, t.From)
+			end
+		end
+	elseif Zones[k].Trail then
+		table.insert(gaps, Zones[k].Trail.To)
+	end
+	return gaps
+end
+
 local function newCtx(k: number, world: Instance): Ctx
 	local def = Zones[k]
 	local m = model("Zone" .. k, world)
@@ -1858,7 +2082,7 @@ local function newCtx(k: number, world: Instance): Ctx
 		Deco = folder("Decorations", m),
 		Rect = r,
 		Field = rect(fieldMin.X, fieldMax.X, fieldMin.Z, fieldMax.Z),
-		South = rect(r.MinX, r.MaxX, r.MinZ, math.min(fieldMin.Z, def.ConveyorStart.Z + 12)),
+		South = r, -- 큰 장식 자리: 섬 전체에서 코인 들판·길·컨베이어(Blocks)를 뺀 곳 (컨베이어 뒤 띠, 섬 맨 끝 띠)
 		Blocks = {},
 		Circles = {},
 		Placed = {},
@@ -1878,12 +2102,23 @@ function WorldBuilder.Build()
 	local world = Instance.new("Folder")
 	world.Name = "World"
 
+	-- 바다 장식이 피해야 하는 곳: 땅 + 길 (+ 문 아치)
+	table.clear(seaBlocks)
+	table.clear(seaPlaced)
+	for k = 1, Config.MaxZone do
+		table.insert(seaBlocks, zoneRect(Zones[k]))
+		local t = Zones[k].Trail
+		if t then
+			table.insert(seaBlocks, stripRect(t.From, t.To, HALF_TRAIL + 6))
+		end
+	end
+
 	local counts: { string } = {}
 	for k = 1, Config.MaxZone do
 		local before = partCount
 		local ctx = newCtx(k, world)
 		buildIsland(ctx)
-		buildIslandFence(ctx, k > 1, k < Config.MaxZone)
+		buildIslandFence(ctx, fenceGaps(k))
 		if k == 1 then
 			buildHome(ctx)
 		else
