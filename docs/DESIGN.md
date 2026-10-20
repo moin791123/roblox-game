@@ -1,203 +1,592 @@
-# 펫 월드 (v2): design contract
+# 펫 월드 (v3): design contract
 
-Kid-friendly **Pet Simulator** game. Rojo project. Luau. All player-facing text is **Korean**, cute and short.
-Code comments: short Korean comments (match existing files). Use `--!strict` only if your code type-checks cleanly; otherwise omit it.
-Every module must pass `luau-lsp analyze` with 0 errors (the integrator runs it).
+Kid-friendly **pet-collecting simulator**. Rojo project, Luau. All player-facing text is **Korean**, cute and short.
+Code comments: short Korean comments (match existing files). Tabs, `task.*` (never `wait`/`spawn`/`delay`).
+Use `--!strict` only if your file type-checks cleanly; otherwise omit it. Every module must pass `luau-lsp analyze`
+with 0 errors (the integrator runs `check.sh`).
 
-> **v2 changes (what this round does)**
-> 1. **Stealing is gone.** No CarryService, no lock button, no laser door, no `Steal`/`Reclaim` prompts, no `LockBase` remote, no `Carrying*` attributes, no `Config.Steal`. Plots are now cute **houses**.
-> 2. **Field coins are per player** and their value **scales with the player's house income/sec**. Each player sees and collects only their own coins (client-rendered, server-validated).
-> 3. **Many more pets and eggs**: 47 pets, 10 eggs (see `Config.Pets`, `Config.Eggs`). New pet models register through `src/shared/PetModels/<File>.luau`.
-> 4. **House decorating + 2nd floor**: themes (`Config.House.Themes`) and `BuyFloor` (slots 13–24 live upstairs).
-> 5. **Riding a pet**: `Loc = "Ride"` (one pet). The player stands on a bigger copy of the pet and moves faster (`Config.RideSpeedMultiplier`).
-> 6. **Fusion**: `Config.FuseCount` (3) identical pets of the same tier → one pet of the next **tier**. Tier 1 normal, 2 황금 (gold), 3 무지개 (rainbow); `PetModels.BuildPet(id, tier)` recolours the model and adds sparkles. Tiers multiply income/boost (`Config.Tiers`).
+This file is the **contract** between the phase-2 builder agents. Use the exact names below. When something you
+need is missing here, do the simplest thing that fits the contract and write it in your report — never edit a
+file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/shared/Remotes.luau` and
+`src/server/DataService.luau` are **done** (read them; they are the source of truth for numbers and helpers).
 
-## Core loop
-1. Each player (max 6) gets a **house** (plot) with pedestals ("slots"). 6 slots open at the start; slots 7–12 can be bought (`Config.Plot.SlotPrices`). After all 12 are open, **2층 올리기** (`BuyFloor`, `Config.House.FloorPrice`) adds the second floor and opens slots 13–18 at once; 19–24 are bought one by one.
-2. Eggs of random rarity ride a **conveyor** through the middle of the map. A player buys one (ProximityPrompt `PromptKind = "Buy"`), and it flies into a free slot in their house.
-3. An egg on a slot **hatches** after `HatchTime` into a random cute **pet** (added to the Index, the collection book, which records the highest tier seen per pet).
-4. A pet on a slot generates `Config.ItemIncome(item)` coins/sec into the house **collector**. The owner steps on the collector pad to claim the coins.
-5. **Pet-sim part**: coins (bronze, silver, gold) lie in the field around the conveyor, **per player**. Up to `MaxFollow` pets follow the player. Followers (and the ridden pet) add a coin `Boost` and magnet radius, plus a little walk speed.
-6. **Ride**: pick a pet in the bag → "타기". It becomes `Loc = "Ride"`: the player stands on it and walks `Config.RideSpeedMultiplier(petId, tier)` × faster. "내리기" puts it back in the bag.
-7. **Fusion**: in the bag, a pet whose (Id, Tier) the player owns at least `FuseCount` times shows "합성". `PetAction(uid, "Fuse")` consumes 3 and creates one of Tier+1 (max `Config.MaxTier`). Fusion result keeps the clicked item's location (same slot / Follow / Ride / Bag).
-8. **House**: HUD button 🏠 → House window: choose/buy a theme (`SetTheme`), 2층 올리기 (`BuyFloor`), ➕ 받침대 (`BuySlot`). Themes change floor/wall/roof/accent colours and the decoration set (flowers, candy, mushrooms, shells, stars, rainbow).
-
-## Coordinates (see `Config.Layout`)
-- Ground top surface is **y = 0**. Conveyor runs along X at z = 0 from x = -72 to 72.
-- Plots: `Config.Layout.Plots[i]` is a CFrame at the plot floor centre (y = 0). Its **LookVector points toward the entrance** (the conveyor). The plot is a `PlotSize` × `PlotSize` square. In plot-local space the entrance is at local z = -PlotSize/2.
-- Slots 1–12 are on floor 1 (pedestal top ≈ y 1.4 above the floor); slots 13–24 are on floor 2 (floor-2 slab top at local y = `HouseBuilder.FLOOR_HEIGHT` ≈ 11; same 4×3 grid). `Config.SlotFloor(slot)` tells the floor.
-- Field coins spawn in `FieldMin..FieldMax`, but not where |z| < `FieldConveyorClearance`, not inside plots, and not inside decorations.
-
-## Player data (server, DataService)
-```lua
-data = {
-  Coins = number,
-  Pending = number,          -- coins waiting in the collector
-  SlotsUnlocked = number,    -- starts Config.Plot.StartSlots; max Config.Plot.TotalSlots (24)
-  Floors = number,           -- 1 or 2
-  Theme = string,            -- current theme id ("Basic" default)
-  Themes = { [themeId] = true },   -- owned themes; Basic always owned
-  Items = { [uid: string] = Item },
-  Index = { [petId: string] = number },  -- highest tier discovered (legacy `true` sanitizes to 1)
-  NextUid = number,
-  LastOnline = number,       -- os.time() at last save (offline earnings)
-  Stats = { Hatched = number, Fused = number },
-}
-Item = {
-  Kind = "Egg" | "Pet",
-  Id = string,               -- eggId or petId
-  Tier = number?,            -- pets only: 1..Config.MaxTier (nil/absent means 1 — always sanitize to a number for pets)
-  Loc = "Slot" | "Follow" | "Ride" | "Bag",   -- eggs are only "Slot" | "Bag"; at most ONE item has Loc "Ride"
-  Slot = number?,            -- when Loc == "Slot" (1..SlotsUnlocked)
-  HatchAt = number?,         -- eggs on a slot: os.time() when it hatches
-  HatchLeft = number?,       -- eggs in the bag: seconds remaining (timer paused)
-}
-```
-Uids are strings like `"i17"`, so they work as DataStore dictionary keys. Sanitize must: clamp Tier to 1..MaxTier, drop unknown ids, keep only one "Ride" item (extra → "Bag"), slots > SlotsUnlocked → "Bag", Floors ∈ {1,2}, unknown Theme → "Basic", and SlotsUnlocked ≤ 12 when Floors == 1.
-
-## Client snapshot (`Remotes.DataSync`)
-```lua
-{ Coins, Pending, SlotsUnlocked, Floors, Theme, Themes, Items = data.Items, Index = data.Index, PlotIndex = number?,
-  Income = number }   -- Income = Σ Config.ItemIncome(item) for items with Loc == "Slot" (coins/sec)
-```
-The client never mutates it. It re-renders on every sync.
-
-## Remotes (`ReplicatedStorage.Shared.Remotes`, all RemoteEvents)
-| name | dir | args |
-|---|---|---|
-| DataSync | S→C | snapshot |
-| Notify | S→C | text, kind ("info", "good", "warn", "alert") |
-| HatchFx | S→C | petId, position (Vector3), isNew (bool), tier (number), mode ("Hatch" \| "Fuse") |
-| CoinFx | S→C | amount, position |
-| CoinField | S→C | op, payload — `"Reset", { {Id, Kind, Position}, ... }` (full list of my coins), `"Add", {Id, Kind, Position}`, `"Remove", Id` |
-| RequestSync | C→S | (none) |
-| PetAction | C→S | uid, action ("Follow", "Unfollow", "ToBase", "ToBag", "Sell", "Ride", "Unride", "Fuse") |
-| BuySlot | C→S | (none) |
-| BuyFloor | C→S | (none) |
-| SetTheme | C→S | themeId (buys it first if not owned and affordable, then applies) |
-| PickupCoin | C→S | coinId (number) |
-
-The server **must validate everything** (types, ownership, coin balance, distances). Never trust client values.
-
-## Workspace instance contract (things the client reads)
-- `workspace.Plots.Plot<i>`: Model. Attributes: `OwnerUserId` (number, 0 = free), `OwnerName` (string), `PlotIndex` (number), `Theme` (string), `Floors` (number).
-  - Child BasePart `Collector`: the owner touches it to claim `Pending`. Attribute `Pending` (number) for display.
-  - Child BasePart `SpawnPoint`: where the owner respawns.
-  - Child Model `House` (built by HouseBuilder; rebuilt on theme/floor change). Child Folder `Items` holds slot item models.
-- Slot item models (eggs or pets sitting on pedestals) live under their plot model in the Folder `Items`. Attributes on the model: `ItemUid`, `OwnerUserId`, `Kind`, `Id`, `Tier` (pets), and `HatchAt` for eggs.
-- **ProximityPrompts carry attributes** so the client can hide irrelevant ones locally:
-  - `PromptKind = "Owner"` with `OwnerUserId`: shown only to the owner (e.g. "가방에 넣기").
-  - `PromptKind = "Buy"`: shown to everyone (conveyor eggs).
-  The client sets `prompt.Enabled = false` locally for hidden ones. The server still validates.
-- `workspace.Conveyor`: belt and eggs. Each conveyor egg Model has attributes `EggId` and `Price`.
-- `workspace.ClientCoins` (**client-only**, created by the client `CoinField` module): this player's coin parts. The server never creates coin parts.
-- `workspace.FollowPets`: follower pet models and ride mounts (`RideMount_<userId>` models are welded to the character).
-- Player attributes: `RideSpeedMult` (number, 1 when not riding) — informational.
-
-## Server modules (src/server, children of the `Server` script). Required APIs
-Use these **exact** names. Modules require each other via `script.Parent.<Name>`. Avoid circular requires.
-
-### DataService
-- `Start()`: autosave loop (every 90 s).
-- `Load(player) -> data?`: yields. DataStore with pcall and up to 3 retries, sanitize (see above), offline earnings into `Pending`. If loading errored, mark the player "no-save". Creates leaderstats (`💰 코인`, `🐾 펫`).
-- `Get(player) -> data?`, `Save(player)`, `Release(player)`, `SaveAll()`
-- `AddCoins(player, n)`, `TrySpend(player, n) -> boolean`
-- `AddItem(player, item) -> uid`, `RemoveItem(player, uid) -> Item?`, `GetItem(player, uid) -> Item?`
-- `CountItems(player, loc?) -> number`
-- `CountSame(player, petId, tier) -> number`: how many pets with that Id and Tier (any Loc).
-- `MarkDiscovered(player, petId, tier) -> boolean` (true if the pet is new OR the tier is higher than recorded).
-- `GetIncome(player) -> number`: Σ `Config.ItemIncome` over Loc == "Slot" items (coins/sec).
-- `Sync(player)`: deferred and coalesced. Fires `DataSync` (with `Income`) and updates leaderstats.
-
-### PlotService
-- `Start()`: builds 6 plots under `workspace.Plots` (via `HouseBuilder.Build`), runs the income tick (1 s), the hatch tick, and connects the PetAction / BuySlot / BuyFloor / SetTheme remotes.
-- `AssignPlot(player) -> plot?`, `ReleasePlot(player)` (re-assigns a freed plot to a waiting player).
-- `OnCharacterAdded(player, character)`: teleports the player to their plot `SpawnPoint`.
-- `GetPlot(player) -> plot?`, where plot = `{ Index, Model, Owner, Origin: CFrame }`
-- `GetPlotAt(position: Vector3) -> plot?`
-- `FreeSlot(player) -> number?`: lowest unlocked slot index with no item.
-- `GetSlotCFrame(player, slot) -> CFrame`: top surface of the pedestal (floor 2 for slots > 12).
-- `PlaceItem(player, uid)`: render the item on its slot with `PetModels.BuildPet(id, item.Tier)` / `BuildEgg(id)`. Pets: an `"Owner"` prompt ("가방에 넣기"). Eggs: a billboard countdown. Pets bob gently. Legendary+ pets get `AddRarityEffects`.
-- `RemoveItemVisual(player, uid)`, `RefreshPlot(player)` (re-renders every slot item; used after a house rebuild).
-- `RebuildHouse(player)`: `HouseBuilder.Build` again with the player's current Theme/Floors, then `RefreshPlot`.
-- Hatching: when an egg slot item reaches `HatchAt`, it becomes `{Kind="Pet", Id=Config.RollPet(eggId), Tier=1, Loc="Slot", Slot=same}` (same uid). Then `MarkDiscovered(petId, 1)`, `Stats.Hatched += 1`, `Remotes.HatchFx:FireClient(owner, petId, pos, isNew, 1, "Hatch")`, re-render, Sync.
-- PetAction handling: Follow (max Config.MaxFollow; then `FollowService.Refresh`), Unfollow (to Bag), ToBase (needs FreeSlot; for eggs, `HatchAt = now + HatchLeft`), ToBag (eggs: store `HatchLeft`), Sell (pets only, `Config.SellPrice(id, tier)`), **Ride** (pets only; any previous Ride item → Bag; this item Loc = "Ride"; `FollowService.Refresh`), **Unride** (→ Bag), **Fuse** (see Core loop 7: pick `FuseCount` items with the same Id & Tier including the clicked uid, prefer consuming Bag items first, then Slot, Follow, Ride; remove them (+ visuals), add the new item with Tier+1 at the clicked item's location; `MarkDiscovered(id, tier+1)`; `Stats.Fused += 1`; `HatchFx(petId, pos, isNew, tier+1, "Fuse")` where pos is the slot position or the player's position; Notify "✨ 합성 성공! 황금 병아리가 되었어요!"; Refresh + Sync). Tier at MaxTier cannot fuse.
-- BuySlot: next price via `Config.NextSlotPrice(SlotsUnlocked, Floors)`; nil → notify why ("2층을 먼저 올려야 해요!" or "최대예요!").
-- BuyFloor: requires Floors == 1, SlotsUnlocked == 12, coins ≥ FloorPrice. Then Floors = 2, SlotsUnlocked = 18, `RebuildHouse`, Notify, Sync.
-- SetTheme: validate id; if not owned, TrySpend(theme.Price) and own it; set Theme; `RebuildHouse`; Sync.
-
-### HouseBuilder (server, new)
-- `HouseBuilder.FLOOR_HEIGHT: number` (local y of the floor-2 slab top, ≈ 11).
-- `HouseBuilder.Build(plotModel: Model, origin: CFrame, themeId: string, floors: number, slotsUnlocked: number) -> Handles`
-  where `Handles = { House: Model, Pedestals: { [slot]: BasePart } (1..24; locked ones greyed with a "🔒 price" sign, floor-2 ones only when floors == 2), SpawnPoint: BasePart, Collector: BasePart }`.
-  Destroys a previous `House` model and rebuilds. Keeps `Collector` and `SpawnPoint` as direct children of the plot model (the client reads them). Builds: floor slab in theme colour, low walls, corner pillars, a roof (hip roof from wedges) above floor 2 when floors == 2 (above floor 1 otherwise), stairs/ramp to floor 2 with railing, pedestals, owner sign, theme decorations (`Theme.Deco`), lamps, a small pet house, planters. Part budget ≤ 250 per house.
-- `HouseBuilder.UpdatePedestals(handles, slotsUnlocked, floors)`: re-colours locked/unlocked pedestals and price signs without a full rebuild.
-
-### ConveyorService
-Unchanged except: hatch/egg models via `PetModels.BuildEgg`, all 10 eggs (`Config.EggOrder`), buying checks `FreeSlot`.
-
-### FollowService
-- `Start()`
-- `Refresh(player)`: (re)spawn follower models for Loc == "Follow" (max MaxFollow) **and the ride mount** for the Loc == "Ride" item: `PetModels.BuildPet(id, tier)` scaled by `Config.Ride.Scale`, parts Massless & welded to the character's HumanoidRootPart, positioned under the character; `Humanoid.HipHeight` raised by `Config.Ride.HipHeightAdd` while riding (restore on unride/respawn). Call `UpdateSpeed`.
-- `Clear(player)`
-- `GetBoost(player) -> number`: Σ `Config.PetBoost(id, tier)` over Follow + Ride items.
-- `GetFollowerCount(player) -> number`
-- `UpdateSpeed(player)`: WalkSpeed = (BaseWalkSpeed + WalkSpeedPerFollower × followers) × (riding and `Config.RideSpeedMultiplier(id, tier)` or 1). Sets attribute `RideSpeedMult`. **The only place that sets WalkSpeed / HipHeight.**
-
-### CoinFieldService (per-player coins)
-- `Start()`: for each loaded player keep `Config.FieldCoins.Count` **virtual** coins `{ Id, Kind, Position, Alive }` (server memory only, no parts). On load/respawn send `CoinField("Reset", list)`; on respawn of a coin send `"Add"`; on pickup send `"Remove"`.
-- `PickupCoin(id)` handler: coin must exist & be alive for this player; the character's HumanoidRootPart must be within `MagnetRadius + MagnetPerFollower × followers + 8` studs of `Position`; then value = `math.floor(Kind.Value × (1 + DataService.GetIncome(player) / Config.FieldCoins.IncomeScale) × (1 + FollowService.GetBoost(player)))`, `AddCoins`, `CoinFx(value, Position)`, `Sync`, mark dead and respawn after `RespawnTime` at a new position (`"Add"`).
-- Positions avoid the conveyor strip, plots, and decorations (`workspace:GetPartBoundsInRadius` against `workspace.World`).
-
-### WorldBuilder
-Unchanged except the tutorial sign text (no stealing; mention: 알 사기, 코인 줍기, 펫 타기 (가방 → 타기), 합성 (같은 펫 3마리), 집 꾸미기 (H 키)).
-
-## Shared modules (src/shared)
-- `Config` (done; read it): `Tiers`, `TierInfo`, `PetDisplayName`, `PetIncome`, `PetBoost`, `ItemIncome`, `RideSpeedMultiplier`, `SellPrice(id, tier)`, `NextSlotPrice(slots, floors)`, `SlotFloor`, `House`, `FieldCoins.IncomeScale`.
-- `Remotes` (done).
-- `PetModels` (folder module `PetModels/init.luau`):
-  - `BuildPet(petId, tier?) -> Model` (tier 2 = gold recolour + sparkles, 3 = rainbow). PrimaryPart = `Body`, pivot = bottom centre, front = -Z, unanchored, non-colliding, welded.
-  - `BuildEgg(eggId) -> Model`, `AddRarityEffects(model, rarity)`, `HasPet(id)`, `HasEgg(id)`.
-  - `CreateViewport(kind, id, parent, silhouette?, tier?) -> (ViewportFrame, Model)`.
-  - **Adding pets**: create `src/shared/PetModels/<Group>.luau` returning `function(Kit, PET_BUILDERS, EGG_BUILDERS)` and register `PET_BUILDERS.<PetId> = function(b) ... end`. `Kit` exposes the helpers used by `init.luau` builders: `V, RGB, EYE, WHITE, BLACK, BLUSH, MOUTH, RAINBOW, SIDES, addPart, ell, darker, surf, front, facing, alongY, alongX, frameUp, tri, addEye, chibi, pointyEars, roundEars, muzzle, smallNose, ballArc, EGG_S, EGG_C, eggBase, eggDot, eggRing`. Read the existing builders in `init.luau` for style; every Config pet/egg id must have a builder.
-
-## Client (src/client)
-`init.client.luau` + modules. Everything is built in code. Cute, rounded, colourful, readable on phones (Scale + UISizeConstraint, big touch buttons).
-- HUD: coins (animated), income/sec ("💰 +N/초"), pet count, buttons: 🎒 가방 (B), 📖 도감 (N), 🏠 집 (H). No lock button.
-- Bag window: cards with a viewport (tier passed), tier label (`Config.TierInfo(tier).Label`) and tier-coloured border, name (`Config.PetDisplayName`), income/boost, location tag (집 / 따라옴 / 타는 중 / 가방). Buttons: 따라가기 / 그만, 집에 놓기 / 가방에, 타기 / 내리기, 합성 ✨ (only when `count of same Id&Tier ≥ FuseCount` and tier < MaxTier), 팔기. Filter tabs (전체 / 펫 / 알).
-- House window: theme cards (colour swatches, name, price or "보유", "적용" / "구매"), 2층 올리기 (price / "완료" / "받침대 12개를 먼저 여세요"), ➕ 받침대 (next price / "최대").
-- Index window: all `Config.PetOrder` (47). Discovered pets show a viewport at the highest tier seen plus a ✨/🌈 badge. Undiscovered: silhouette + "???". Progress "n / 47".
-- Hatch FX: `HatchFx(petId, pos, isNew, tier, mode)`: mode "Fuse" shows the egg stage replaced by three small pet viewports merging, title "✨ 합성 성공!", and the tier label; mode "Hatch" as before. Never block input (Frame root, tap or 3 s to close; 1 s when more are queued).
-- CoinField (client): renders `workspace.ClientCoins` from `CoinField` remote ops (spinning, floating, kind colours/sizes), magnet (10 Hz distance check with radius `MagnetRadius + MagnetPerFollower × followers`; follower count = my items with Loc Follow), tweens the coin to the player, fires `PickupCoin(id)` once, removes the part. Sound + "+N" come from `CoinFx`.
-- Notifications: toast stack (own ScreenGui, DisplayOrder 30).
-- Prompt filtering: only `PromptKind = "Owner"` hiding remains.
-- Keys: B bag, N index, H house.
+> **v3 changes (what this round does)** — ★ marks v3 throughout this file
+> 1. **7 tiers**: 기본 / 🥉 브론즈 / 🥈 실버 / 🥇 골드 / 🌈 레인보우 / 💎 다이아 / 🌌 갤럭시. Old saves remap 2→4, 3→5.
+> 2. **8 zones** in a chain, gated by rebirths (0,1,2,3,5,7,10,14): 숲 마을 (home, 6 houses) → 호수 → 정글 → 겨울 산 → 바다 → 캔디 랜드 → 구름 왕국 → 우주. Each has its own conveyor (2 eggs), field coins, spawn and a gate.
+> 3. **66 pets** (48 old ids kept + 18 new), 8 per zone (zone 1 has 10), one **secret** per zone. **16 eggs** (12 old + 4 new).
+> 4. **Houses grow with the theme** (8 themes, side 26 → 52, income bonus 0 → +40 %), **up to 10 floors** (12 pedestals each, 120 total), rebirth-gated floors, an **elevator**, and an entrance you can **ride** through.
+> 5. **Bag/base**: sorted by income, `AutoPlace` (best pets on pedestals), `ClearBase` (all house pets → bag), bag 150.
+> 6. **Fusion never uses pets on pedestals.**
+> 7. **Leaderboards**: leaderstats (💰 코인, ⚡ 초당, 🔄 환생) + 2 global top-10 boards + 🏆 window.
+> 8. **Pet clothes** (14 accessories, bought once, `Item.Acc`) and **furniture** (22 pieces, placed in your house).
+> 9. Pedestal pets no longer bob on the server; the **client animates** them.
+> 10. Light `CoinSync` remote for coin-only updates; full `DataSync` is throttled (≤ 5/s).
 
 ---
 
-## v2.1 addendum: rebirth, pet size/weight, holding a pet, hatch luck, the secret pet
+## 1. Core loop
 
-Config already has: `Config.Rarities.Secret` (Order 7), pet `CosmicWhale` (Secret, last in `PetOrder`, 48 pets now), eggs `Twilight` (MinRebirth 1) and `Starlight` (MinRebirth 3, contains CosmicWhale at 3 %), `Config.Rebirth`, `Config.RebirthCost/RebirthIncomeMult/RebirthCoinMult/RebirthSpeedMult/RebirthLuckMult/RebirthHatchTime/RollHatchTier`, `Config.HatchTierChance`, `Config.PetSize`, `Config.RollPetSize/SizeOf/SizeLabel/PetWeight`, `Config.ItemIncome` (now × Size), `Config.ItemBoost`, `Config.Hold`. Remotes has `Rebirth` (C→S) and PetAction actions `Hold` / `Unhold`.
+1. Each player (max 6) gets a **house** in 숲 마을. 6 pedestals ("slots") are open at the start; slots 7–12 cost coins (`Config.Plot.SlotPrices`).
+2. Eggs ride the **conveyor of each zone**. A player buys one (ProximityPrompt `PromptKind = "Buy"`); it flies (or "poofs" when far) onto a free pedestal in their house.
+3. An egg on a pedestal **hatches** after its hatch time into a random pet of that egg (`Config.RollPet`), with a size (`Config.RollPetSize`) and sometimes a higher tier (`Config.RollHatchTier`, never above 골드 from hatching). The Index records the highest tier seen per pet.
+4. A pet on a pedestal earns `Config.ItemIncome(item) × Config.IncomeMultiplier(rebirths, theme)` coins/sec into the house **collector**; the owner steps on it to claim. `DataService.GetIncome(player)` already returns that final number.
+5. **Field coins** (per player, per zone) lie around each conveyor. Value grows with house income, the zone's `CoinMult`, the follow-pet boost (capped) and rebirths.
+6. Up to 3 pets **follow**, one is **ridden** (faster walking), one is **held** over the head. They add coin boost & magnet radius.
+7. **Fusion**: 3 pets with the same Id & Tier (from Bag/Follow/Ride/Hold only) → one pet of Tier+1 (max 7).
+8. **Rebirth**: costs coins (`Config.RebirthCost`), resets coins to 0, keeps everything else, gives permanent bonuses and **opens zones and floors**.
+9. **House**: buy themes (bigger house + income bonus), floors 2–10 (`BuyFloor`), pedestals (`BuySlot`), clothes and furniture (Shop), place furniture (Decorate mode).
 
-### Data additions
+### Key numbers (all in Config; see the balance curve in §16)
+| | |
+|---|---|
+| Zone gates (MinRebirth) | 1 숲 마을 0 · 2 호수 1 · 3 정글 2 · 4 겨울 산 3 · 5 바다 5 · 6 캔디 랜드 7 · 7 구름 왕국 10 · 8 우주 14 |
+| Zone CoinMult | 1, 1.15, 1.3, 1.45, 1.6, 1.75, 1.9, 2 |
+| Pet income per zone | ≈ ×5 per zone: commons 2 / 10 / 50 / 240 / 1.2K / 6K / 30K / 150K; a zone's common always beats the previous zone's legendary |
+| Rarity ratio inside a zone | Common 1 · Uncommon 1.5 · Rare 2.2 · Epic 3.2 · Legendary 4.5 · Mythic 7 · Secret 12 (CosmicWhale 2M/s) |
+| Tiers IncomeMult | 1, 3, 8, 20, 50, 120, 300 |
+| Tiers BoostMult | 1, 1.5, 2.2, 3, 4, 5.5, 7.5 (boost only affects field coins and is capped by `FieldCoins.MaxBoost` = 3) |
+| Hatch tier chance | 브론즈 5 %, 실버 1 %, 골드 0.2 % × `RebirthLuckMult` (1 + 0.25 × rebirths), total ≤ 90 %, never above 골드 |
+| Rebirth | 25 max; costs 800K, 12M, 240M, 2B, 8B, 40B, 120B, 500B, 1.2T, 3T, … 16Qa (`Config.Rebirth.Costs`); income ×(1 + 0.5 r), field coins ×(1 + 0.1 r), speed ×(1 + 0.03 r), hatch time ÷(1 + 0.1 r) |
+| Floors (MinRebirth, price) | 1 free · 2 (0, 300K) · 3 (1, 5M) · 4 (2, 100M) · 5 (3, 800M) · 6 (5, 15B) · 7 (7, 200B) · 8 (10, 2.4T) · 9 (13, 24T) · 10 (16, 200T) |
+| Themes (Size, bonus, price) | Basic 26/0/free · Candy 30/+5 %/10K · Forest 32/+10 %/100K · Ocean 36/+15 %/1.2M · Space 40/+20 %/16M · Rainbow 44/+25 %/300M · ★Palace 왕궁 48/+32 %/40B · ★GalaxyPalace 은하 궁전 52/+40 %/4T |
+| Bag | `Config.MaxBagItems` = 150 (Loc "Bag" only) |
+
+---
+
+## 2. World layout (all Vector3s are in `Config.Zones` / `Config.Layout`)
+
+Ground top surface is **y = 0 everywhere**. `Zone.Size.Y` is the ground slab thickness (slab top at y = 0).
+The zones are separate ground islands in a straight line along **+X**, joined by walkable **trails** (bridges)
+along **z = 0**, `Config.Layout.TrailLength` = 50 long, `TrailWidth` = 16 wide, with side rails ≥ 4 high.
+Between islands is decorative water (`Layout.SeaY` = −3, CanCollide **false**). Island edges get fences (≥ 4 high)
+except at trail mouths, so the only way into zone k is through its gate.
+
+| # | Id | Name | Center | Size (X, Z) | Conveyor (start → end) | Field box | Spawn | Gate (CFrame pos, Size) |
+|---|---|---|---|---|---|---|---|---|
+| 1 | Village | 🌳 숲 마을 | (−22.5, 0, 0) | 315 × 250 | (−56,0,0) → (56,0,0) | (−110,−42)…(110,42) | (−140,0,0) | — |
+| 2 | Lake | 🦆 호수 | (285, 0, 0) | 200 × 200 | (225,0,−55) → (345,0,−55) | (193,−40)…(377,92) | (201,0,0) | (183, 8, 0), (2, 16, 20) |
+| 3 | Jungle | 🌴 정글 | (535, 0, 0) | 200 × 200 | cx ± 60, z −55 | cx ± 92, z −40…92 | (cx − 84, 0, 0) | (cx − 102, 8, 0) |
+| 4 | Snow | 🏔 겨울 산 | (785, 0, 0) | 〃 | 〃 | 〃 | 〃 | 〃 |
+| 5 | Ocean | 🌊 바다 | (1035, 0, 0) | 〃 | 〃 | 〃 | 〃 | 〃 |
+| 6 | Candy | 🍭 캔디 랜드 | (1285, 0, 0) | 〃 | 〃 | 〃 | 〃 | 〃 |
+| 7 | Cloud | ☁️ 구름 왕국 | (1535, 0, 0) | 〃 | 〃 | 〃 | 〃 | 〃 |
+| 8 | Space | 🚀 우주 | (1785, 0, 0) | 〃 | 〃 | 〃 | 〃 | 〃 |
+
+Zone k ≥ 2: centre x = 285 + (k − 2) × 250; island x ∈ [cx − 100, cx + 100]; the trail into it spans
+x ∈ [cx − 150, cx − 100]; zone 1's east edge is x = 135 (trail 1→2 = x 135…185). Inside zones 2–8 the **main
+road** runs along z = 0 from the west gate to the east trail (zone 8 has no east exit), the conveyor sits south
+(z = −55, with its egg chute/bin), the field coin area is the box above (the road crosses it; that is fine).
+`Zone.Palette` = { Ground, Path, Accent, Trim, Sky, Water?, Deco = { kind strings } } for WorldBuilder/ZoneClient.
+
+**Home zone (숲 마을)**: 6 plots, `Layout.PlotSize` = 64, centres x ∈ {−72, 0, 72}, z = ±80 (north row 1–3, south
+row 4–6), each `Layout.Plots[i]` CFrame looks at (x, 0, 0) (toward the conveyor). Plot squares: x ±32 around the
+centre, z 48…112 (north) / −112…−48 (south). Conveyor along z = 0, x −56…56 (width 8, the old belt). Field coins in
+x −110…110, |z| ≤ 42, not within `FieldConveyorClearance` (7) of any conveyor segment, not inside plots (+2 margin).
+Lobby / spawn plaza at (−140, 0, 0) (`Layout.LobbySpawn` = `Zones[1].Spawn`). Leaderboards: `Layout.Leaderboards.Income`
+at (−165, 0, −28) and `.Rebirths` at (−165, 0, 28), both facing +X (the lobby). The trail to zone 2 leaves the east
+edge at (135, 0, 0); WorldBuilder routes the home walkways around the conveyor's east bin to reach it.
+
+**Gates** (zones 2–8): WorldBuilder builds an arch over the trail mouth (arch beam ≥ 18 high so riders fit), a sign
+"🦆 호수 · 🔄 환생 1회" and the **barrier part** `workspace.World.Gates.Gate<k>` with `CFrame = Zone.Gate.CFrame`,
+`Size = Zone.Gate.Size`, attributes `ZoneIndex` (k) and `MinRebirth`, `Anchored = true`, **`CanCollide = false`**,
+`Transparency = 1` on the server. The client (`ZoneClient`) sets `CanCollide = true` and a visible pink force-field
+look **locally** on gates whose `MinRebirth > my Rebirths` (character physics is client-owned, so this blocks the
+local player only). The server never trusts that: every zone action (egg buy, coin pickup, teleport) is validated
+with `Config.ZoneUnlocked(zone, rebirths)`, and `ZoneService` sends a player standing inside a locked zone back.
+
+---
+
+## 3. Player data (server, DataService) ★
+
 ```lua
-data.Rebirths = number            -- 0..Config.Rebirth.MaxRebirths
-Item.Size = number?               -- pets only, Config.PetSize.Min..Max; rolled at hatch (Config.RollPetSize); sanitize via Config.SizeOf
-Item.Loc adds "Hold"              -- at most ONE item (like "Ride"); pets only
-data.Stats.Rebirths               -- optional mirror; not required
+data = {
+  Version = 3,               -- Config.DataVersion
+  Coins = number, Pending = number,
+  SlotsUnlocked = number,    -- StartSlots (6) .. Floors × 12
+  Floors = number,           -- 1..Config.House.MaxFloors (10)
+  Theme = string, Themes = { [themeId] = true },   -- Basic always owned
+  Items = { [uid] = Item },
+  Index = { [petId] = number },                   -- highest tier seen (1..7)
+  NextUid = number, LastOnline = number,
+  Stats = { Hatched = number, Fused = number },
+  Rebirths = number,         -- 0..25
+  Wardrobe = { [accId] = true },                  -- ★ clothes owned forever
+  Furniture = { [fid] = { Id = furnId, Floor = n, X = number, Z = number, R = 0|90|180|270 } },  -- ★ placed
+  FurnitureInv = { [furnId] = count },            -- ★ bought, not placed (key absent when 0)
+  NextFid = number,                                -- ★ fids are "f1", "f2", …
+}
+Item = {
+  Kind = "Egg" | "Pet", Id = string,
+  Tier = number?,            -- pets: 1..7
+  Size = number?,            -- pets: 0.8..1.3
+  Acc = string?,             -- ★ pets: worn accessory id (must be in Config.Accessories AND data.Wardrobe)
+  Loc = "Slot" | "Follow" | "Ride" | "Hold" | "Bag",   -- eggs only Slot | Bag; ONE Ride, ONE Hold, ≤ 3 Follow
+  Slot = number?,            -- Loc == "Slot": 1..SlotsUnlocked; slot s is on floor ceil(s / 12)
+  HatchAt = number?, HatchLeft = number?,          -- eggs on a slot / in the bag
+}
 ```
-Snapshot adds `Rebirths` and `RebirthCost` (= `Config.RebirthCost(data.Rebirths)`), and `Income` must now be `Σ Config.ItemIncome(item) × Config.RebirthIncomeMult(data.Rebirths)` over Loc == "Slot" items (i.e. the real coins/sec, rebirth included).
+**Sanitize** (done in DataService): unknown ids dropped; Tier clamped 1..7; **migration**: if `raw.Version` is nil
+or < 3, Tier 2 → 4 and 3 → 5 for Items **and** Index, then `Version = 3`; Floors 1..10; SlotsUnlocked clamped to
+`[StartSlots, Floors × 12]` and raised to `Config.FloorStartSlots(Floors)` (the free first 6 of the top floor);
+slot conflicts / slots > SlotsUnlocked → Bag; one Ride, one Hold, ≤ MaxFollow Follow; `Acc` dropped unless known and
+owned; Wardrobe known ids only; FurnitureInv known ids, integer 1..`Decor.MaxPerItem`; Furniture: known Id, integer
+Floor ≤ Floors, |X|,|Z| ≤ PlotSize/2, R snapped to 0/90/180/270, at most `Decor.MaxPlaced` — anything else goes back
+to FurnitureInv. **Theme-size bounds and overlap are not checked at load** (needs the house layout): `ShopService.Validate`
+does that when the player gets a plot and after every theme change. `DataStoreName` is unchanged (`EggThiefPets_v1`).
 
-### Rules
-- **Rebirth** (`Remotes.Rebirth`, C→S, no args): requires `Coins >= Config.RebirthCost(Rebirths)` and `Rebirths < MaxRebirths`. Then `Coins = 0`, `Pending = 0`, `Rebirths += 1`. Pets, bag, house, slots, themes are all kept. `FollowService.UpdateSpeed`, Notify "🔄 환생 N회! 수익 ×a, 코인 ×b, 속도 +c%" and `HatchFx`-style celebration is optional (client may show a toast + confetti). Sync.
-- **Multipliers**: income tick and offline earnings use `Config.ItemIncome(item) × Config.RebirthIncomeMult(Rebirths)`; field coin value additionally × `Config.RebirthCoinMult(Rebirths)` (CoinFieldService uses `DataService.GetIncome` which already includes the rebirth income multiplier, and multiplies the final value by RebirthCoinMult); `FollowService.UpdateSpeed` multiplies by `Config.RebirthSpeedMult(Rebirths)`; hatch time of newly bought eggs = `Config.RebirthHatchTime(eggId, Rebirths)` (ConveyorService at purchase; ToBase from bag keeps HatchLeft).
-- **Hatch luck**: when an egg hatches, `tier = Config.RollHatchTier(Rebirths)` (1 normally; 2 = 황금, 3 = 무지개) and `size = Config.RollPetSize()`. The new pet item gets `Tier = tier`, `Size = size`. HatchFx shows the tier label; isNew via `MarkDiscovered(petId, tier)`.
-- **Size**: model scale = `item.Size` (`model:ScaleTo(size)` after `BuildPet`) on pedestals, followers, ride (× Config.Ride.Scale) and hold (× Config.Hold.Scale). Fusion result: `Size = max(sizes) + 0.02` clamped to Max. Bag card shows "⚖️ 3.2kg" (`Config.PetWeight(id, size)`) and the "거대"/"꼬마" label (`Config.SizeLabel`); income shown via `Config.ItemIncome(item)`.
-- **Hold** (`PetAction(uid, "Hold")` / `"Unhold"`): pets only; one at a time (previous Hold → Bag); FollowService renders it on top of the character's head (welded to Head, Massless, scale `Config.Hold.Scale`, bobbing slightly), counts toward `GetBoost` like a follower. Unhold → Bag. Ride and Hold can be used together.
-- **Rebirth eggs on the conveyor**: eggs with `MinRebirth` spawn only if at least one online player has `Rebirths >= MinRebirth` (ConveyorService checks before rolling; exclude them from the roll otherwise). Their billboard shows "🔄 환생 N 필요". Buying requires the buyer's `Rebirths >= MinRebirth` (Notify "환생 N회가 필요해요!").
-- **Secret pet**: `CosmicWhale` only comes from the Starlight egg. Index shows it last, in Secret colour, with hint text "별빛 알에서… 🌌" when undiscovered.
+---
 
-### Client additions
-- HUD: 🔄 환생 button (shows the cost) → Rebirth window: current rebirth count, current bonuses, next bonuses, cost, "환생하기" (two-tap confirm; explains coins reset to 0 but pets/house stay).
-- Bag card: size/weight line, 들기/내려놓기 buttons (Hold/Unhold), location tag "들고 있음".
-- Index: 48 pets; Secret rarity group last.
+## 4. Client snapshot
+
+`Remotes.DataSync` (full; throttled to ≤ 5/s by `DataService.Sync`):
+```lua
+{ Version, Coins, Pending, SlotsUnlocked, Floors, Theme, Themes, Items, Index, PlotIndex = number?,
+  Income,          -- Σ ItemIncome(Slot items) × Config.IncomeMultiplier(Rebirths, Theme)  (real coins/sec)
+  Rebirths, RebirthCost = Config.RebirthCost(Rebirths),
+  MaxZone,         -- ★ Config.MaxZoneFor(Rebirths) (convenience; the client may also compute it)
+  BagCount,        -- ★ items with Loc "Bag"
+  Wardrobe, Furniture, FurnitureInv, Stats }   -- ★
+```
+★ `Remotes.CoinSync(coins, pending, income)`: sent by `DataService.SyncCoins` (from `AddCoins`/`TrySpend` and the
+income tick) when only money changed. The client merges these three values into `State.Snapshot` and fires coin
+listeners (HUD, affordability). **A full DataSync always follows any item/house/wardrobe/furniture change** because
+the server calls `DataService.Sync` explicitly after those. The client never mutates the snapshot otherwise.
+
+---
+
+## 5. Remotes (`ReplicatedStorage.Remotes`, all RemoteEvents; see `src/shared/Remotes.luau`)
+
+The server **validates everything**: argument types (and `#string ≤ 32`), NaN/inf, ownership, coins, distances,
+rebirth gates, and throttles each player (≈ 0.15 s per action, 1.5 s for Teleport). Failures → Korean `Notify`.
+
+| name | dir | args | owner (handler) | validation / effect |
+|---|---|---|---|---|
+| DataSync | S→C | snapshot | DataService | §4 |
+| CoinSync ★ | S→C | coins, pending, income | DataService | §4 |
+| Notify | S→C | text, kind ("info" \| "good" \| "warn" \| "alert") | any | |
+| HatchFx | S→C | petId, position, isNew, tier, mode ("Hatch" \| "Fuse") | PlotService | |
+| CoinFx | S→C | amount, position, silent? | any | |
+| CoinField | S→C | op, payload: `"Reset", { {Id, Kind, Position, Zone}, … }` / `"Add", {Id, Kind, Position, Zone}` / `"Remove", Id` | CoinFieldService | Ids unique per player across zones |
+| LeaderboardSync ★ | S→C | `{ Income = {Row}, Rebirths = {Row}, Global = bool, UpdatedAt = os.time() }`, Row = `{ Rank, UserId, Name, Value }` | LeaderboardService | |
+| RequestSync | C→S | — | init.server | full Sync |
+| PetAction | C→S | uid, action ("Follow","Unfollow","ToBase","ToBag","Sell","Ride","Unride","Hold","Unhold","Fuse") | PlotService | v2 rules + §7 fusion rule |
+| AutoPlace ★ | C→S | — | PlotService | §7 |
+| ClearBase ★ | C→S | — | PlotService | §7 |
+| BuySlot | C→S | — | PlotService | `Config.NextSlotPrice(SlotsUnlocked, Floors)`; nil → "받침대가 최대예요! 🎉" or "N층을 먼저 올려야 해요! 🏠" |
+| BuyFloor | C→S | — | PlotService | `Config.CanBuyFloor(Floors, SlotsUnlocked, Rebirths)` → "Max" "이미 10층이에요! 🏰" / "Slots" "받침대 N개를 먼저 다 열어야 해요!" / "Rebirth" "🔄 환생 N회가 필요해요!"; then `TrySpend(FloorInfo[f].Price)`, `Floors = f`, `SlotsUnlocked = max(SlotsUnlocked, Config.FloorStartSlots(f))`, RebuildHouse, Notify "🏠 f층이 생겼어요!", Sync |
+| SetTheme | C→S | themeId | PlotService | buy if not owned (TrySpend), set, RebuildHouse (fires OnPlotChanged "Rebuild" → ShopService.Validate), Sync |
+| Rebirth | C→S | — | PlotService | v2 rules; also Notify newly opened zone ("🗺 새 지역 호수가 열렸어요!") / floor |
+| PickupCoin | C→S | coinId | CoinFieldService | §9 CoinFieldService |
+| Teleport ★ | C→S | kind ("Zone" \| "Floor" \| "Home"), n (number; ignored for Home) | ZoneService | §9 ZoneService |
+| BuyAccessory ★ | C→S | accId | ShopService | known, not owned, TrySpend(Price) → `Wardrobe[acc] = true`, Notify "👕 고깔모자를 샀어요!", Sync |
+| EquipAccessory ★ | C→S | uid, accId (`""` = take off) | ShopService | item is my Pet; acc owned; set/clear `Item.Acc`; re-render (Slot → `PlotService.PlaceItem`, Follow/Ride/Hold → `FollowService.Refresh`); Sync |
+| BuyFurniture ★ | C→S | furnId | ShopService | known; `FurnitureInv[id] < Decor.MaxPerItem`; TrySpend; `DataService.AddFurnitureInv`; Sync |
+| PlaceFurniture ★ | C→S | furnId, floor, x, z, r | ShopService | §9 ShopService.CanPlace; `TakeFurnitureInv`, `NewFurnitureId`, store, render, Sync |
+| MoveFurniture ★ | C→S | fid, floor, x, z, r | ShopService | fid is mine; CanPlace ignoring itself; update, re-render, Sync |
+| PickupFurniture ★ | C→S | fid | ShopService | fid is mine; `AddFurnitureInv` (false → "가구 가방이 가득 찼어요!"); remove + model, Sync |
+
+---
+
+## 6. Workspace instance contract (things other modules / the client read)
+
+- `workspace.Plots.Plot<i>` Model. Attributes: `OwnerUserId` (0 = free), `OwnerName`, `PlotIndex`, `Theme`, `Floors`, ★`ThemeSize`.
+  - BasePart `Collector` (attribute `Pending`), BasePart `SpawnPoint` (floor 1, inside the entrance).
+  - Model `House` (HouseBuilder; rebuilt on theme/floor change; attributes `Theme`, `Floors`, `Size`, `PartCount`).
+    `House > Sign > BillboardGui > TextLabel "OwnerLabel"` (the owner sign is on a **side post**, not overhead).
+    ★ Each floor f has a BasePart named `Elevator` (attribute `Floor` = f) with a ProximityPrompt: `PromptKind = "Owner"`,
+    `OwnerUserId` = plot owner (HouseBuilder reads `plotModel:GetAttribute("OwnerUserId")` at build time; PlotService
+    sets that attribute **before** building and rebuilds on assign/release), attribute `PromptAction = "Elevator"`,
+    ActionText "🛗 층 이동", HoldDuration 0. The server does nothing on trigger; the client opens the floor picker.
+  - Folder `Items`: slot item models. Attributes: `ItemUid`, `OwnerUserId`, `Kind`, `Id`, `Tier`, `Size`, ★`Acc`, `HatchAt` (eggs).
+    ★ Pets carry `Bob = true`: the server anchors the Body at the slot CFrame and **never tweens it**; the client bobs it.
+  - ★ Folder `Furniture` (ShopService): models `F_<fid>`, attributes `Fid`, `FurnitureId`, `Floor`, `OwnerUserId`. All parts anchored.
+- ProximityPrompts: `PromptKind = "Owner"` (+ `OwnerUserId`) → shown only to the owner (client hides others locally);
+  `PromptKind = "Buy"` → everyone (conveyor eggs). The server still validates.
+- ★ `workspace.Conveyors.Zone<k>` (Folder per zone): belt parts and egg models; egg Models have attributes `EggId`, `Price`, `Zone`.
+- ★ `workspace.World.Gates.Gate<k>` (see §2). `workspace.World` holds all WorldBuilder parts.
+- ★ `workspace.Leaderboards` (LeaderboardService): Models `IncomeBoard`, `RebirthBoard`.
+- `workspace.ClientCoins` (client-only, CoinField). `workspace.FollowPets` (followers, `RideMount_<userId>`, hold pets).
+- Player attributes: `PlotIndex`, `RideSpeedMult`, ★`Zone` (number, the zone the character is in; set by ZoneService ~2×/s).
+
+---
+
+## 7. Gameplay rules ★
+
+**Fusion** (`PetAction(uid, "Fuse")`): the clicked item must be a Pet with `Config.CanFuseLoc(item.Loc)` (Bag/Follow/Ride/Hold)
+— a Slot pet is refused with "🏠 집에 있는 펫은 합성할 수 없어요! 가방에 넣고 해 보세요 🎒". Tier < MaxTier. Candidates =
+`DataService.FusableUids(player, id, tier)` (never Slot; ordered Bag → Follow → Hold → Ride, oldest first). Need
+`Config.FuseCount` including the clicked one ("같은 펫 3마리가 필요해요! (2/3)" counts fusable ones only). Consume the
+clicked uid + the first others; new item `{ Kind="Pet", Id, Tier = tier + 1, Size = min(max(sizes) + 0.02, Max), Acc = clicked.Acc,
+Loc = clicked.Loc }`; MarkDiscovered; Stats.Fused += 1; HatchFx(mode "Fuse") at the player; Notify "✨ 합성 성공! 실버 병아리가 되었어요!";
+FollowService.Refresh if mounts changed; Sync. Bag UI shows "합성 ✨" only on non-Slot pets with ≥ 3 fusable copies.
+
+**AutoPlace** (`Remotes.AutoPlace`): needs a plot. `open` = slots 1..SlotsUnlocked not holding an egg (eggs stay put).
+`cands` = pets with Loc "Bag" or "Slot", sorted with `Config.CompareItems`. `best` = first `#open` of `cands`.
+Slot pets not in `best` → Bag (remove visual); Bag pets in `best` → the free `open` slots in ascending order (PlaceItem).
+Slot pets in `best` stay where they are. Follow/Ride/Hold pets are never touched. The bag never grows (every pet moved
+out is replaced by one moved in). Notify "✨ 가장 좋은 펫 N마리를 집에 놓았어요!" or "이미 가장 좋은 펫들이 집에 있어요! 😊". Sync.
+
+**ClearBase** (`Remotes.ClearBase`): every Slot **pet** (not eggs) → Bag, weakest first, until `DataService.BagSpace` is 0;
+Notify "📦 펫 N마리를 가방에 넣었어요" or, when the bag fills, "가방이 가득 차서 N마리만 넣었어요! 🎒" (0 pets: "집에 펫이 없어요").
+
+**Floors**: floor f ≥ 2 requires all `(f − 1) × 12` slots of the floors below open, `Rebirths ≥ FloorInfo[f].MinRebirth`, and
+`FloorInfo[f].Price`. Buying opens the first 6 slots of the new floor for free; the other 6 are bought with BuySlot
+(`Config.Plot.SlotPrices[slot]` exists for exactly the purchasable slots: 7–12 and, on each floor f ≥ 2, the last 6).
+
+**House income**: `income/sec = Σ ItemIncome(slot pets) × Config.IncomeMultiplier(Rebirths, Theme)` where
+`IncomeMultiplier = RebirthIncomeMult × (1 + ThemeIncomeBonus)`. Applied in exactly one place: `DataService.GetIncome`
+(used by the income tick, offline earnings, field coins, snapshot `Income`, leaderstats, leaderboard). PlotService's tick
+must add `DataService.GetIncome(owner)` to `Pending` each second (not its own sum).
+
+**Zones**: an egg, field coin or teleport of zone z is only allowed when `Config.ZoneUnlocked(z, Rebirths)`.
+Locked text: "🔒 환생 N회가 필요해요!".
+
+---
+
+## 8. Shared modules (src/shared)
+
+### Config (done) — helpers
+Existing names keep working: `WeightedPick`, `RollPet(eggId)`, `RollEgg(rng?, zoneIndex?)` (★ zone filter), `RebirthCost`,
+`RebirthIncomeMult/CoinMult/SpeedMult/LuckMult`, `RebirthHatchTime`, `RollHatchTier` (★ up to `MaxHatchTier` 4), `RollPetSize`,
+`SizeOf`, `SizeLabel`, `PetWeight`, `TierInfo`, `PetDisplayName` ("골드 병아리"), `PetIncome`, `PetBoost`, `ItemIncome`, `ItemBoost`,
+`RideSpeedMultiplier`, `SellPrice`, `NextSlotPrice(slots, floors)`, `SlotFloor(slot)` (★ = ceil(slot/12)), `FormatNumber` (★ K M B T Qa Qi).
+★ New: `ZoneOf(petId)`, `EggZone(eggId)`, `ZoneUnlocked(zone, rebirths)`, `MaxZoneFor(rebirths)`, `EggMinRebirth(eggId)`,
+`ZoneAt(position) -> zone?` (XZ box; trails/water → nil), `TierVisual(tier)`, `CompareItems(aUid, a, bUid, b)` (bag/auto order),
+`CanFuseLoc(loc)`, `ThemeOf(id)`, `ThemeIncomeBonus(id)`, `ThemeSize(id)`, `IncomeMultiplier(rebirths, themeId)`,
+`FloorStartSlots(floor)`, `FloorRequirement(floor) -> {Price, MinRebirth}`, `CanBuyFloor(floors, slots, rebirths) -> (ok, "Max"|"Slots"|"Rebirth")`,
+`AccessoryValid(id)`, `FurnitureFootprint(furnId, r) -> (sx, sz)`.
+Data tables: `Rarities` (+`Boost`), `RarityOrder`, `Zones`, `MaxZone`, `Pets` (+`Zone`, `Boost` auto-filled), `PetOrder` (zone then rarity),
+`Eggs` (+`Zone`, `Premium`, `MinRebirth` auto = zone's), `EggOrder`, `Rebirth.Costs`, `HatchTierChance`, `MaxHatchTier`, `Tiers` (+`Visual`),
+`FuseLocs`, `Ride` (+`MaxStandHeight` 8.5), `Conveyor` (per belt; `FlyMaxDistance`), `Plot`, `FloorInfo`, `House` (`MaxFloors` 10,
+`FloorHeight` 12, `Themes` with `Size`/`IncomeBonus`), `Accessories`, `AccessoryOrder`, `Furniture`, `FurnitureOrder`,
+`FurnitureCategories`, `Decor`, `Leaderboard`, `FieldCoins` (`CountPerZone`, `IncomeScale` 30, `MaxBoost` 3, `RenderDistance`), `Layout`, `Sounds`, `MaxWalkSpeed`.
+
+### Remotes (done) — §5.
+
+### ★ HouseLayout (new, `src/shared/HouseLayout.luau`, owner HOUSE-VISUAL) — pure math shared by server and client
+No instances, no yields; requires only Config. All coordinates are **plot-local** (origin = plot floor centre, y = 0,
+entrance = local −Z at z = −32). The house is a square of side `Config.ThemeSize(themeId)`, centred in X; its placement
+in Z (back-aligned recommended) is HouseLayout's choice but must leave the entrance path clear.
+- `HouseLayout.FloorY(floor) -> number`: local y of a floor's top surface = 0.2 + (floor − 1) × `Config.House.FloorHeight`.
+- `HouseLayout.SlotLocal(slot, themeId) -> CFrame`: pedestal top (item pivot) in plot space; slot s on floor ceil(s/12).
+- `HouseLayout.SlotCFrame(origin, slot, themeId) -> CFrame` = `origin * SlotLocal(...)`.
+- `HouseLayout.FloorBounds(themeId, floor) -> { MinX, MaxX, MinZ, MaxZ, Y }`: inner walkable floor area (inside walls).
+- `HouseLayout.BlockedRects(themeId, floor) -> { { MinX, MaxX, MinZ, MaxZ, Name } }`: where furniture may not go: every
+  pedestal footprint (+0.5), stairs going up from this floor and the stair landing/opening arriving from below, the elevator
+  booth, and on floor 1 also the entrance corridor (doorway → inside 6 studs), Collector and SpawnPoint.
+- `HouseLayout.FloorSpawn(origin, themeId, floor) -> CFrame`: world CFrame to put a character on that floor (free spot by the
+  elevator, facing into the house, already + 3 studs up).
+- `HouseLayout.ElevatorLocal(themeId, floor) -> CFrame` (booth centre on the floor).
+
+### PetModels (folder module, owner MODELS)
+- `BuildPet(petId, tier?, accId?) -> Model` ★: PrimaryPart `Body`, pivot = bottom centre, front = −Z, unanchored, non-colliding,
+  welded (Body has mass, others Massless). Applies `Config.TierVisual(tier)` (§12) and, if `accId`, the accessory.
+  Sets model attributes `Tier` and (rainbow) `TierCycle = true`.
+- `BuildEgg(eggId) -> Model`, `AddRarityEffects(model, rarity)` (Epic+; Secret strongest), `HasPet`, `HasEgg`, ★`HasAccessory(accId)`.
+- ★ `BuildAccessory(accId) -> Model` (standalone, for the shop viewport) and `AttachAccessory(petModel, accId)` (used by BuildPet):
+  pet builders may add Attachments `AccHead`, `AccFace`, `AccNeck`, `AccBack` on Body; otherwise the anchor is computed from
+  the model bounds (Head = top, 20 % toward the front; Face = front surface at 65 % height; Neck = front at 40 % height;
+  Back = back surface at 60 % height). Accessory scale ∝ pet width (clamp 0.6–2). Parts welded to Body, Massless,
+  CanCollide/CanTouch/CanQuery false. `model:ScaleTo(size)` by callers scales the accessory too.
+- `CreateViewport(kind, id, parent, silhouette?, tier?, accId?) -> (ViewportFrame, Model)` ★ (`kind = "Pet" | "Egg" | "Accessory"`).
+- Every `Config.Pets` / `Config.Eggs` / `Config.Accessories` id must have a builder (§13 LOOK lines). New groups go in
+  `src/shared/PetModels/<Group>.luau` returning `function(Kit, PET_BUILDERS, EGG_BUILDERS, ACC_BUILDERS)` (4th arg ★).
+
+### ★ FurnitureModels (new folder module `src/shared/FurnitureModels/init.luau`, owner MODELS)
+- `FurnitureModels.Build(furnId) -> Model`: PrimaryPart `Base`, pivot = bottom centre at the floor, front = −Z at R = 0,
+  bounding box ≈ `Config.Furniture[id].Size` (± 5 %), ≤ 14 parts, parts **unanchored and welded** to Base (like pets;
+  ShopService anchors on placement), solid parts `CanCollide = def.Collide`, tiny decorative parts CanCollide false,
+  CanTouch false. Lights (StarLamp, FloorLamp, Fireplace) may add a PointLight.
+- `FurnitureModels.Has(furnId) -> boolean`, `FurnitureModels.CreateViewport(furnId, parent) -> (ViewportFrame, Model)`.
+
+---
+
+## 9. Server modules (src/server, children of `Server`). Modules require each other via `script.Parent.<Name>`.
+
+Dependency graph (no cycles): DataService ← FollowService ← PlotService ← {ConveyorService, ZoneService, ShopService};
+CoinFieldService ← {DataService, FollowService}; LeaderboardService ← DataService; HouseBuilder ← HouseLayout.
+
+### DataService (done)
+`Start`, `Load`, `Get`, `Save`, `Release`, `SaveAll`, `AddCoins` (★ → SyncCoins), `TrySpend` (★ → SyncCoins), `AddItem` (validates Acc),
+`RemoveItem`, `GetItem`, `CountItems(player, loc?)`, `CountSame`, `MarkDiscovered`, `GetIncome` (★ incl. theme bonus), `GetRebirths`,
+`Sync` (★ full, throttled), ★`SyncCoins`, ★`CountByLoc -> {Bag, Slot, Follow, Ride, Hold}`, ★`BagCount`, ★`BagSpace`, ★`GetSlotMap -> {[slot]: uid}`,
+★`GetItemsSorted(player, filter?) -> { {Uid, Item} }` (Config.CompareItems), ★`FusableUids(player, petId, tier)`, ★`GetMaxZone`,
+★`HasAccessory`, ★`CountPlacedFurniture`, ★`NewFurnitureId`, ★`AddFurnitureInv(player, id, n?) -> bool`, ★`TakeFurnitureInv(player, id) -> bool`.
+Leaderstats ★: `💰 코인`, `⚡ 초당` (GetIncome), `🔄 환생` (IntValues, updated on every Sync/SyncCoins).
+Callers mutate `data.Items[...]` / `data.Furniture` tables directly (as in v2) and then call `DataService.Sync`.
+
+### PlotService (owner PLOT-LOGIC)
+v2 API stays: `Start`, `AssignPlot`, `ReleasePlot`, `OnCharacterAdded`, `GetPlot -> {Index, Model, Owner, Origin, …}`, `GetPlotAt`,
+`FreeSlot`, `GetSlotCFrame(player, slot)` (★ uses the owner's theme), `PlaceItem`, `RemoveItemVisual`, `RefreshPlot`, `RebuildHouse`.
+★ Changes: slot CFrames via `HouseBuilder.SlotCFrame(origin, slot, themeId)`; `PlaceItem` uses `PetModels.BuildPet(id, tier, item.Acc)`,
+sets `Bob`/`Acc` attributes, anchors the Body, **no server tween**; generalised `BuyFloor`/`BuySlot` (§5, §7); fusion rule (§7);
+`AutoPlace`, `ClearBase` handlers; income tick uses `DataService.GetIncome` and calls `DataService.SyncCoins(owner)`; Rebirth
+notifies new zones/floors. ★ `PlotService.OnPlotChanged(fn: (player: Player, plot: Plot, reason: "Assign" | "Rebuild" | "Release") -> ())`
+— called after AssignPlot (house built for the owner), after every RebuildHouse, and before ReleasePlot clears the plot
+(ShopService uses it). Set the plot model attributes (`OwnerUserId`, `Theme`, `Floors`, `ThemeSize`) before building.
+
+### HouseBuilder (owner HOUSE-VISUAL)
+- `HouseBuilder.FLOOR_HEIGHT` (= Config.House.FloorHeight), `HouseBuilder.FloorY(floor)`.
+- `HouseBuilder.Build(plotModel, origin, themeId, floors, slotsUnlocked) -> Handles` where
+  `Handles = { House, Pedestals: {[slot]: BasePart} (slots on built floors only; locked ones grey with "🔒 price"), SpawnPoint, Collector,
+  Elevators: {[floor]: BasePart}, Bounds: {MinY, MaxY} }`. Keeps `Collector` and `SpawnPoint` as direct plot children (reused).
+- `HouseBuilder.UpdatePedestals(handles, slotsUnlocked, floors)`, `HouseBuilder.Destroy(plotModel)`.
+- `HouseBuilder.SlotCFrame(origin, slot, themeId)`, `FloorBounds(themeId, floor)`, `BlockedRects(themeId, floor)`,
+  `FloorSpawn(origin, themeId, floor)` — thin re-exports of HouseLayout (so server code can use either).
+- **Size**: house footprint = `Config.ThemeSize(themeId)` (26…52) inside the 64 × 64 plot; yard/planters/lamps in the rest.
+- **Floors 1..10** stacked, floor f top at `FloorY(f)`, slab ≤ 1 thick → clear height ≥ 11 on every floor; walls or railings
+  (≥ 3) around every upper floor edge except openings; roof over the top floor.
+- **Entrance rule (riding)**: doorway and yard gate clear opening **≥ 9 wide × ≥ 14 tall**; **nothing overhead below y = 14 on the
+  walking path** from the plot edge to the doorway (no sign beam, no arch; upper floors start behind the doorway line or the
+  doorway sits in a porch with no slab above). A rider stands ≈ `Config.Ride.MaxStandHeight` (8.5) tall.
+- **Stairs** between every pair of floors (rise ≤ 1.2 per step, width ≥ 4, **headroom ≥ 11** measured from every step), plus an
+  **elevator** booth on every floor (§6). 12 pedestals per floor in a grid that fits the theme size (spacing ≥ 5).
+- Part budget: ≤ 260 parts for 1 floor, ≤ 60 more per extra floor (≤ 800 at 10 floors). Theme deco for 2 new themes:
+  `"royal"` (red carpet path, gold trims, banners, crown finials) and `"galaxy"` (planet balls, neon star specks, nebula colour strips).
+
+### FollowService (owner PLOT-LOGIC)
+v2 API (`Start`, `Refresh`, `Clear`, `GetBoost`, `GetFollowerCount`, `UpdateSpeed`). ★ Models via `BuildPet(id, tier, item.Acc)`;
+`UpdateSpeed` clamps WalkSpeed to `Config.MaxWalkSpeed`. `GetBoost` = Σ `Config.ItemBoost` over Follow+Ride+Hold (uncapped; the cap
+is applied by CoinFieldService). The only place that sets WalkSpeed / HipHeight.
+
+### ConveyorService (owner WORLD)
+★ One belt per zone at `Zones[k].ConveyorStart → ConveyorEnd` under `workspace.Conveyors.Zone<k>`, eggs rolled with
+`Config.RollEgg(rng, k)`, `Config.Conveyor` values per belt. A zone's belt only spawns eggs while some online player has
+`Config.ZoneUnlocked(k, rebirths)` (zone 1 always). Buy: prompt `PromptKind = "Buy"`, ActionText "구매 💰" .. price; server checks
+zone unlocked ("🔒 환생 N회가 필요해요!"), HRP within 20 studs of the egg, `PlotService.FreeSlot`, `TrySpend`; HatchAt =
+`now + Config.RebirthHatchTime(eggId, rebirths)`; egg flies to the slot when the plot is within `Conveyor.FlyMaxDistance`,
+otherwise sparkles away and appears on the pedestal. Premium eggs get a glow + bigger billboard.
+
+### CoinFieldService (owner WORLD)
+★ For each loaded player keep `FieldCoins.CountPerZone` virtual coins **per unlocked zone** (positions in that zone's field box,
+away from its conveyor segment by `FieldConveyorClearance`, plots, and decorations). Poll `DataService.GetMaxZone` every ~5 s and
+send `"Add"` for coins of newly opened zones. `PickupCoin(id)`: coin exists & alive, its zone unlocked, HRP within
+`MagnetRadius + MagnetPerFollower × followers + 8` (flat) and 14 (height). Value =
+`floor(Kind.Value × Zone.CoinMult × (1 + GetIncome / FieldCoins.IncomeScale) × (1 + min(GetBoost, FieldCoins.MaxBoost)) × RebirthCoinMult)`, ≥ 1.
+`AddCoins` (already sends CoinSync — **do not call DataService.Sync here**), `CoinFx(value, pos, true)`, `"Remove"`, respawn after `RespawnTime`.
+
+### ★ ZoneService (new, owner WORLD)
+- `ZoneService.Start()`: connects `Remotes.Teleport`; a 0.5 s loop per character: sets player attribute `Zone` (`Config.ZoneAt`, keep the
+  last value on trails), sends a character standing inside a **locked** zone back to its `MaxZone` spawn (Notify), and resets falls
+  (`HRP.Y < Layout.FallResetY`) to the last zone's spawn.
+- `ZoneService.GetPlayerZone(player) -> number` (default 1), `ZoneService.CanEnter(player, zone) -> boolean`.
+- `ZoneService.TeleportToZone(player, zone) -> boolean`, `TeleportToFloor(player, floor) -> boolean`, `TeleportHome(player) -> boolean`.
+- Teleport validation: kind ∈ {"Zone","Floor","Home"}; n integer; throttle 1.5 s; alive character. Zone: 1..MaxZone and unlocked →
+  `Zones[n].Spawn + (0, 3, 0)`. Floor: has a plot, 1 ≤ n ≤ data.Floors → `HouseBuilder.FloorSpawn(plot.Origin, data.Theme, n)`.
+  Home: plot `SpawnPoint` (+3) or lobby. Move with `character:PivotTo(cf)` (the ride mount is welded and comes along; followers snap).
+
+### ★ ShopService (new, owner UI-NEW) — clothes + furniture server side
+- `ShopService.Start()`: connects BuyAccessory, EquipAccessory, BuyFurniture, PlaceFurniture, MoveFurniture, PickupFurniture (§5) and
+  `PlotService.OnPlotChanged` → on "Assign"/"Rebuild": `Validate(player)` then `RenderFurniture(player)`; on "Release": destroy the folder.
+- `ShopService.CanPlace(player, furnId, floor, x, z, r, ignoreFid?) -> (boolean, string?)`: furnId known; floor integer 1..Floors;
+  r ∈ {0, 90, 180, 270}; x, z finite, snapped to `Decor.Snap`; footprint `Config.FurnitureFootprint(furnId, r)` centred at (x, z) lies
+  inside `HouseLayout.FloorBounds(theme, floor)` shrunk by `Decor.WallMargin`; no overlap with `HouseLayout.BlockedRects(theme, floor)`;
+  no overlap with other furniture on that floor unless either is Category "Rug"; placed count < `Decor.MaxPlaced` for new pieces.
+  Reasons: "여기에는 놓을 수 없어요!", "벽 밖이에요!", "받침대/계단 자리예요!", "다른 가구랑 겹쳐요!", "가구는 최대 80개까지예요!".
+- `ShopService.Validate(player)`: puts every piece that fails CanPlace (e.g. after a smaller theme) back into FurnitureInv; Notify
+  "🛋 가구 N개가 집에 안 맞아서 가구 가방에 넣었어요" if any; Sync.
+- `ShopService.RenderFurniture(player)`: (re)builds `Plot<i>.Furniture`: `FurnitureModels.Build(id)`, anchor all parts,
+  `PivotTo(origin * CFrame.new(x, HouseLayout.FloorY(floor), z) * CFrame.Angles(0, math.rad(r), 0))`.
+
+### ★ LeaderboardService (new, owner BOARD)
+- `LeaderboardService.Start()`: builds the two boards at `Layout.Leaderboards.Income/Rebirths` (SurfaceGui, title "⚡ 초당 코인 TOP 10" /
+  "🔄 환생 TOP 10", 10 rows with rank medal, name, `Config.FormatNumber(value)`), then every `Leaderboard.RefreshSeconds`: writes each
+  online player's `floor(DataService.GetIncome)` and `Rebirths` (key `"u_<userId>"`, at most every `WriteSeconds` per player) to the
+  OrderedDataStores `Leaderboard.IncomeStore` / `RebirthStore`, reads `GetSortedAsync(false, TopN)`, resolves names
+  (`Players:GetNameFromUserIdAsync`, cached, pcall), updates the boards and fires `LeaderboardSync` to everyone. Everything in pcall;
+  if the stores fail (Studio without API access), use a **same-server** list built from online players and `Global = false`.
+- `LeaderboardService.SendTo(player)` (call after the player's data loads), `LeaderboardService.GetBoard() -> board`.
+
+### WorldBuilder (owner WORLD)
+`WorldBuilder.Build()`: 8 islands (ground top y = 0, palette colours, fences), trails with rails, gates (§2), per-zone decorations from
+`Palette.Deco` (keep conveyors, field boxes, plots + 4, spawn, leaderboard spots ±10 clear), the lobby with the tutorial sign
+(알 사기, 코인 줍기, 펫 타기, 합성 (같은 펫 3마리, 가방 펫만), 🗺 지도로 이동, 🛍 상점 옷·가구, 환생하면 새 지역!), zone name signs,
+the sea plane, lighting. Part budget ≈ 2500 total. All parts under `workspace.World`.
+
+### init.server.luau (owner PLOT-LOGIC)
+Order: `WorldBuilder.Build()`, `DataService.Start()`, `PlotService.Start()`, `FollowService.Start()`, `ConveyorService.Start()`,
+`CoinFieldService.Start()`, `ZoneService.Start()`, `ShopService.Start()`, `LeaderboardService.Start()`. After a player's data loads:
+`AssignPlot`, character handling as v2, `DataService.Sync`, `LeaderboardService.SendTo(player)`.
+
+---
+
+## 10. Client (src/client)
+
+Everything built in code; cute, rounded, colourful, phone-friendly (Scale + UISizeConstraint, big buttons). One window open at a time
+(init.client's `toggle`). Every window module exports `Init(gui)`, `Open()`, `Close()`, `IsOpen() -> boolean`, and `OnSync()` when it
+shows snapshot data.
+
+| module | owner | contents |
+|---|---|---|
+| State | UI-CORE | snapshot (+ ★ CoinSync merge, `State.OnCoins(fn)`), plot lookup, ★`State.SortedItems(filter?)` (Config.CompareItems), ★`State.CountFusable(petId, tier)` (Config.CanFuseLoc), ★`State.MaxZone()`, Floors clamp to 1..MaxFloors |
+| Hud | UI-CORE | coins (animated; listens to OnCoins), "💰 +N/초", pet count, buttons: 🎒 가방 (B), 📖 도감 (N), 🏠 집 (H), 🛍 상점 (P), 🗺 지도 (M), 🏆 순위 (L), 🔄 환생 (R, shows cost) |
+| BagWindow | UI-CORE | cards sorted by `Config.CompareItems` (pets by income desc, eggs last); tabs 전체/펫/알/집; header buttons **"✨ 좋은 펫 자동 배치"** (AutoPlace) and **"📦 집 펫 모두 빼기"** (ClearBase); count "가방 n/150"; tier label + 7 tier colours; "합성 ✨" only for non-Slot pets with ≥ 3 fusable; **"👕 옷"** button → picker of owned accessories (+ "벗기기") → EquipAccessory; viewports created **lazily** (only for cards in/near the visible scroll area, ≤ ~30 alive, recycled) |
+| HouseWindow | UI-CORE | 8 theme cards (swatches, "🏠 크기 N", "+N% 수익", price/보유/적용); floor list 1..10 (✅ / 🔒 환생 N / 💰 price / "받침대를 먼저 다 열어요") + "🏗 N층 올리기"; ➕ 받침대 (next price / 최대); 🛗 floor buttons (Teleport "Floor"); AutoPlace / ClearBase; "🪑 가구 꾸미기" → `DecorateMode.Enter(floor)`; `HouseWindow.OpenFloorPicker()` (used by the elevator prompt) |
+| IndexWindow | UI-CORE | 66 pets grouped by zone (header "🌳 숲 마을", locked zones "🔒 환생 N"), viewport at the highest tier seen + tier badge (🥉🥈🥇🌈💎🌌), silhouette "???" for undiscovered, secret hint "<알 이름>에서 아주 드물게… ✨" (derived from the eggs containing it); progress "n / 66" |
+| RebirthWindow | UI-CORE | as v2 + "다음 환생 선물: 🗺 호수 열림 / 🏗 3층 가능" (zones/floors whose MinRebirth == Rebirths + 1) |
+| HatchFx, Toasts, Tips | UI-CORE | 7-tier labels/colours; Tips mention 지도/상점/자동 배치 |
+| WorldFx | UI-CORE | Owner-prompt filter; elevator prompts (`PromptAction = "Elevator"`, via `ProximityPromptService.PromptTriggered` on the client) → callback set by init.client → `HouseWindow.OpenFloorPicker()`; **pet bob**: animates Body CFrame of `Items` models with `Bob = true` within 80 studs (local only, ~30 Hz, small sine; remember the server CFrame per model); particle LOD (disable ParticleEmitters of pedestal pets beyond 70 studs); optional hue cycle for `TierCycle` models nearby; CoinFx numbers |
+| init.client | UI-CORE | requires every window below, hotkeys **B N H P M L R**, closes others on open, suppresses hotkeys while `DecorateMode.IsActive()`, wires CoinSync/LeaderboardSync to State/LeaderboardWindow |
+| CoinField | WORLD | per-zone coins (payload `Zone`), renders only within `FieldCoins.RenderDistance`, magnet as v2 |
+| ★ MapWindow | WORLD | 8 zone cards (emoji, name, palette colour, 🔒 환생 N / "이동" → Teleport("Zone", i)), "🏠 우리 집" → Teleport("Home"), current zone highlighted (player attribute `Zone`) |
+| ★ ZoneClient | WORLD | `ZoneClient.Init()`: local gate collision/visuals for locked zones (re-applied on every sync), entering-zone banner ("🦆 호수에 왔어요!"), optional local Lighting tint from `Palette.Sky` (space = night) |
+| ★ ShopWindow | UI-NEW | `Open(tab?: "Clothes" \| "Furniture")`; 👕 옷 tab: 14 accessories (viewport, name, slot icon, price / "보유 ✓", 구매); 🛋 가구 tab: categories (`Config.FurnitureCategories`), cards with viewport, price, "가방에 N개", 구매, and "🪑 꾸미러 가기" → `DecorateMode.Enter()` |
+| ★ DecorateMode | UI-NEW | `Enter(floor?)`, `Exit()`, `IsActive()`: only in my own house (teleports to the floor first if needed via Teleport "Floor"); bottom tray of FurnitureInv items; ghost model follows mouse/touch ray on the plane y = origin.Y + `HouseLayout.FloorY(floor)`, snapped to `Decor.Snap`, green/red tint from a client-side mirror of `ShopService.CanPlace` (HouseLayout + Config); tap/click places (PlaceFurniture), tapping a placed piece selects it → 🔄 회전 (MoveFurniture with r + 90), ✋ 옮기기, 📦 넣기 (PickupFurniture); keys: R rotate, X/Delete pick up, Esc/Q exit; floor ▲▼ buttons |
+| ★ LeaderboardWindow | BOARD | `Init(gui)`, `Open/Close/IsOpen`, `SetBoard(board)` (from LeaderboardSync); tabs ⚡ 초당 / 🔄 환생, top 10 with 🥇🥈🥉, my row highlighted, "🌍 전체 서버" or "🏠 이 서버" |
+
+Prompt filtering: only `PromptKind = "Owner"` hiding. Keys: B bag, N index, H house, P shop, M map, L leaderboard, R rebirth.
+
+---
+
+## 11. Zone / pet / egg tables (★ = new id). In-zone rarity: C×2 (zone 1: ×4), U, R, E, L, M, S
+
+| zone | Common | Uncommon | Rare | Epic | Legendary | Mythic | Secret |
+|---|---|---|---|---|---|---|---|
+| 1 숲 마을 | Chick 2, Bunny 2, Hamster 3, Piglet 3 | Puppy 4 | Cat 5 | Owl 7 | Fox 9 | RainbowCat 14 | ★SpiritDeer 25 |
+| 2 호수 | Duck 10, Frog 12 | Hedgehog 15 | Squirrel 22 | Raccoon 32 | Turtle 45 | Axolotl 70 | ★MoonKoi 120 |
+| 3 정글 | Monkey 50, Parrot 60 | Koala 75 | Bear 110 | Lion 160 | Panda 225 | ★Peacock 350 | ★WhiteTiger 600 |
+| 4 겨울 산 | Penguin 240, Seal 290 | SnowBunny 360 | Snowman 530 | PolarBear 770 | Reindeer 1.08K | ★FrostFox 1.7K | ★Yeti 2.9K |
+| 5 바다 | Crab 1.2K, Jellyfish 1.45K | Octopus 1.8K | BabyShark 2.65K | Dolphin 3.85K | ★Narwhal 5.4K | ★MermaidCat 8.4K | ★DragonKing 14.5K |
+| 6 캔디 랜드 | CottonSheep 6K, DonutPuppy 7.2K | JellyBear 9K | CupcakeCat 13K | MacaronBunny 19K | ★GummyDragon 27K | ★CandyUnicorn 42K | ★CookieKing 72K |
+| 7 구름 왕국 | Sheep 30K, ★CloudPuppy 36K | ★BabyCloud 45K | Dragon 66K | Unicorn 96K | ★Pegasus 135K | Phoenix 210K | ★AngelBunny 360K |
+| 8 우주 | Alien 150K, RobotPuppy 180K | MoonBunny 225K | SpaceCat 330K | ★AstroBear 480K | ★CometFox 675K | StarSlime 1.05M | CosmicWhale 2M |
+
+Eggs (cheap "zone egg" SpawnWeight 80 / premium SpawnWeight 20 on that zone's belt):
+| zone | cheap egg (price, hatch s) | premium egg (price, hatch s) |
+|---|---|---|
+| 1 | Basic 기본 알 (50, 8) | Forest 숲속 알 (500, 20) |
+| 2 | ★Lake 호수 알 (2K, 12) | Crystal 크리스탈 알 (16K, 30) |
+| 3 | ★Jungle 정글 알 (24K, 15) | Spotted 점박이 알 (200K, 40) |
+| 4 | Snow 겨울 알 (300K, 18) | Twilight 황혼 알 (2.4M, 50) |
+| 5 | Ocean 바다 알 (3M, 22) | ★Pearl 진주 알 (24M, 60) |
+| 6 | Candy 캔디 알 (30M, 26) | Rainbow 무지개 알 (240M, 70) |
+| 7 | ★Cloud 구름 알 (300M, 30) | Golden 황금 알 (2.4B, 80) |
+| 8 | Space 우주 알 (3B, 35) | Starlight 별빛 알 (400B, 100) |
+
+Cheap-egg weights: commons 60 % (split), U 22, R 11, E 5, L 1.6, M 0.35, S 0.05 (Space egg: no secret, Mythic 0.4).
+Premium weights: U 30, R 30, E 22, L 12.5, M 5, S 0.25 (Starlight: CosmicWhale **0.1 %**, the only source).
+
+---
+
+## 12. Tier visuals (`Config.Tiers[t].Visual`, implemented in `PetModels.applyTier`)
+
+Parts named `Eye`, `EyeWhite`, `Pupil`, `Shine`, `Blush` keep their colour. Particle rate and light grow with the tier.
+| tier | look |
+|---|---|
+| 1 기본 | unchanged |
+| 2 🥉 브론즈 | lerp colours 60 % toward copper (205,127,50), Reflectance 0.1, 2 copper sparkles/s, faint warm light |
+| 3 🥈 실버 | lerp 70 % toward (200,205,215), Material Metal, Reflectance 0.25, 3 white sparkles/s |
+| 4 🥇 골드 | lerp 70 % toward gold (255,200,60), Reflectance 0.15, 6 gold sparkles/s, gold PointLight 0.6 |
+| 5 🌈 레인보우 | vertical hue gradient bottom→top (v2 rainbow), 9 rainbow sparkles/s, light 1, model attribute `TierCycle = true` (client may slowly cycle the hue of nearby models) |
+| 6 💎 다이아 | lerp 80 % toward light blue (170,230,255), Material Glass, Transparency 0.2 (body parts only, never eyes), Reflectance 0.3, 12 white-cyan sparkles/s, light 1.2 |
+| 7 🌌 갤럭시 | deep navy → purple gradient (45,30,110 → 110,60,200) bottom→top, ~10 tiny **Neon** star specks (white/yellow balls 0.15–0.25) welded on the surface, 16 purple/blue/white star particles/s, light 1.5 |
+
+---
+
+## 13. LOOK lines for the model agent (cute chibi style like the existing builders, front = −Z)
+
+### New pets
+| id | name | look |
+|---|---|---|
+| SpiritDeer | 정령 사슴 | white-mint fawn, branching antlers with tiny green leaves, glowing mint Neon spots on its back, 2–3 tiny yellow Neon firefly balls floating beside it |
+| MoonKoi | 달빛 잉어 | chubby silver-white koi standing on its tail fin, orange-red patches, big flowing tail, pale-yellow Neon crescent moon on the forehead |
+| Peacock | 공작새 | round royal-blue bird, small crest, big upright fan tail of teal/green feathers with gold "eye" dots |
+| WhiteTiger | 백호 | chubby white tiger cub with blue-grey stripes, ice-blue Neon eyes, fluffy tail (Korean guardian 백호) |
+| FrostFox | 눈꽃 여우 | pale icy-blue fox, huge fluffy white tail ending in a Glass ice crystal, snowflake mark on the forehead |
+| Yeti | 예티 | round fluffy white snow-baby giant, light-blue face, two tiny horns, big feet, holding a small snowball |
+| Narwhal | 일각고래 | round light-blue whale, white belly, long spiral cream horn, tiny flippers |
+| MermaidCat | 인어 냥이 | cream kitten upper body with a teal-to-pink scaly fish tail, pink seashell on its head |
+| DragonKing | 용왕 | sea-green eastern long dragon curled in an S, gold horns and whiskers, holding a glowing white Neon pearl |
+| GummyDragon | 젤리 용 | translucent (Glass, Transparency ≈ 0.3) red-orange gummy baby dragon, stubby wings, sugar-sparkle dots |
+| CandyUnicorn | 사탕 유니콘 | pastel-pink unicorn, red-white candy-cane spiral horn, cotton-candy mane and tail (pink/blue blobs) |
+| CookieKing | 쿠키 왕 | gingerbread-man cookie (brown) with white icing lines, gumdrop buttons, tiny gold crown |
+| CloudPuppy | 구름 강아지 | white puppy made of puffy cloud balls, light-blue nose, floppy ears |
+| BabyCloud | 아기 구름 | small smiling white cloud (cluster of spheres) with rosy cheeks and a mini rainbow arc underneath |
+| Pegasus | 페가수스 | white pony with big white feathered wings, light-blue mane, golden hooves |
+| AngelBunny | 천사 토끼 | white bunny with small feathery wings and a floating gold Neon halo above the head |
+| AstroBear | 우주곰 | brown teddy bear in a white space suit, clear Glass bubble helmet, small antenna |
+| CometFox | 혜성 여우 | deep-blue fox whose tail is a glowing comet trail (Neon cyan → white pieces), star mark on the forehead |
+
+### New eggs
+| id | look |
+|---|---|
+| Lake | pale aqua egg with wavy blue water bands and a small green lily-pad patch on top |
+| Jungle | leaf-green egg with dark-green big-leaf patches and a yellow vine ring |
+| Pearl | pearly white-pink glossy egg (Reflectance), thin gold ring, tiny shell on top |
+| Cloud | white fluffy egg, soft lavender cloud puffs around the bottom, small golden star on top |
+
+### Accessories (`Config.Accessories`, Slot in brackets)
+PartyHat 고깔모자 [Head] pink cone, white polka dots, yellow pom-pom · Sunglasses 선글라스 [Face] black rounded shades ·
+BowTie 나비넥타이 [Neck] red bow tie · FlowerCrown 꽃 화관 [Head] ring of 6 tiny multicolour flowers with leaves ·
+Scarf 목도리 [Neck] red-white striped wrap with a hanging end · HeartGlasses 하트 안경 [Face] pink heart lenses (Transparency 0.2) ·
+Mustache 콧수염 [Face] curly brown mustache · TopHat 신사 모자 [Head] black top hat with a red band ·
+Backpack 꼬마 가방 [Back] small yellow backpack with straps · Medal 금메달 [Neck] blue ribbon with a gold disc ·
+WizardHat 마법사 모자 [Head] floppy purple cone with yellow Neon stars and a wide brim · Cape 망토 [Back] red cape with gold trim ·
+AngelWings 천사 날개 [Back] pair of white feathered wings · Crown 왕관 [Head] gold 5-point crown with red/blue gem balls.
+
+### Furniture (`Config.Furniture`, Size X × Y × Z)
+PottedPlant 화분 2×3.5×2 terracotta pot, round green bush · WoodChair 나무 의자 2.5×3.5×2.5 light wood, heart cut-out back ·
+PetBed 펫 쿠션 4×1.2×4 round pink cushion with a raised rim · Rug 동그란 러그 8×0.2×8 round pastel rug with a ring pattern (no collide) ·
+RoundTable 둥근 탁자 4×3×4 white round top, one thick leg · BeanBag 빈백 3.5×2.5×3.5 squishy lime blob · ToyBlocks 장난감 블록 3×2×3 stacked
+primary-colour cubes with letters · Cactus 선인장 2×4×2 cute cactus with a pink flower in a pot · FloorLamp 스탠드 조명 1.6×6×1.6 thin pole,
+cream shade, warm light · Sofa 폭신 소파 7×3.5×3 puffy sky-blue sofa with cushions · Bookshelf 책장 6×7×2 wooden shelf with colourful books ·
+CatTower 캣타워 3×7×3 beige posts with round platforms and a dangling ball · Bed 침대 6×3×8 white frame, pink blanket, two pillows ·
+StarLamp 별 조명 2×2.5×2 yellow Neon star on a small stand · RainbowRug 무지개 러그 10×0.2×6 rainbow-striped rug (no collide) ·
+BallPit 볼풀 8×2.5×8 low round pool filled with colourful balls · Aquarium 어항 5×4×2.5 glass tank on a cabinet, tiny fish, blue water ·
+Slide 미끄럼틀 4×6×10 kid slide with ladder, red slide, yellow rails · Fireplace 벽난로 6×6×2.5 brick fireplace with Neon orange fire ·
+Piano 피아노 6×4.5×3 glossy black upright piano with white keys · GoldStatue 황금 펫 동상 3×6×3 shiny gold cat statue on a marble base ·
+Throne 왕좌 4×7×4 red-velvet gold throne with a tall back and gem.
+
+---
+
+## 14. FILE OWNERSHIP (phase 2) — edit only your own files
+
+| group | files (★ = create) |
+|---|---|
+| LEAD (done) | `docs/DESIGN.md`, `src/shared/Config.luau`, `src/shared/Remotes.luau`, `src/server/DataService.luau` |
+| WORLD | `src/server/WorldBuilder.luau`, `src/server/ConveyorService.luau`, `src/server/CoinFieldService.luau`, ★`src/server/ZoneService.luau`, `src/client/CoinField.luau`, ★`src/client/MapWindow.luau`, ★`src/client/ZoneClient.luau` |
+| HOUSE-VISUAL | `src/server/HouseBuilder.luau`, ★`src/shared/HouseLayout.luau` |
+| PLOT-LOGIC | `src/server/PlotService.luau`, `src/server/FollowService.luau`, `src/server/init.server.luau` |
+| MODELS | `src/shared/PetModels/init.luau` + all files in `src/shared/PetModels/` (★ new pet/egg/accessory files), ★`src/shared/FurnitureModels/` (folder module) |
+| UI-CORE | `src/client/Hud.luau`, `BagWindow.luau`, `HouseWindow.luau`, `IndexWindow.luau`, `RebirthWindow.luau`, `State.luau`, `UiKit.luau`, `WorldFx.luau`, `HatchFx.luau`, `Toasts.luau`, `Tips.luau`, `init.client.luau` |
+| UI-NEW | ★`src/client/ShopWindow.luau`, ★`src/client/DecorateMode.luau`, ★`src/server/ShopService.luau` |
+| BOARD | ★`src/server/LeaderboardService.luau`, ★`src/client/LeaderboardWindow.luau` |
+
+Rules: code against this contract even when the other side is not written yet (a missing-module error from `check.sh` for a
+file another group is creating is expected until integration — nothing else is). Need a Config/Remotes/DataService change?
+Put it in your report; do not edit those files. Keep player text Korean.
+
+---
+
+## 15. Known breakages in the v2 code against the new data (the owners fix these)
+
+- `PlotService.luau:117-123,712-736` floor logic is 2-floor only (BuyFloor would set Floors = 2 forever; uses `House.FloorPrice`); `:174` SlotCFrame without theme; `:389` BuildPet without Acc; `:455-462` server bob tween; `:26,1009-1030` fusion collects/ranks Slot pets (LOC_RANK has Slot); `:1144` income ignores the theme bonus (use `DataService.GetIncome`).
+- `HouseBuilder.luau:21-55` all constants derive from `Layout.PlotSize` (now 64) and assume 2 floors/size 40; `:246` `floorTopOf` only knows floor 2; `:343-363` overhead sign beam blocks riders; `:984` SlotCFrame has no themeId.
+- `ConveyorService.luau:42-47,325-339` single belt at the home conveyor rolls **all 16 eggs** (later zones' eggs appear at home); `:441,455` fine; billboard uses `egg.MinRebirth` (still filled).
+- `CoinFieldService.luau:15-17,111-138,197,300-309` only the home field box; `FC.Count`; old value formula (no CoinMult/MaxBoost, IncomeScale now 30); `:309` extra `DataService.Sync` per pickup (remove).
+- `WorldBuilder.luau:11-26,222-264,411` v2 one-map bounds/paths; plots are now 64 wide at z ±80.
+- `FollowService.luau:241` BuildPet without Acc; `:408` no MaxWalkSpeed clamp.
+- `PetModels/init.luau:1058-1121,1124-1133` tiers clamp to 1..3 (2/3 visuals only); 18 pet + 4 egg builders missing (fallback Chick/Basic with a warning); no accessories.
+- `client/State.luau:158` clamps Floors to 2; no CoinSync handling — **coins in the HUD stop updating** until the next full DataSync.
+- `client/HouseWindow.luau:60-95,262-295` 2-floor logic and `House.FloorPrice`.
+- `client/BagWindow.luau:104-110` fuse button counts Slot pets (State.CountSame); `:407` own sort (use Config.CompareItems), viewports for every card (make lazy).
+- `client/IndexWindow.luau:66` every secret shows "별빛 알에서… 🌌"; tier badges assume tiers 2/3.
+- `init.server.luau` / `init.client.luau:103` do not start the new modules / handle CoinSync and LeaderboardSync yet.
+
+---
+
+## 16. Balance curve (scratchpad `v3/sim3.py`, active player, ~0.35 field coins/s, greedy buys, auto-fuse)
+
+| milestone | play time |
+|---|---|
+| zone 2 호수 (rebirth 1) | ≈ 36 min |
+| zone 3 정글 (R2) | ≈ 1.3 h |
+| zone 4 겨울 산 (R3) | ≈ 2.2 h |
+| zone 5 바다 (R5) | ≈ 4.4 h |
+| zone 6 캔디 랜드 (R7) | ≈ 7 h |
+| zone 7 구름 왕국 (R10) | ≈ 12 h |
+| zone 8 우주 (R14) | ≈ 19.5 h |
+| CosmicWhale | ≈ 23–32 h (Starlight 400B each, 0.1 %) |
+| rebirth 25 / floor 10 | ≈ 70 h |
+Floors: 2 ≈ 0.7 h, 3 ≈ 1.4 h, 4 ≈ 2.4 h, 5 ≈ 4.5 h, 6 ≈ 8.5 h, 7 ≈ 13 h, 8 ≈ 29 h, 9 ≈ 46 h. Offline earnings (50 %, 2 h cap) come on top.
+If you change pet incomes or prices, re-run the sim (incomes there are Config ÷ 2).
