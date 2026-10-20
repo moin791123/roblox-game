@@ -17,11 +17,9 @@ return function(Kit, PET_BUILDERS, EGG_BUILDERS)
 		return EGG_S.X * math.sqrt(math.max(1 - (y / EGG_S.Y) ^ 2, 0))
 	end
 
-	-- 비스듬히 기운 띠 (올라간 쪽이 뜨지 않게 반지름을 그쪽에 맞춰요)
+	-- 비스듬히 기운 띠: Kit.eggTiltBand (기운 단면 타원 가운데에 맞춰서 어디서도 안 묻혀요)
 	local function tiltRing(b, y, tilt, t, color, mat)
-		local r = radAt(math.abs(y) + radAt(y) * math.sin(math.abs(tilt)) + t / 2) + 0.03
-		local D = 2 * r
-		return addPart(b, "Ring", "Cyl", V(t, D, D), CFrame.new(EGG_C + V(0, y, 0)) * CFrame.Angles(0, 0, math.pi / 2 + tilt), color, mat)
+		return Kit.eggTiltBand(b, "Ring", y, tilt, t, color, mat)
 	end
 
 	-- 호수 알: 연한 물빛 바탕, 파란 물결 띠(지그재그 8조각) + 아래 얇은 띠, 꼭대기 연잎 + 분홍 꽃봉오리, 물방울

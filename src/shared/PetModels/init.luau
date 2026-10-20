@@ -826,6 +826,35 @@ local function eggRing(b: Builder, y: number, t: number, color: Color3, mat: Enu
 	return addPart(b, "Ring", "Cyl", V(t, D, D), CFrame.new(EGG_C + V(0, y, 0)) * CFrame.Angles(0, 0, math.pi / 2), color, mat)
 end
 
+-- 비스듬한 띠 (사선 줄무늬): 중심 기준 높이 y 에서 Z 축으로 tilt 만큼 기운 고리.
+-- 기운 면이 알을 자른 단면(타원)의 가운데로 고리 중심을 옮기고, 고리 판 3장(윗면/가운데/아랫면)에서
+-- 껍데기까지 가장 먼 거리 + 0.025 를 반지름으로 써요 → 어디서도 안 묻히고 턱도 작아요.
+local function eggTiltBand(b: Builder, name: string, y: number, tilt: number, t: number, color: Color3, mat: Enum.Material?): BasePart
+	local AX, AY = EGG_S.X, EGG_S.Y
+	local axis = V(-math.sin(tilt), math.cos(tilt), 0)
+	local u = V(math.cos(tilt), math.sin(tilt), 0)
+	local K = u.X * u.X / (AX * AX) + u.Y * u.Y / (AY * AY)
+	local oc = V(0, y, 0) + u * (-(y * u.Y) / (AY * AY) / K) -- 단면 타원의 가운데 (알 중심 기준)
+	local far = 0
+	for _, s in { -t / 2, 0, t / 2 } do
+		local o = oc + axis * s
+		for i = 0, 23 do
+			local a = i * math.pi / 12
+			local dv = u * math.cos(a) + Vector3.zAxis * math.sin(a)
+			-- o + k·dv 가 껍데기 위에 오는 k (양수 근)
+			local A = (dv.X * dv.X + dv.Z * dv.Z) / (AX * AX) + dv.Y * dv.Y / (AY * AY)
+			local B = 2 * ((o.X * dv.X + o.Z * dv.Z) / (AX * AX) + o.Y * dv.Y / (AY * AY))
+			local C = (o.X * o.X + o.Z * o.Z) / (AX * AX) + o.Y * o.Y / (AY * AY) - 1
+			local disc = B * B - 4 * A * C
+			if disc > 0 then
+				far = math.max(far, (-B + math.sqrt(disc)) / (2 * A))
+			end
+		end
+	end
+	local D = 2 * (far + 0.025)
+	return addPart(b, name, "Cyl", V(t, D, D), CFrame.new(EGG_C + oc) * CFrame.Angles(0, 0, math.pi / 2 + tilt), color, mat)
+end
+
 local EGG_BUILDERS: { [string]: (Builder) -> () } = {}
 
 -- 기본 알: 크림색에 파스텔 물방울
@@ -1084,6 +1113,7 @@ local Kit = {
 	dropParts = dropParts,
 	accAnchor = accAnchor,
 	-- v4: 무늬 알 (EggsPattern.luau 가 채워요). Config.Eggs[id].Look 표로 알을 만들어요
+	eggTiltBand = eggTiltBand, -- (b, name, y, tilt, t, color, mat?) 껍데기에 딱 붙는 사선 띠
 	eggFromLook = nil :: ((Builder, any) -> ())?,
 	EGG_PATTERNS = {} :: { string },
 }

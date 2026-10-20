@@ -125,33 +125,8 @@ return function(Kit, _PET_BUILDERS, _EGG_BUILDERS)
 		return first
 	end
 
-	-- 비스듬한 띠 (캔디 줄무늬): 중심 기준 높이 y0 에서 Z 축으로 tilt 만큼 기운 고리.
-	-- 기운 면이 알을 자른 단면(타원)의 가운데로 고리 중심을 옮기고, 고리 판 3장(윗면/가운데/아랫면)에서
-	-- 껍데기까지 가장 먼 거리 + 0.025 를 반지름으로 써요 → 어디서도 안 묻히고 턱도 작아요.
-	local function tiltBand(b, name, y0, tilt, t, color, mat)
-		local axis = V(-math.sin(tilt), math.cos(tilt), 0)
-		local u = V(math.cos(tilt), math.sin(tilt), 0)
-		local w = Vector3.zAxis
-		local K = (u.X * u.X) / (AX * AX) + (u.Y * u.Y) / (AY * AY)
-		local oc = V(0, y0, 0) + u * (-(y0 * u.Y) / (AY * AY) / K) -- 단면 타원의 가운데
-		local far = 0
-		for _, s in { -t / 2, 0, t / 2 } do
-			local o = oc + axis * s
-			for i = 0, 23 do
-				local a = i * TAU / 24
-				local dv = u * math.cos(a) + w * math.sin(a)
-				local A = (dv.X * dv.X + dv.Z * dv.Z) / (AX * AX) + dv.Y * dv.Y / (AY * AY)
-				local B = 2 * ((o.X * dv.X + o.Z * dv.Z) / (AX * AX) + o.Y * dv.Y / (AY * AY))
-				local C = (o.X * o.X + o.Z * o.Z) / (AX * AX) + o.Y * o.Y / (AY * AY) - 1
-				local disc = B * B - 4 * A * C
-				if disc > 0 then
-					far = math.max(far, (-B + math.sqrt(disc)) / (2 * A))
-				end
-			end
-		end
-		local D = 2 * (far + 0.025)
-		return addPart(b, name, "Cyl", V(t, D, D), CFrame.new(EGG_C + oc) * rot(math.pi / 2 + tilt), color, mat)
-	end
+	-- 비스듬한 띠 (캔디 줄무늬): init.luau 의 Kit.eggTiltBand (단면 타원 가운데에 맞춘 고리)
+	local tiltBand = Kit.eggTiltBand
 
 	-- 아래쪽이 다른 색으로 물든 알: 껍데기보다 살짝 홀쭉한 타원체가 월드 높이 H 아래에서만 껍데기 밖으로 나와요.
 	-- 바닥은 껍데기 바닥(y = 0)과 맞닿아서 피벗이 그대로예요. H 는 0.4 ~ 1.3.

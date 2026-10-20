@@ -11,14 +11,9 @@ return function(Kit, PET_BUILDERS, EGG_BUILDERS)
 		return facing(p + n * (lift or 0), n)
 	end
 
-	-- 비스듬히 기운 띠 (앞에서 보면 사선 줄무늬). 높이 올라간 쪽이 뜨지 않게 반지름을 그쪽에 맞춰요.
+	-- 비스듬히 기운 띠 (앞에서 보면 사선 줄무늬): Kit.eggTiltBand (기운 단면 타원 가운데에 맞춰서 어디서도 안 묻혀요)
 	local function tiltRing(b, y, tilt, t, color, mat)
-		local function rad(yy)
-			return EGG_S.X * math.sqrt(math.max(1 - (yy / EGG_S.Y) ^ 2, 0))
-		end
-		local r = rad(math.abs(y) + rad(y) * math.sin(tilt) + t / 2) + 0.03
-		local D = 2 * r
-		return addPart(b, "Ring", "Cyl", V(t, D, D), CFrame.new(EGG_C + V(0, y, 0)) * CFrame.Angles(0, 0, math.pi / 2 + tilt), color, mat)
+		return Kit.eggTiltBand(b, "Ring", y, tilt, t, color, mat)
 	end
 
 	-- 바다 알: 바다색 바탕, 하양/청록 물결 띠, 진주 구슬, 분홍 조개 점
