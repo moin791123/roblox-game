@@ -1,3 +1,4 @@
+--!strict
 -- 집 배치 계산 (순수 수학). 서버(HouseBuilder / ShopService / ZoneService)와 클라이언트(DecorateMode)가 같이 써요.
 -- 인스턴스를 만들지 않고 기다리지도 않아요. Config 만 읽어요. (설계: docs/DESIGN.md "HouseLayout")
 -- 좌표는 전부 플롯 로컬: origin = 플롯 땅 가운데 (y = 0), 입구 = 로컬 -Z (z = -32), 집 뒤 = +Z.
