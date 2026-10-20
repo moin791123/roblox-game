@@ -21,6 +21,7 @@ local pendingLabel: TextLabel
 local rebirthButton: TextButton
 local rebirthPill: Frame
 local rebirthPillLabel: TextLabel
+local sideColumn: Frame? = nil
 local lastPending = -1
 local lastIncome = -1
 local lastCanRebirth: boolean? = nil
@@ -261,6 +262,7 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 		BackgroundTransparency = 1,
 		Parent = gui,
 	})
+	sideColumn = column
 	local GAP = 8
 	local grid: UIGridLayout = Make("UIGridLayout", {
 		SortOrder = Enum.SortOrder.LayoutOrder,
@@ -380,6 +382,18 @@ function Hud.SetCoins(coins: number, _pending: number, income: number)
 
 	updatePending()
 	refreshRebirth()
+end
+
+-- 왼쪽 큰 버튼들 보이기/숨기기 (꾸미기 모드 동안 숨겨요)
+function Hud.SetSideVisible(visible: boolean)
+	local column = sideColumn
+	if not column or column.Visible == visible then
+		return
+	end
+	column.Visible = visible
+	if visible then
+		UiKit.Pop(column, 0.3)
+	end
 end
 
 -- 전체 스냅샷: 펫 수, 환생 버튼 (코인은 SetCoins 가 해요)
