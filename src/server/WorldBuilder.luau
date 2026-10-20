@@ -1166,6 +1166,8 @@ local function buildGate(arches: Instance, gates: Instance, k: number)
 	local ringH = 4
 	local rings = math.ceil(ARCH_BEAM_Y / ringH)
 	for _, sz in { -1, 1 } do
+		-- 물속까지 내려가는 받침 (기둥이 떠 보이지 않게)
+		column(m, Vector3.new(gx, SEA_Y - 2, sz * pillarZ), 2 - SEA_Y, 3.4, darken(pal.Trim, 0.1))
 		for i = 0, rings - 1 do
 			local p = column(m, Vector3.new(gx, i * ringH, sz * pillarZ), ringH, 2.6, if i % 2 == 0 then pal.Accent else COLORS.White)
 			p.CanCollide = true

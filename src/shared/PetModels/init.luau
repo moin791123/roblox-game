@@ -1675,14 +1675,30 @@ local function headAnchor(pr: Probe, fit: AccFit): (CFrame, BasePart)
 	end
 	local c = if ref then centerOf(ref) else (pr.lo + pr.hi) * 0.5
 	local depth = if ref then ref.hi.Z - ref.lo.Z else pr.hi.Z - pr.lo.Z
+	local cx = c.X
+	if not pr.head then
+		-- 머리 파트가 없는 펫 (구름/슬라임): 가운데 근처에서 가장 높은 곳 (꼭대기 뭉치 위)
+		local bestY = -math.huge
+		for _, dx in { 0, -0.12, 0.12, -0.24, 0.24 } do
+			local yy = topY(cands, pr, c.X + dx * pr.refW, c.Z - 0.12 * depth)
+			if yy and yy > bestY + 0.05 then
+				bestY, cx = yy, c.X + dx * pr.refW
+			end
+		end
+	end
 	local bestCf: CFrame? = nil
 	local bestPart: BasePart? = nil
 	local bestS, bestScore = 1, math.huge
 	for i, f in HEAD_TRIES do
-		local x, z = c.X, c.Z + f * depth
+		local x, z = cx, c.Z + f * depth
 		local y, hit = topY(cands, pr, x, z)
 		if y and hit then
-			local s = math.clamp((hit.hi.X - hit.lo.X) / 2.1, 0.6, 2)
+			-- 크기: 앉은 파트 폭 (헬멧이면 헬멧), 머리 없는 펫은 몸 폭보다 작아지지 않게
+			local w = hit.hi.X - hit.lo.X
+			if not pr.head then
+				w = math.max(w, pr.refW)
+			end
+			local s = math.clamp(w / 2.1, 0.6, 2)
 			local r = 0.45 * s
 			local function rim(dx: number, dz: number): number
 				local yy = topY(cands, pr, x + dx, z + dz)
@@ -1802,8 +1818,9 @@ local function neckAnchor(pr: Probe, fit: AccFit): (CFrame, BasePart)
 	local u = math.clamp(pr.refW / 2.1, 0.6, 2)
 	local H = pr.hi.Y - pr.lo.Y
 	local y = neckHeight(pr)
+	local headless = y == nil
 	if not y then
-		-- 머리가 따로 없는 펫: 입 아래 → 눈 아래 → 40 % 높이
+		-- 머리가 따로 없는 펫: 입 아래 → 눈 아래 → 40 % 높이 (나비넥타이 윗변이 입에 안 닿게)
 		local mouthLo, eyeSum, eyeN = math.huge, 0, 0
 		for _, sh in pr.shapes do
 			if sh.part.Name == "Mouth" and math.abs(sh.cf.Position.X - cx) < 0.5 * pr.refW then
@@ -1814,9 +1831,9 @@ local function neckAnchor(pr: Probe, fit: AccFit): (CFrame, BasePart)
 			end
 		end
 		if mouthLo < math.huge then
-			y = mouthLo - 0.16 * u
+			y = mouthLo - (0.06 + 0.2 * u)
 		elseif eyeN > 0 then
-			y = eyeSum / eyeN - 0.5 * u
+			y = eyeSum / eyeN - 0.55 * u
 		else
 			y = pr.lo.Y + 0.4 * H
 		end
@@ -1830,14 +1847,24 @@ local function neckAnchor(pr: Probe, fit: AccFit): (CFrame, BasePart)
 	local xL = if pL then pL.X else pr.lo.X
 	local xR = if pR then pR.X else pr.hi.X
 	local rx, rz = (xR - xL) * 0.5, (zB - zF) * 0.5
+	-- 크기: 목 둘레 기준 (꼬마 몸 목 = 0.72). 머리 없는 펫은 둘레가 몸 전체라 몸 폭 기준을 넘지 않게
 	local s = math.clamp(rx / 0.72, 0.6, 2)
+	if headless then
+		s = math.min(s, u)
+	end
 	local pos = V(cx, ny, zF - 0.02 * s)
 	fit.s = s
 	fit.rx = rx + 0.03 * s
 	fit.rz = rz + 0.03 * s
 	fit.ring = V((xL + xR) * 0.5 - cx, 0, zc - pos.Z)
-	local cy = ny - 0.42 * s
+	-- 가슴 (메달 원판): 몸 위에 머물고, 몸이 뒤로 쑥 들어가면 목 앞 바로 아래에 매달려요
+	local cy = ny - (if headless then 0.32 else 0.42) * s
+	local b = pr.body
+	if b then
+		cy = math.max(cy, b.lo.Y + 0.2 * (b.hi.Y - b.lo.Y))
+	end
 	local cz = frontZ(solid, pr, cx, cy) or zF
+	cz = math.min(cz, zF + 0.12 * s)
 	fit.chest = V(0, cy - ny, cz - pos.Z)
 	return CFrame.new(pos), onPart
 end

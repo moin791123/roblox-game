@@ -1,58 +1,49 @@
--- 집(플롯) 외형 빌더: 바닥·벽·기둥·지붕·받침대·2층(계단/난간)·앞마당·테마 장식을 지어요.
--- (설계: docs/DESIGN.md "HouseBuilder"). 순수 빌드만 해요: 이벤트/루프/yield 없음. PlotService 가 불러서 써요.
--- 좌표는 전부 플롯 로컬 (origin = 바닥 중심 y=0, 입구 = 로컬 -Z). 받침대 1~12 위치는 예전 PlotService 와 똑같아요.
+-- 집(플롯) 외형 빌더 v3: 테마 크기(26~52)에 맞는 집, 1~10층, 유리 계단 탑, 층마다 엘리베이터, 받침대, 지붕,
+-- 울타리 마당(문·간판·우편함·펫 집), 테마 장식을 지어요. (설계: docs/DESIGN.md "HouseBuilder")
+-- 순수 빌드만 해요: 이벤트/루프/yield 없음. PlotService 가 불러서 써요. 모든 파트는 Anchored.
+-- 배치 숫자(받침대 자리, 계단, 엘리베이터, 입구 …)는 전부 HouseLayout 이 정해요 (서버·클라이언트 공용).
+-- 좌표는 플롯 로컬 (origin = 땅 가운데 y = 0, 입구 = 로컬 -Z, z = -32).
+--
+-- 펫 타고 지나가기 규칙: 마당 문·현관 문 폭 ≥ 10, 길 위는 y 14 까지 아무것도 없음 (간판은 옆 기둥에),
+-- 2층 바닥은 현관 위가 뚫려 있고, 1층짜리 집은 처마가 14.5 위. 층 사이 천장 11, 계단은 칸 높이 1.2 + 투명 경사로,
+-- 계단 위 머리 공간 ≥ 11 (반층씩 꺾이는 계단이라 위층 계단이 정확히 12 위에 있어요).
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local HouseLayout = require(ReplicatedStorage.Shared.HouseLayout)
 
 local HouseBuilder = {}
 
 export type Handles = {
 	House: Model,
-	Pedestals: { [number]: BasePart }, -- 슬롯 번호 → 받침대 윗판. 13~24 는 floors == 2 일 때만 있어요
+	Pedestals: { [number]: BasePart }, -- 슬롯 번호 → 받침대 윗판 (지어진 층만)
 	SpawnPoint: BasePart,
 	Collector: BasePart,
+	Elevators: { [number]: BasePart }, -- 층 → 엘리베이터 문 (이름 "Elevator", 속성 Floor, 프롬프트 있음)
 	Bounds: { MinY: number, MaxY: number }, -- 월드 y 범위 (바닥 밑 ~ 지붕 꼭대기)
 }
 
 ----------------------------------------------------------------------
--- 배치 상수 (플롯 로컬 좌표)
+-- 상수
 ----------------------------------------------------------------------
-local SIZE = Config.Layout.PlotSize -- 40
-local HALF = SIZE / 2
-local FLOOR_TOP = 0.2 -- 1층 바닥 윗면 (땅 y=0 보다 살짝 위, z-fighting 방지)
-local WALL_H = 3
-local WALL_T = 1
-local GAP = 12 -- 입구 너비 (문 없음, 막는 것 없음)
-local CAP_TOP = FLOOR_TOP + WALL_H + 0.5 -- 벽 위 장식띠 윗면 (작은 장식을 올려 두는 자리)
-local PILLAR = 2 -- 모서리 기둥 두께
-local POST_H = 8.6 -- 입구 기둥 높이 (공이 1층 처마(ROOF_Y1) 아래에 오도록)
-local PED_BASE_H = 0.6
-local PED_TOP_H = 1.0
-local PED_H = PED_BASE_H + PED_TOP_H -- 받침대 윗면 = 바닥 + 1.6 (1층: 1.8, 2층: 12.6)
-local PED_BASE_D = 5.4
-local PED_TOP_D = 4.6
-local SLOT_COLS = { -13.5, -4.5, 4.5, 13.5 } -- x (PlotService 와 동일)
-local SLOT_ROWS = { -4, 4.5, 13 } -- z, 입구에 가까운 줄부터
-local SLOTS_PER_FLOOR = #SLOT_COLS * #SLOT_ROWS -- 12
-local COLLECTOR_POS = Vector3.new(-12, 0, -13) -- 수금 패드 (예전과 동일)
-local SPAWN_POS = Vector3.new(0, FLOOR_TOP + 0.5, -9) -- 스폰 (예전과 동일)
-local FLOOR_HEIGHT = 11 -- 2층 슬래브 윗면 (두께 1: y 10 ~ 11)
-local ROOF_Y1 = 10 -- 1층 집 처마 높이
-local ROOF_Y2 = 21 -- 2층 집 처마 높이
-local ROOF_H = 6 -- 지붕 높이 (처마 → 용마루)
-local ROOF_S = SIZE + 2 -- 지붕 한 변 (처마가 1씩 튀어나옴)
-local ROOF_DX = 14 -- 양 끝 경사면 깊이 (용마루 길이 = ROOF_S - 2 × ROOF_DX = 14, X 방향)
-local ROOF_DZ = ROOF_S / 2 -- 앞뒤 경사면 깊이
-local STAIR_X0 = 7.5 -- 계단 시작 x (앞벽 오른쪽, 입구 기둥 옆에서 +X 로 올라감)
-local STAIR_Z = -16.9 -- 계단 중심 z (폭 4: -18.9 ~ -14.9)
-local STAIR_W = 4
-local STEP_RISE = 1.2 -- 한 칸 높이 (≤ 1.2: 캐릭터가 걸어 올라갈 수 있어요)
-local STEP_RUN = 1.27 -- 한 칸 깊이
-local STEP_COUNT = 9 -- 9 × 1.2 = 10.8 = FLOOR_HEIGHT - FLOOR_TOP
-local RAIL_H = 1.3
-local RAIL_SPACING = 6
-local YARD_Z = -HALF - 1.8 -- 앞마당 장식 줄 (앞벽 바깥, 입구 길 |x| ≤ 5.5 은 비워 둠)
+local FLOOR1_TOP = HouseLayout.FLOOR1_TOP -- 0.2
+local RAIL_H = HouseLayout.RAIL_H -- 3
+local SLAB_T = HouseLayout.SLAB_T -- 1
+local PED_BASE_H = HouseLayout.PED_BASE_H
+local PED_TOP_H = HouseLayout.PED_TOP_H
+local SLOTS_PER_FLOOR = Config.Plot.SlotsPerFloor
+local PLOT_HALF = Config.Layout.PlotSize / 2 -- 32
+local FENCE = PLOT_HALF - 0.4 -- 울타리 가운데 선 (±31.6)
+local FENCE_T = 0.6
+local FENCE_H = 2.2
+local GATE_HALF = 6 -- 마당 문 반 폭 (기둥 안쪽 면 사이 12)
+local PILLAR = 1.6 -- 모서리 기둥
+local CAP_TOP = FLOOR1_TOP + RAIL_H + 0.5 -- 1층 벽 위 장식띠 윗면 (작은 장식을 올려 두는 자리)
+local DOOR_POST_TOP = 10.2 -- 현관 기둥 (2층 바닥 아래에서 끝나요)
+local ELEV_FRAME_H = 9
+local ELEV_DOOR_W = 4
+local ELEV_DOOR_H = 7.4
+local RAMP_T = 0.4 -- 투명 경사로 두께
 
 ----------------------------------------------------------------------
 -- 색/재질
@@ -67,7 +58,9 @@ local WOOD = Color3.fromRGB(150, 105, 70)
 local DARK = Color3.fromRGB(70, 50, 75)
 local LAMP = Color3.fromRGB(255, 222, 160)
 local RED = Color3.fromRGB(255, 90, 100)
+local ROYAL_RED = Color3.fromRGB(200, 35, 60)
 local SKY = Color3.fromRGB(150, 210, 255)
+local GLASS = Color3.fromRGB(205, 235, 255)
 
 local FLOWER_COLORS = {
 	Color3.fromRGB(255, 150, 190),
@@ -85,8 +78,13 @@ local RAINBOW_COLORS = {
 	Color3.fromRGB(140, 190, 255),
 	Color3.fromRGB(200, 160, 255),
 }
+local NEBULA_COLORS = {
+	Color3.fromRGB(190, 110, 255),
+	Color3.fromRGB(255, 120, 210),
+	Color3.fromRGB(110, 220, 255),
+}
 
-type Theme = { Name: string, Price: number, Floor: Color3, Wall: Color3, Roof: Color3, Accent: Color3, Deco: string }
+type Theme = { Name: string, Price: number, Size: number, Floor: Color3, Wall: Color3, Roof: Color3, Accent: Color3, Deco: string }
 local THEMES = (Config.House.Themes :: any) :: { [string]: Theme }
 
 -- 모르는 테마는 Basic
@@ -105,6 +103,8 @@ local MATERIALS: { [string]: Mats } = {
 	shells = { Floor = Enum.Material.Sand, Wall = Enum.Material.SmoothPlastic, Roof = Enum.Material.SmoothPlastic },
 	stars = { Floor = Enum.Material.Metal, Wall = Enum.Material.Metal, Roof = Enum.Material.SmoothPlastic },
 	rainbow = { Floor = Enum.Material.SmoothPlastic, Wall = Enum.Material.SmoothPlastic, Roof = Enum.Material.SmoothPlastic },
+	royal = { Floor = Enum.Material.Marble, Wall = Enum.Material.SmoothPlastic, Roof = Enum.Material.SmoothPlastic },
+	galaxy = { Floor = Enum.Material.SmoothPlastic, Wall = Enum.Material.SmoothPlastic, Roof = Enum.Material.SmoothPlastic },
 }
 
 local function lighter(c: Color3, k: number): Color3
@@ -115,10 +115,40 @@ local function darker(c: Color3, k: number): Color3
 	return c:Lerp(Color3.new(0, 0, 0), k)
 end
 
+-- 마당 바닥/길 모양 (테마 장식 종류별)
+type YardLook = { Ground: Color3?, GroundMat: Enum.Material, Path: Color3? }
+local YARD_LOOK: { [string]: YardLook } = {
+	flowers = { Ground = Color3.fromRGB(140, 210, 115), GroundMat = Enum.Material.Grass, Path = Color3.fromRGB(250, 235, 200) },
+	candy = { Ground = Color3.fromRGB(255, 220, 235), GroundMat = Enum.Material.SmoothPlastic, Path = Color3.fromRGB(255, 255, 255) },
+	mushrooms = { Ground = Color3.fromRGB(115, 180, 95), GroundMat = Enum.Material.Grass, Path = Color3.fromRGB(205, 165, 120) },
+	shells = { Ground = Color3.fromRGB(245, 228, 175), GroundMat = Enum.Material.Sand, Path = Color3.fromRGB(255, 245, 225) },
+	stars = { Ground = Color3.fromRGB(60, 52, 95), GroundMat = Enum.Material.SmoothPlastic, Path = Color3.fromRGB(140, 130, 190) },
+	rainbow = { Ground = Color3.fromRGB(235, 245, 255), GroundMat = Enum.Material.SmoothPlastic, Path = Color3.fromRGB(255, 240, 200) },
+	royal = { Ground = Color3.fromRGB(120, 195, 105), GroundMat = Enum.Material.Grass, Path = ROYAL_RED },
+	galaxy = { Ground = Color3.fromRGB(35, 28, 70), GroundMat = Enum.Material.SmoothPlastic, Path = Color3.fromRGB(90, 70, 170) },
+}
+
 ----------------------------------------------------------------------
 -- 파트 도우미 (모두 Anchored. Local = 플롯 로컬 CFrame, 부모 기본값 = House)
 ----------------------------------------------------------------------
-type Ctx = { origin: CFrame, house: Model, theme: Theme, mats: Mats, floors: number, count: number }
+type Ctx = {
+	origin: CFrame,
+	house: Model,
+	theme: Theme,
+	deco: string,
+	mats: Mats,
+	floors: number,
+	count: number,
+	L: HouseLayout.Layout,
+	ownerId: number,
+	eaveY: number, -- 처마 (지붕 밑) 높이
+	roofBase: number, -- 지붕 쐐기 밑면
+	roofH: number, -- 지붕 높이
+	roofD: number, -- 지붕 앞뒤 경사 깊이 (용마루 → 처마)
+	yardSpots: { Vector3 }, -- 앞마당 빈 자리 (y = 0)
+	sideSpots: { Vector3 }, -- 집 양옆 마당
+	capSpots: { { pos: Vector3, alongX: boolean } }, -- 1층 벽 위 (y = CAP_TOP)
+}
 
 local function finish(ctx: Ctx, p: BasePart, props: { [string]: any }): BasePart
 	p.Anchored = true
@@ -147,7 +177,7 @@ local function part(ctx: Ctx, props: { [string]: any }): Part
 	return p
 end
 
--- 장식: 안 부딪히고 안 밟혀요 (받침대 주변은 걸어 다닐 수 있게)
+-- 장식: 안 부딪히고 안 밟혀요
 local function deco(ctx: Ctx, props: { [string]: any }): Part
 	props.CanCollide = false
 	props.CanTouch = false
@@ -160,10 +190,13 @@ local function wedge(ctx: Ctx, props: { [string]: any }): WedgePart
 	return p
 end
 
-local function cornerWedge(ctx: Ctx, props: { [string]: any }): CornerWedgePart
-	local p = Instance.new("CornerWedgePart")
-	finish(ctx, p, props)
-	return p
+-- 축 정렬 상자 (플롯 로컬 최소/최대 좌표로)
+local function box(ctx: Ctx, name: string, x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, props: { [string]: any }?): Part
+	local pr: { [string]: any } = props or {}
+	pr.Name = name
+	pr.Size = Vector3.new(math.abs(x1 - x0), math.abs(y1 - y0), math.abs(z1 - z0))
+	pr.Local = CFrame.new((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2)
+	return part(ctx, pr)
 end
 
 -- 세로 원기둥 (바닥 중심 x,z / 바닥 높이 bottomY / 높이 h / 지름 d)
@@ -232,258 +265,434 @@ local function makeBillboard(adornee: BasePart, offsetY: number, w: number, h: n
 	return bb, label
 end
 
-----------------------------------------------------------------------
--- 받침대 좌표 (순수 함수)
-----------------------------------------------------------------------
-local function slotXZ(slot: number): (number, number)
-	local i = (slot - 1) % SLOTS_PER_FLOOR -- 0..11, 2층도 같은 격자
-	local row = math.floor(i / #SLOT_COLS) + 1
-	local col = i % #SLOT_COLS + 1
-	return SLOT_COLS[col], SLOT_ROWS[row]
+-- 파트 한 면에 글자 (SurfaceGui)
+local function surfaceText(p: BasePart, face: Enum.NormalId, text: string, pos: UDim2, size: UDim2): TextLabel
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = face
+	sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	sg.PixelsPerStud = 40
+	sg.LightInfluence = 0
+	local label = Instance.new("TextLabel")
+	label.Size = size
+	label.Position = pos
+	label.BackgroundTransparency = 1
+	label.TextScaled = true
+	label.Font = Enum.Font.FredokaOne
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextStrokeTransparency = 0.35
+	label.TextStrokeColor3 = Color3.fromRGB(60, 40, 70)
+	label.Text = text
+	label.Parent = sg
+	sg.Parent = p
+	return label
 end
 
--- 받침대가 놓이는 바닥 윗면 높이 (1층 0.2 / 2층 11)
-local function floorTopOf(slot: number): number
-	return if Config.SlotFloor(slot) == 2 then FLOOR_HEIGHT else FLOOR_TOP
-end
-
--- 지붕 윗면이 처마에서 얼마나 솟았는지 (장식을 지붕 위에 얹을 때)
-local function roofRise(x: number, z: number): number
-	local fz = 1 - math.abs(z) / ROOF_DZ
-	local ex = math.abs(x) - (ROOF_S / 2 - ROOF_DX)
-	local fx = if ex > 0 then 1 - ex / ROOF_DX else 1
-	return ROOF_H * math.clamp(math.min(fz, fx), 0, 1)
+-- 지붕 윗면 높이 (박공지붕: 용마루는 X 방향, 집 가운데 z)
+local function roofY(ctx: Ctx, z: number): number
+	local f = 1 - math.abs(z - ctx.L.CenterZ) / ctx.roofD
+	return ctx.roofBase + ctx.roofH * math.clamp(f, 0, 1)
 end
 
 ----------------------------------------------------------------------
--- 구조물
+-- 1층 바닥 / 벽 / 기둥 / 현관
 ----------------------------------------------------------------------
-local function buildFloor(ctx: Ctx)
-	local theme = ctx.theme
-	local floor = part(ctx, {
-		Name = "Floor",
-		Size = Vector3.new(SIZE, 1, SIZE),
-		Local = CFrame.new(0, FLOOR_TOP - 0.5, 0),
+local function buildGroundFloor(ctx: Ctx)
+	local L, theme = ctx.L, ctx.theme
+	local floor = box(ctx, "Floor", -L.Half, L.Half, FLOOR1_TOP - SLAB_T, FLOOR1_TOP, L.FrontZ, L.BackZ, {
 		Color = theme.Floor,
 		Material = ctx.mats.Floor,
 	})
-	part(ctx, {
-		Name = "FloorTrim",
-		Size = Vector3.new(SIZE + 2, 1, SIZE + 2),
-		Local = CFrame.new(0, FLOOR_TOP / 2 - 0.5, 0),
-		Color = theme.Accent,
-	})
+	box(ctx, "FloorTrim", -L.Half - 0.7, L.Half + 0.7, -0.9, 0.14, L.FrontZ - 0.7, L.BackZ + 0.7, { Color = theme.Accent })
 	ctx.house.PrimaryPart = floor
 end
 
--- 낮은 벽 3면 + 입구 양옆 (입구는 넓게 뚫려 있어요)
-local function buildWalls(ctx: Ctx)
-	local theme = ctx.theme
-	local segLen = HALF - GAP / 2
-	local walls = {
-		{ Vector3.new(0, 0, HALF - WALL_T / 2), Vector3.new(SIZE, WALL_H, WALL_T) }, -- 뒤
-		{ Vector3.new(-HALF + WALL_T / 2, 0, 0), Vector3.new(WALL_T, WALL_H, SIZE) }, -- 왼쪽
-		{ Vector3.new(HALF - WALL_T / 2, 0, 0), Vector3.new(WALL_T, WALL_H, SIZE) }, -- 오른쪽
-		{ Vector3.new(-(GAP / 2 + segLen / 2), 0, -HALF + WALL_T / 2), Vector3.new(segLen, WALL_H, WALL_T) }, -- 입구 왼쪽
-		{ Vector3.new(GAP / 2 + segLen / 2, 0, -HALF + WALL_T / 2), Vector3.new(segLen, WALL_H, WALL_T) }, -- 입구 오른쪽
-	}
-	for i, w in walls do
-		local pos, size = w[1], w[2]
-		part(ctx, {
-			Name = "Wall" .. i,
-			Size = size,
-			Local = CFrame.new(pos.X, FLOOR_TOP + WALL_H / 2, pos.Z),
-			Color = theme.Wall,
-			Material = ctx.mats.Wall,
-		})
-		local capColor = if theme.Deco == "rainbow" then RAINBOW_COLORS[(i - 1) % #RAINBOW_COLORS + 1] else theme.Accent
-		part(ctx, {
-			Name = "WallCap" .. i,
-			Size = Vector3.new(size.X + 0.4, 0.5, size.Z + 0.4),
-			Local = CFrame.new(pos.X, FLOOR_TOP + WALL_H + 0.25, pos.Z),
-			Color = capColor,
-		})
+-- 벽 위 장식띠 색 (무지개: 칸마다 다른 색, 은하: 네온 성운 색)
+local function capLook(ctx: Ctx, i: number): (Color3, Enum.Material)
+	if ctx.deco == "rainbow" then
+		return RAINBOW_COLORS[(i - 1) % #RAINBOW_COLORS + 1], Enum.Material.SmoothPlastic
+	elseif ctx.deco == "galaxy" then
+		return NEBULA_COLORS[(i - 1) % #NEBULA_COLORS + 1], Enum.Material.Neon
+	end
+	return ctx.theme.Accent, Enum.Material.SmoothPlastic
+end
+
+-- 한 층의 바깥 벽(1층) / 난간(위층). 모서리는 기둥이 덮어요. 계단 탑 자리(뒤 오른쪽)는 유리벽이 대신해요
+local function buildPerimeter(ctx: Ctx, f: number)
+	local L, theme = ctx.L, ctx.theme
+	local st = L.Stair
+	local y = HouseLayout.FloorY(f)
+	local x0, x1 = -L.Half + PILLAR, L.Half - PILLAR
+	local z0, z1 = L.FrontZ + PILLAR, L.BackZ - PILLAR
+	local hasTower = ctx.floors >= 2
+	local backEnd = if hasTower then st.GlassX else x1
+	local rightEnd = if hasTower then st.MinZ else z1
+	local gap = if f == 1 then L.Door.MaxX elseif f == 2 then L.Porch.MaxX else 0
+
+	-- { x0, x1, z0, z1, 장식띠가 X 방향인지 }
+	local segs: { { number | boolean } } = {}
+	local zfA, zfB = L.FrontZ, L.FrontZ + 1
+	if gap > 0 then
+		table.insert(segs, { x0, -gap, zfA, zfB, true })
+		table.insert(segs, { gap, x1, zfA, zfB, true })
+	else
+		table.insert(segs, { x0, x1, zfA, zfB, true })
+	end
+	table.insert(segs, { -L.Half, -L.Half + 1, z0, z1, false }) -- 왼쪽
+	table.insert(segs, { x0, backEnd, L.BackZ - 1, L.BackZ, true }) -- 뒤
+	table.insert(segs, { L.Half - 1, L.Half, z0, rightEnd, false }) -- 오른쪽
+
+	for i, s in segs do
+		local sx0, sx1, sz0, sz1 = s[1] :: number, s[2] :: number, s[3] :: number, s[4] :: number
+		if sx1 - sx0 > 0.05 and sz1 - sz0 > 0.05 then
+			box(ctx, if f == 1 then "Wall" else "Rail", sx0, sx1, y, y + RAIL_H, sz0, sz1, {
+				Color = if f == 1 then theme.Wall else lighter(theme.Wall, 0.08),
+				Material = ctx.mats.Wall,
+			})
+			local capColor, capMat = capLook(ctx, i + f)
+			local ax = s[5] == true
+			box(ctx, "WallCap", if ax then sx0 else sx0 - 0.2, if ax then sx1 else sx1 + 0.2, y + RAIL_H, y + RAIL_H + 0.5, if ax then sz0 - 0.2 else sz0, if ax then sz1 + 0.2 else sz1, {
+				Color = capColor,
+				Material = capMat,
+			})
+		end
+	end
+
+	-- 2층: 현관 구멍 둘레 난간 (왼쪽 / 오른쪽 / 안쪽)
+	if f == 2 then
+		local p = L.Porch
+		local railColor = lighter(theme.Accent, 0.15)
+		box(ctx, "PorchRail", p.MinX - 0.4, p.MinX, y, y + RAIL_H, p.MinZ, p.MaxZ + 0.4, { Color = railColor })
+		box(ctx, "PorchRail", p.MaxX, p.MaxX + 0.4, y, y + RAIL_H, p.MinZ, p.MaxZ + 0.4, { Color = railColor })
+		box(ctx, "PorchRail", p.MinX, p.MaxX, y, y + RAIL_H, p.MaxZ, p.MaxZ + 0.4, { Color = railColor })
 	end
 end
 
--- 기둥 램프 (따뜻한 PointLight)
-local function buildLamp(ctx: Ctx, sx: number, sz: number, y: number)
-	local pillar = Vector3.new(sx * (HALF - PILLAR / 2), y, sz * (HALF - PILLAR / 2))
-	local inward = Vector3.new(-sx, 0, -sz).Unit
-	local armC = pillar + inward * 1.7
-	deco(ctx, {
-		Name = "LampArm",
-		Size = Vector3.new(0.3, 0.3, 1.4),
-		Local = CFrame.lookAt(armC, armC + inward),
-		Color = DARK,
-	})
-	local bulb = ball(ctx, pillar + inward * 2.6, 1.1, { Name = "Lamp", Color = LAMP, Material = Enum.Material.Neon, CastShadow = false })
-	addLight(bulb, LAMP, 16, 1)
+-- 위층 바닥 (계단 탑 자리는 비워요. 2층은 현관 위도 비워요)
+local function buildSlab(ctx: Ctx, f: number)
+	local L = ctx.L
+	local st = L.Stair
+	local y = HouseLayout.FloorY(f)
+	local props = function(): { [string]: any }
+		return { Color = lighter(ctx.theme.Floor, 0.1), Material = ctx.mats.Floor }
+	end
+	if f == 2 then
+		local p = L.Porch
+		box(ctx, "Slab", -L.Half, L.Half, y - SLAB_T, y, p.MaxZ, st.MinZ, props())
+		box(ctx, "Slab", -L.Half, p.MinX, y - SLAB_T, y, L.FrontZ, p.MaxZ, props())
+		box(ctx, "Slab", p.MaxX, L.Half, y - SLAB_T, y, L.FrontZ, p.MaxZ, props())
+	else
+		box(ctx, "Slab", -L.Half, L.Half, y - SLAB_T, y, L.FrontZ, st.MinZ, props())
+	end
+	box(ctx, "Slab", -L.Half, st.GlassX, y - SLAB_T, y, st.MinZ, L.BackZ, props())
 end
 
--- 모서리 기둥 4개 (지붕까지) + 램프
-local function buildPillars(ctx: Ctx, roofY: number)
-	local h = roofY - FLOOR_TOP
+-- 모서리 기둥 4개 (1층 바닥 → 처마) + 앞 기둥 램프 2개
+local function buildPillars(ctx: Ctx)
+	local L, theme = ctx.L, ctx.theme
+	local top = ctx.eaveY - 0.3
 	for _, c in { { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } } do
 		local sx, sz = c[1], c[2]
-		part(ctx, {
-			Name = "Pillar",
-			Size = Vector3.new(PILLAR, h, PILLAR),
-			Local = CFrame.new(sx * (HALF - PILLAR / 2), FLOOR_TOP + h / 2, sz * (HALF - PILLAR / 2)),
-			Color = lighter(ctx.theme.Wall, 0.15),
+		local px = sx * (L.Half - PILLAR / 2)
+		local pz = if sz < 0 then L.FrontZ + PILLAR / 2 else L.BackZ - PILLAR / 2
+		box(ctx, "Pillar", px - PILLAR / 2, px + PILLAR / 2, FLOOR1_TOP, top, pz - PILLAR / 2, pz + PILLAR / 2, {
+			Color = lighter(theme.Wall, 0.15),
 			Material = ctx.mats.Wall,
 		})
-		buildLamp(ctx, sx, sz, 6.4)
-		if ctx.floors >= 2 then
-			buildLamp(ctx, sx, sz, FLOOR_HEIGHT + 5.4)
+		if sz < 0 then
+			local bulb = ball(ctx, Vector3.new(px, 6.6, L.FrontZ - 0.55), 1.1, {
+				Name = "Lamp",
+				Color = if ctx.deco == "galaxy" or ctx.deco == "stars" then theme.Accent else LAMP,
+				Material = Enum.Material.Neon,
+				CastShadow = false,
+			})
+			addLight(bulb, LAMP, 16, 0.9)
 		end
 	end
 end
 
--- 입구 기둥 + 이름 간판 (BillboardGui > TextLabel "OwnerLabel": PlotService 가 글자를 넣어요)
-local function buildGate(ctx: Ctx)
-	local theme = ctx.theme
+-- 현관 문 기둥 (문 양옆, 위는 비워요: 가로 들보 없음)
+local function buildDoor(ctx: Ctx)
+	local L, theme = ctx.L, ctx.theme
+	local d = L.Door
 	for _, sx in { -1, 1 } do
-		local x = sx * (GAP / 2 + 0.6)
-		part(ctx, {
-			Name = "GatePost",
-			Size = Vector3.new(1.2, POST_H, 1.2),
-			Local = CFrame.new(x, FLOOR_TOP + POST_H / 2, -HALF + WALL_T / 2),
-			Color = lighter(theme.Wall, 0.15),
-			Material = ctx.mats.Wall,
+		local inner = if sx < 0 then d.MinX else d.MaxX
+		local outer = inner + sx * 0.5
+		box(ctx, "DoorPost", math.min(inner, outer), math.max(inner, outer), FLOOR1_TOP, DOOR_POST_TOP, L.FrontZ - 0.15, L.FrontZ + 1.15, {
+			Color = theme.Accent,
 		})
-		ball(ctx, Vector3.new(x, FLOOR_TOP + POST_H + 0.6, -HALF + WALL_T / 2), 1.6, { Name = "GateBall", Color = theme.Accent })
+		ball(ctx, Vector3.new((inner + outer) / 2, DOOR_POST_TOP + 0.4, L.FrontZ + 0.5), 0.9, { Name = "DoorPostBall", Color = lighter(theme.Accent, 0.3) })
 	end
-	local sign = part(ctx, {
-		Name = "Sign",
-		Size = Vector3.new(GAP + 3.6, 2.8, 0.5),
-		Local = CFrame.new(0, FLOOR_TOP + POST_H - 1.4, -HALF + WALL_T / 2),
-		Color = theme.Accent,
-	})
-	local bb, label = makeBillboard(sign, 0, 13, 2.4, 70, "OwnerLabel")
-	bb.AlwaysOnTop = true
-	label.TextStrokeTransparency = 0.1
-	label.Text = "빈 집"
 end
 
--- 모임지붕: 가운데 쐐기 2개(앞/뒤) + 모서리 쐐기 4개. 처마 밑면 = eaveY
-local function buildRoof(ctx: Ctx, eaveY: number)
+----------------------------------------------------------------------
+-- 계단 탑 (뒤 오른쪽 유리 탑, 반층씩 꺾이는 계단)
+----------------------------------------------------------------------
+-- 보이지 않는 경사로: 계단 코(앞 모서리)를 잇는 선이 윗면. (za, ya) → (zb, yb), 폭 x0..x1
+local function ramp(ctx: Ctx, x0: number, x1: number, za: number, ya: number, zb: number, yb: number)
+	local cx = (x0 + x1) / 2
+	local pa = Vector3.new(cx, ya, za)
+	local pb = Vector3.new(cx, yb, zb)
+	local d = pb - pa
+	local dir = d.Unit
+	local n = Vector3.xAxis:Cross(dir)
+	if n.Y < 0 then
+		n = -n
+	end
+	local center = (pa + pb) / 2 - n * (RAMP_T / 2)
+	part(ctx, {
+		Name = "StairRamp",
+		Size = Vector3.new(x1 - x0, RAMP_T, d.Magnitude),
+		Local = CFrame.fromMatrix(center, Vector3.xAxis, n),
+		Transparency = 1,
+		CastShadow = false,
+		CanTouch = false,
+	})
+end
+
+-- f 층 → f+1 층 계단 한 벌: 바깥 줄 반층(+Z) → 반층 참 → 안쪽 줄 반층(-Z) → 위층 계단 앞 자리
+local function buildFlight(ctx: Ctx, f: number)
+	local st = ctx.L.Stair
 	local theme = ctx.theme
-	local roofColor = theme.Roof
-	local cornerColor = if theme.Deco == "candy" then lighter(theme.Roof, 0.55) else roofColor
+	local y = HouseLayout.FloorY(f)
+	local t = st.TreadT
+	local colA, colB = lighter(theme.Wall, 0.1), lighter(theme.Accent, 0.35)
+	for k = 1, st.Treads do
+		local top = y + st.Rise * k
+		box(ctx, "Step", st.UpMinX, st.UpMaxX, top - t, top, st.MinZ + st.Run * (k - 1), st.MinZ + st.Run * k, {
+			Color = if k % 2 == 0 then colB else colA,
+			Material = ctx.mats.Wall,
+		})
+	end
+	local mid = y + st.HalfRise
+	box(ctx, "StairLanding", st.MinX, st.MaxX, mid - t, mid, st.RunEndZ, st.MaxZ, {
+		Color = lighter(theme.Floor, 0.1),
+		Material = ctx.mats.Floor,
+	})
+	for k = 1, st.Treads do
+		local top = mid + st.Rise * k
+		box(ctx, "Step", st.DownMinX, st.DownMaxX, top - t, top, st.RunEndZ - st.Run * k, st.RunEndZ - st.Run * (k - 1), {
+			Color = if k % 2 == 0 then colA else colB,
+			Material = ctx.mats.Wall,
+		})
+	end
+	-- 부드럽게 걸어 올라가는 투명 경사로 2개 (계단 코를 지나요)
+	ramp(ctx, st.UpMinX, st.UpMaxX, st.MinZ - st.Run, y, st.RunEndZ, mid)
+	ramp(ctx, st.DownMinX, st.DownMaxX, st.RunEndZ + st.Run, mid, st.MinZ, mid + st.HalfRise)
+end
+
+local function buildTower(ctx: Ctx)
+	local L, theme = ctx.L, ctx.theme
+	local st = L.Stair
+	if ctx.floors < 2 then
+		-- 1층짜리 집: 계단 자리 표시만 (가구도 못 놓는 자리라서 알려 줘요)
+		local mat = box(ctx, "StairSpot", st.GlassX, st.MaxX, FLOOR1_TOP, FLOOR1_TOP + 0.06, st.LandingMinZ, st.MaxZ, {
+			Color = lighter(theme.Accent, 0.55),
+			CanCollide = false,
+			CanTouch = false,
+			CastShadow = false,
+		})
+		surfaceText(mat, Enum.NormalId.Top, "🪜 계단 자리\n2층을 올리면 생겨요", UDim2.fromScale(0.05, 0.3), UDim2.fromScale(0.9, 0.4))
+		return
+	end
+	local topF = HouseLayout.FloorY(ctx.floors)
+	local glassTop = topF + RAIL_H + 0.5
+	local glassProps = function(): { [string]: any }
+		return { Color = lighter(theme.Accent, 0.65), Material = Enum.Material.Glass, Transparency = 0.6, CastShadow = false }
+	end
+	-- 유리벽: 집 안쪽 / 바깥 오른쪽 / 뒤 (모든 층을 한 장으로)
+	box(ctx, "StairGlass", st.GlassX, st.MinX, FLOOR1_TOP, glassTop, st.MinZ, L.BackZ - 0.7, glassProps())
+	box(ctx, "StairGlass", L.Half - 0.7, L.Half - 0.3, FLOOR1_TOP, glassTop, st.MinZ, L.BackZ - PILLAR, glassProps())
+	box(ctx, "StairGlass", st.GlassX, L.Half - PILLAR, FLOOR1_TOP, glassTop, L.BackZ - 0.7, L.BackZ - 0.3, glassProps())
+	-- 올라가는 줄 / 내려오는 줄 사이 칸막이
+	box(ctx, "StairDivider", st.DownMaxX, st.UpMinX, FLOOR1_TOP, glassTop, st.MinZ, st.RunEndZ, {
+		Color = lighter(theme.Wall, 0.1),
+		Material = ctx.mats.Wall,
+	})
+	-- 1층: 안쪽 줄 아래(머리 닿는 곳)는 막아요 / 꼭대기 층: 바깥 줄은 아래로 뚫려 있어서 막아요
+	local railColor = lighter(theme.Accent, 0.15)
+	box(ctx, "StairGuard", st.DownMinX, st.DownMaxX, FLOOR1_TOP, FLOOR1_TOP + RAIL_H, st.MinZ - 0.4, st.MinZ, { Color = railColor })
+	box(ctx, "StairGuard", st.UpMinX, st.UpMaxX, topF, topF + RAIL_H, st.MinZ - 0.4, st.MinZ, { Color = railColor })
+	for f = 1, ctx.floors - 1 do
+		buildFlight(ctx, f)
+	end
+end
+
+----------------------------------------------------------------------
+-- 엘리베이터 (층마다: 문틀 + 문 "Elevator" + 프롬프트)
+----------------------------------------------------------------------
+local function buildElevator(ctx: Ctx, f: number): BasePart
+	local L, theme = ctx.L, ctx.theme
+	local e = L.Elevator
+	local y = HouseLayout.FloorY(f)
+	local frameBack = e.PanelMinZ
+	local frameFront = e.PanelMaxZ - 0.3
+	local frame = box(ctx, "ElevatorFrame", e.X - e.W / 2, e.X + e.W / 2, y, y + ELEV_FRAME_H, frameBack, frameFront, {
+		Color = theme.Accent,
+	})
+	surfaceText(frame, Enum.NormalId.Back, "🛗 " .. f .. "층", UDim2.fromScale(0.05, 0.84), UDim2.fromScale(0.9, 0.15))
+	local door = box(ctx, "Elevator", e.X - ELEV_DOOR_W / 2, e.X + ELEV_DOOR_W / 2, y + 0.05, y + ELEV_DOOR_H, frameFront, e.PanelMaxZ, {
+		Color = if ctx.deco == "galaxy" then Color3.fromRGB(150, 120, 255) else GLASS,
+		Material = Enum.Material.Glass,
+		Transparency = 0.1,
+		Reflectance = 0.15,
+	})
+	door:SetAttribute("Floor", f)
+	door:SetAttribute("PromptAction", "Elevator")
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText = "🛗 층 이동"
+	prompt.ObjectText = f .. "층 엘리베이터"
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = 8
+	prompt.RequiresLineOfSight = false
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt:SetAttribute("PromptKind", "Owner")
+	prompt:SetAttribute("OwnerUserId", ctx.ownerId)
+	prompt:SetAttribute("PromptAction", "Elevator")
+	prompt:SetAttribute("Floor", f)
+	prompt.Parent = door
+	return door
+end
+
+----------------------------------------------------------------------
+-- 지붕 (박공: 앞뒤 쐐기 2개 + 처마띠 + 용마루 + 굴뚝)
+----------------------------------------------------------------------
+local function buildRoof(ctx: Ctx)
+	local L, theme = ctx.L, ctx.theme
+	local w = L.Size + 2
+	box(ctx, "Eave", -L.Half - 1.2, L.Half + 1.2, ctx.eaveY - 0.3, ctx.eaveY + 0.3, L.FrontZ - 1.2, L.BackZ + 1.2, {
+		Color = if ctx.deco == "galaxy" then theme.Wall else theme.Accent,
+	})
 	for _, sz in { -1, 1 } do
 		wedge(ctx, {
-			Name = "RoofSlope",
-			Size = Vector3.new(ROOF_S - 2 * ROOF_DX, ROOF_H, ROOF_DZ),
-			Local = CFrame.new(0, eaveY + ROOF_H / 2, sz * ROOF_DZ / 2) * CFrame.Angles(0, if sz < 0 then 0 else math.pi, 0),
-			Color = roofColor,
+			Name = "Roof",
+			Size = Vector3.new(w, ctx.roofH, ctx.roofD),
+			Local = CFrame.new(0, ctx.roofBase + ctx.roofH / 2, L.CenterZ + sz * ctx.roofD / 2) * CFrame.Angles(0, if sz < 0 then 0 else math.pi, 0),
+			Color = theme.Roof,
 			Material = ctx.mats.Roof,
 		})
 	end
-	-- CornerWedgePart 의 꼭짓점(수직 모서리)은 로컬 +X,+Z 에 있어요 → 집 안쪽을 향하게 돌려요
-	-- (스튜디오에서 꼭짓점이 바깥을 보면 CORNER_ROT_OFFSET 만 ±math.pi/2 로 바꾸면 돼요. 크기는 자동으로 따라가요)
-	local CORNER_ROT_OFFSET = 0
-	local corners = { { -1, -1, 0 }, { 1, 1, math.pi }, { -1, 1, math.pi / 2 }, { 1, -1, -math.pi / 2 } }
-	for _, c in corners do
-		local sx, sz = c[1], c[2]
-		local rot = c[3] + CORNER_ROT_OFFSET
-		local axisAligned = math.abs(math.sin(rot)) < 1e-6
-		cornerWedge(ctx, {
-			Name = "RoofCorner",
-			Size = if axisAligned then Vector3.new(ROOF_DX, ROOF_H, ROOF_DZ) else Vector3.new(ROOF_DZ, ROOF_H, ROOF_DX),
-			Local = CFrame.new(sx * (ROOF_S / 2 - ROOF_DX / 2), eaveY + ROOF_H / 2, sz * ROOF_DZ / 2) * CFrame.Angles(0, rot, 0),
-			Color = cornerColor,
-			Material = ctx.mats.Roof,
-		})
-	end
-	-- 용마루
-	part(ctx, {
-		Name = "Ridge",
-		Size = Vector3.new(ROOF_S - 2 * ROOF_DX + 1.2, 0.8, 1.4),
-		Local = CFrame.new(0, eaveY + ROOF_H + 0.25, 0),
-		Color = theme.Accent,
-	})
-	-- 굴뚝 (우주 기지는 대신 접시 안테나)
-	if theme.Deco ~= "stars" then
-		local cx, cz = 10, 6
-		local top = eaveY + roofRise(cx, cz) + 3
-		part(ctx, {
-			Name = "Chimney",
-			Size = Vector3.new(2.2, 5, 2.2),
-			Local = CFrame.new(cx, top - 2.5, cz),
-			Color = lighter(theme.Wall, 0.1),
-			Material = ctx.mats.Wall,
-		})
-		part(ctx, {
-			Name = "ChimneyCap",
-			Size = Vector3.new(2.8, 0.6, 2.8),
-			Local = CFrame.new(cx, top + 0.3, cz),
-			Color = darker(theme.Roof, 0.15),
-		})
+	local ridgeY = ctx.roofBase + ctx.roofH
+	box(ctx, "Ridge", -w / 2 - 0.3, w / 2 + 0.3, ridgeY - 0.35, ridgeY + 0.45, L.CenterZ - 0.8, L.CenterZ + 0.8, { Color = theme.Accent })
+	if ctx.deco ~= "stars" and ctx.deco ~= "galaxy" then
+		local cx, cz = L.Size * 0.22, L.CenterZ + ctx.roofD * 0.45
+		local top = roofY(ctx, cz) + 3
+		box(ctx, "Chimney", cx - 1.1, cx + 1.1, top - 5, top, cz - 1.1, cz + 1.1, { Color = lighter(theme.Wall, 0.1), Material = ctx.mats.Wall })
+		box(ctx, "ChimneyCap", cx - 1.4, cx + 1.4, top, top + 0.6, cz - 1.4, cz + 1.4, { Color = darker(theme.Roof, 0.15) })
 	end
 end
 
--- 지붕 경사면 위 줄무늬 (캔디/무지개)
-local function roofStripes(ctx: Ctx, eaveY: number, colors: { Color3 })
-	local a = math.atan2(ROOF_H, ROOF_DZ)
-	local len = math.sqrt(ROOF_DZ * ROOF_DZ + ROOF_H * ROOF_H) - 1
-	local normal = Vector3.new(0, math.cos(a), -math.sin(a))
+-- 지붕 경사면 위 줄무늬 (캔디/무지개). 앞뒤 경사면에 3줄씩
+local function roofStripes(ctx: Ctx, colors: { Color3 })
+	local L = ctx.L
+	local len = math.sqrt(ctx.roofD ^ 2 + ctx.roofH ^ 2)
 	local i = 0
+	local xs = { -L.Size * 0.28, 0, L.Size * 0.28 }
 	for _, sz in { -1, 1 } do
-		for _, x in { -4, 0, 4 } do
+		local n = Vector3.new(0, ctx.roofD, sz * ctx.roofH) / len -- 경사면 바깥 법선
+		for _, x in xs do
 			i += 1
-			local mid = Vector3.new(x, eaveY + ROOF_H / 2, sz * ROOF_DZ / 2)
-			local n = Vector3.new(0, normal.Y, sz * normal.Z)
-			local rot = if sz < 0 then CFrame.Angles(-a, 0, 0) else CFrame.Angles(0, math.pi, 0) * CFrame.Angles(-a, 0, 0)
+			local mid = Vector3.new(x, ctx.roofBase + ctx.roofH / 2, L.CenterZ + sz * ctx.roofD / 2)
 			deco(ctx, {
 				Name = "RoofStripe",
-				Size = Vector3.new(1.3, 0.2, len),
-				Local = CFrame.new(mid + n * 0.12) * rot,
+				Size = Vector3.new(1.4, 0.2, len - 1),
+				Local = CFrame.fromMatrix(mid + n * 0.12, Vector3.xAxis, n),
 				Color = colors[(i - 1) % #colors + 1],
+				CastShadow = false,
 			})
 		end
 	end
 end
 
 ----------------------------------------------------------------------
--- 앞마당·소품 (모든 테마 공통): 환영 매트, 우편함, 펫 집, 화분
+-- 마당: 바닥, 길, 울타리 + 마당 문, 이름 간판(옆 기둥), 우편함, 펫 집, 화분, 가로등, 환영 매트
 ----------------------------------------------------------------------
+local function lampPost(ctx: Ctx, x: number, z: number)
+	vcyl(ctx, x, z, 0, 5, 0.45, { Name = "LampPost", Color = DARK, CanCollide = true })
+	local bulb = ball(ctx, Vector3.new(x, 5.5, z), 1.2, { Name = "Lamp", Color = LAMP, Material = Enum.Material.Neon, CastShadow = false })
+	addLight(bulb, LAMP, 18, 0.9)
+end
+
+-- 왕관 (금 띠 + 뾰족 공 3개)
+local function crown(ctx: Ctx, pos: Vector3, s: number)
+	vcyl(ctx, pos.X, pos.Z, pos.Y, 0.6 * s, 1.5 * s, { Name = "Crown", Color = GOLD, Material = Enum.Material.SmoothPlastic, CanCollide = false, CanTouch = false, Reflectance = 0.2 })
+	for k = 0, 2 do
+		local a = k * (math.pi * 2 / 3)
+		ball(ctx, pos + Vector3.new(math.cos(a) * 0.5 * s, 0.85 * s, math.sin(a) * 0.5 * s), 0.45 * s, {
+			Name = "CrownGem",
+			Color = if k == 0 then RED elseif k == 1 then SKY else GOLD,
+		})
+	end
+end
+
 local function buildYard(ctx: Ctx)
-	local theme = ctx.theme
-	-- 환영 매트 (입구 안쪽, 바닥에 붙어서 걷는 데 방해 없음)
-	local mat = deco(ctx, {
-		Name = "WelcomeMat",
-		Size = Vector3.new(6, 0.16, 3.6),
-		Local = CFrame.new(0, FLOOR_TOP + 0.08, -HALF + 2.6),
-		Color = lighter(theme.Accent, 0.1),
-		Material = Enum.Material.Fabric,
+	local L, theme = ctx.L, ctx.theme
+	local look = YARD_LOOK[ctx.deco] or YARD_LOOK.flowers
+	local edge = FENCE + FENCE_T / 2
+
+	-- 마당 바닥 + 길 (마당 문 → 현관)
+	box(ctx, "Yard", -edge, edge, -0.14, 0.06, -edge, edge, {
+		Color = look.Ground or darker(theme.Floor, 0.1),
+		Material = look.GroundMat,
 	})
-	local sg = Instance.new("SurfaceGui")
-	sg.Face = Enum.NormalId.Top
-	sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-	sg.PixelsPerStud = 40
-	sg.LightInfluence = 0
-	local matLabel = Instance.new("TextLabel")
-	matLabel.Size = UDim2.fromScale(0.9, 0.7)
-	matLabel.Position = UDim2.fromScale(0.05, 0.15)
-	matLabel.BackgroundTransparency = 1
-	matLabel.TextScaled = true
-	matLabel.Font = Enum.Font.FredokaOne
-	matLabel.TextColor3 = Color3.new(1, 1, 1)
-	matLabel.TextStrokeTransparency = 0.4
-	matLabel.Text = "🐾 어서 와요 🐾"
-	matLabel.Parent = sg
-	sg.Parent = mat
+	box(ctx, "Path", L.Door.MinX, L.Door.MaxX, -0.1, 0.1, -edge, L.FrontZ, {
+		Color = look.Path or WHITE,
+		Material = if ctx.deco == "royal" then Enum.Material.Fabric else Enum.Material.SmoothPlastic,
+	})
 
-	-- 우편함 (앞마당 오른쪽)
-	local mx = 12
-	part(ctx, { Name = "MailPost", Size = Vector3.new(0.4, 2.6, 0.4), Local = CFrame.new(mx, 1.3, YARD_Z + 0.3), Color = WOOD, Material = Enum.Material.Wood })
-	part(ctx, { Name = "Mailbox", Size = Vector3.new(1.5, 1.1, 1.0), Local = CFrame.new(mx, 3.15, YARD_Z + 0.3), Color = theme.Accent })
-	deco(ctx, { Name = "MailFlag", Size = Vector3.new(0.12, 0.9, 0.35), Local = CFrame.new(mx + 0.8, 3.5, YARD_Z + 0.3), Color = RED })
+	-- 울타리 (낮아서 밟고 넘을 수도 있어요). 앞은 가운데 마당 문
+	local fenceColor = if ctx.deco == "galaxy" or ctx.deco == "stars" then lighter(theme.Wall, 0.1) else WHITE
+	local capColor = capLook(ctx, 1)
+	local fi = FENCE - FENCE_T / 2
+	local fo = FENCE + FENCE_T / 2
+	local gx = GATE_HALF + 1.2
+	local segs = {
+		{ -fo, -fi, -fo, fo, false }, -- 왼쪽
+		{ fi, fo, -fo, fo, false }, -- 오른쪽
+		{ -fi, fi, fi, fo, true }, -- 뒤
+		{ -fi, -gx, -fo, -fi, true }, -- 앞 왼쪽
+		{ gx, fi, -fo, -fi, true }, -- 앞 오른쪽
+	}
+	for _, s in segs do
+		local sx0, sx1, sz0, sz1 = s[1] :: number, s[2] :: number, s[3] :: number, s[4] :: number
+		box(ctx, "Fence", sx0, sx1, 0, FENCE_H, sz0, sz1, { Color = fenceColor })
+		-- 장식띠: 옆 울타리 띠가 모서리를 덮고, 앞뒤 띠는 그 안쪽에서 끝나요 (겹치면 깜빡여요)
+		if s[5] == true then
+			local cx0 = math.max(sx0, -fi + 0.15)
+			local cx1 = math.min(sx1, fi - 0.15)
+			box(ctx, "FenceCap", cx0, cx1, FENCE_H, FENCE_H + 0.3, sz0 - 0.15, sz1 + 0.15, { Color = capColor })
+		else
+			box(ctx, "FenceCap", sx0 - 0.15, sx1 + 0.15, FENCE_H, FENCE_H + 0.3, sz0, sz1, { Color = capColor })
+		end
+	end
+	-- 마당 문 기둥 (위에 가로대 없음)
+	for _, sx in { -1, 1 } do
+		local cx = sx * (GATE_HALF + 0.6)
+		box(ctx, "GatePost", cx - 0.6, cx + 0.6, 0, 5, -fo - 0.1, -fi + 0.1, { Color = lighter(theme.Wall, 0.15), Material = ctx.mats.Wall })
+		if ctx.deco == "royal" then
+			crown(ctx, Vector3.new(cx, 5, -FENCE), 1)
+		else
+			ball(ctx, Vector3.new(cx, 5.6, -FENCE), 1.4, { Name = "GateBall", Color = theme.Accent })
+		end
+	end
 
-	-- 펫 집 (앞마당 왼쪽, 입구는 컨베이어 쪽)
-	local px, pz = -15, YARD_Z
-	part(ctx, { Name = "PetHouse", Size = Vector3.new(3.4, 2.6, 3.0), Local = CFrame.new(px, 1.3, pz), Color = theme.Wall, Material = ctx.mats.Wall })
+	-- 이름 간판: 마당 문 왼쪽 옆 기둥 (길 위가 아니에요). BillboardGui > TextLabel "OwnerLabel" 은 PlotService 가 채워요
+	local signX = -(gx + 3.2)
+	box(ctx, "SignPost", signX - 0.25, signX + 0.25, 0, 3.4, -FENCE + 0.7, -FENCE + 1.2, { Color = WOOD, Material = Enum.Material.Wood })
+	local sign = box(ctx, "Sign", signX - 2.8, signX + 2.8, 3.2, 6.6, -FENCE + 0.6, -FENCE + 1.1, { Color = theme.Accent })
+	local bb, label = makeBillboard(sign, 0.6, 13, 2.4, 70, "OwnerLabel")
+	bb.AlwaysOnTop = true
+	label.TextStrokeTransparency = 0.1
+	label.Text = "빈 집"
+
+	-- 우편함 (마당 문 오른쪽)
+	local mx, mz = gx + 3.3, -FENCE + 1.2
+	box(ctx, "MailPost", mx - 0.2, mx + 0.2, 0, 2.6, mz - 0.2, mz + 0.2, { Color = WOOD, Material = Enum.Material.Wood })
+	box(ctx, "Mailbox", mx - 0.75, mx + 0.75, 2.6, 3.7, mz - 0.5, mz + 0.5, { Color = theme.Accent })
+	deco(ctx, { Name = "MailFlag", Size = Vector3.new(0.12, 0.9, 0.35), Local = CFrame.new(mx + 0.8, 3.5, mz), Color = RED })
+
+	-- 펫 집 (앞마당 왼쪽)
+	local px, pz = -19, -28.2
+	box(ctx, "PetHouse", px - 1.7, px + 1.7, 0, 2.6, pz - 1.5, pz + 1.5, { Color = theme.Wall, Material = ctx.mats.Wall })
 	deco(ctx, { Name = "PetHouseDoor", Size = Vector3.new(1.3, 1.6, 0.2), Local = CFrame.new(px, 0.8, pz - 1.55), Color = DARK })
 	for _, sz in { -1, 1 } do
 		wedge(ctx, {
@@ -494,128 +703,51 @@ local function buildYard(ctx: Ctx)
 			Material = ctx.mats.Roof,
 		})
 	end
-	vcyl(ctx, px, pz - 2.4, 0, 0.12, 1.6, { Name = "PetMat", Color = lighter(theme.Accent, 0.2), CanCollide = false, CanTouch = false })
 
-	-- 화분 2개 (입구 양옆 바깥)
+	-- 화분 2개 (현관 양옆 바깥)
 	for i, sx in { -1, 1 } do
-		local x, z = sx * 8, YARD_Z + 0.2
-		part(ctx, { Name = "Planter", Size = Vector3.new(2.6, 1.2, 2.6), Local = CFrame.new(x, 0.6, z), Color = darker(theme.Accent, 0.15) })
+		local x, z = sx * (L.Door.MaxX + 3.6), L.FrontZ - 1.8
+		box(ctx, "Planter", x - 1.3, x + 1.3, 0, 1.2, z - 1.3, z + 1.3, { Color = darker(theme.Accent, 0.15) })
 		blob(ctx, Vector3.new(x, 1.45, z), Vector3.new(2.4, 1.1, 2.4), { Name = "PlanterLeaves", Color = LEAF })
 		local offsets = { Vector3.new(-0.6, 0, 0.3), Vector3.new(0.55, 0.1, 0.45), Vector3.new(0.05, 0.25, -0.55) }
 		for k, off in offsets do
 			ball(ctx, Vector3.new(x, 2.0, z) + off, 0.85, { Name = "PlanterFlower", Color = FLOWER_COLORS[(i * 3 + k - 1) % #FLOWER_COLORS + 1] })
 		end
 	end
-end
 
-----------------------------------------------------------------------
--- 2층: 슬래브 + 계단 + 난간
-----------------------------------------------------------------------
--- 슬래브 가장자리 난간 (기둥 + 가로대 2줄). a, b = 로컬 x,z
-local function railEdge(ctx: Ctx, a: Vector3, b: Vector3)
-	local theme = ctx.theme
-	local y = FLOOR_HEIGHT
-	local len = (b - a).Magnitude
-	local n = math.max(1, math.ceil(len / RAIL_SPACING))
-	for i = 0, n do
-		local p = a:Lerp(b, i / n)
-		part(ctx, {
-			Name = "RailPost",
-			Size = Vector3.new(0.4, RAIL_H, 0.4),
-			Local = CFrame.new(p.X, y + RAIL_H / 2, p.Z),
-			Color = lighter(theme.Wall, 0.1),
-		})
+	-- 가로등: 마당 문 안쪽 양옆 (+ 마당이 길면 중간에 한 쌍 더)
+	for _, sx in { -1, 1 } do
+		lampPost(ctx, sx * (L.Door.MaxX + 2), -FENCE + 2.4)
 	end
-	local mid = (a + b) / 2
-	for _, h in { RAIL_H - 0.15, RAIL_H * 0.5 } do
-		part(ctx, {
-			Name = "Rail",
-			Size = Vector3.new(0.3, 0.3, len + 0.4),
-			Local = CFrame.lookAt(Vector3.new(mid.X, y + h, mid.Z), Vector3.new(b.X, y + h, b.Z)),
-			Color = theme.Accent,
-		})
+	local yardDepth = L.FrontZ + FENCE
+	if yardDepth > 18 then
+		for _, sx in { -1, 1 } do
+			lampPost(ctx, sx * (L.Door.MaxX + 2), (L.FrontZ - FENCE) / 2 + 1)
+		end
 	end
-end
 
-local function buildFloor2(ctx: Ctx)
-	local theme = ctx.theme
-	local slabColor = lighter(theme.Floor, 0.15)
-	local slabY = FLOOR_HEIGHT - 0.5
-	-- 슬래브: 받침대 구역 전체 + 앞쪽 양 날개. 입구 위(|x| < 7.6, z < -8)는 뚫려 있어요 (아트리움). 계단 자리(오른쪽 앞)도 비움
-	part(ctx, { Name = "Floor2", Size = Vector3.new(SIZE - 2, 1, 27), Local = CFrame.new(0, slabY, 5.5), Color = slabColor, Material = ctx.mats.Floor })
-	part(ctx, { Name = "Floor2Left", Size = Vector3.new(11.4, 1, 11), Local = CFrame.new(-13.3, slabY, -13.5), Color = slabColor, Material = ctx.mats.Floor })
-	part(ctx, { Name = "Floor2Right", Size = Vector3.new(11.4, 1, 7), Local = CFrame.new(13.3, slabY, -11.5), Color = slabColor, Material = ctx.mats.Floor })
-
-	-- 계단 (앞벽 오른쪽을 따라 +X 로 올라감). 블록 계단 + 보이지 않는 경사면(부드럽게 걷기)
-	for i = 1, STEP_COUNT do
-		local top = FLOOR_TOP + STEP_RISE * i
-		part(ctx, {
-			Name = "Step" .. i,
-			Size = Vector3.new(STEP_RUN, top - FLOOR_TOP, STAIR_W),
-			Local = CFrame.new(STAIR_X0 + STEP_RUN * (i - 0.5), (FLOOR_TOP + top) / 2, STAIR_Z),
-			Color = if i % 2 == 0 then lighter(theme.Accent, 0.35) else lighter(theme.Wall, 0.1),
-			Material = ctx.mats.Wall,
-		})
-	end
-	local run = STEP_RUN * STEP_COUNT
-	local rise = STEP_RISE * STEP_COUNT
-	wedge(ctx, {
-		Name = "StairRamp",
-		Size = Vector3.new(STAIR_W, rise, run),
-		Local = CFrame.new(STAIR_X0 + run / 2, FLOOR_TOP + rise / 2, STAIR_Z) * CFrame.Angles(0, math.pi / 2, 0),
-		Transparency = 1,
-		CastShadow = false,
+	-- 환영 매트 (현관 바로 앞 길 위, 바닥에 붙어 있어요)
+	local mat = box(ctx, "WelcomeMat", -3, 3, 0.1, 0.22, L.FrontZ - 3.4, L.FrontZ - 0.6, {
+		Color = lighter(theme.Accent, 0.1),
+		Material = Enum.Material.Fabric,
+		CanCollide = false,
+		CanTouch = false,
 	})
-	-- 계단 안쪽 손잡이 (1~7칸, 꼭대기 쪽은 비워서 날개로 걸어 나갈 수 있게)
-	local railSteps = 7
-	local rx0, ry0 = STAIR_X0, FLOOR_TOP + 1.7
-	local rx1, ry1 = STAIR_X0 + STEP_RUN * railSteps, FLOOR_TOP + STEP_RISE * railSteps + 1.7
-	local rz = STAIR_Z + STAIR_W / 2 + 0.15
-	local railLen = math.sqrt((rx1 - rx0) ^ 2 + (ry1 - ry0) ^ 2)
-	part(ctx, {
-		Name = "StairRail",
-		Size = Vector3.new(railLen + 0.3, 0.3, 0.3),
-		Local = CFrame.new((rx0 + rx1) / 2, (ry0 + ry1) / 2, rz) * CFrame.Angles(0, 0, math.atan2(ry1 - ry0, rx1 - rx0)),
-		Color = theme.Accent,
-	})
-	for _, i in { 1, 4, 7 } do
-		local top = FLOOR_TOP + STEP_RISE * i
-		part(ctx, {
-			Name = "StairRailPost",
-			Size = Vector3.new(0.3, 1.2, 0.3),
-			Local = CFrame.new(STAIR_X0 + STEP_RUN * (i - 0.5), top + 0.6, rz),
-			Color = lighter(theme.Wall, 0.1),
-		})
-	end
-
-	-- 난간: 바깥 둘레 + 아트리움 가장자리 (계단 도착 구간 x > 14.5, z < -14.7 은 비움)
-	local e = HALF - 1.3 -- 18.7
-	local edges = {
-		{ Vector3.new(-e, 0, e), Vector3.new(e, 0, e) }, -- 뒤
-		{ Vector3.new(-e, 0, -e), Vector3.new(-e, 0, e) }, -- 왼쪽
-		{ Vector3.new(e, 0, -14.7), Vector3.new(e, 0, e) }, -- 오른쪽
-		{ Vector3.new(-e, 0, -e), Vector3.new(-7.9, 0, -e) }, -- 왼쪽 날개 앞
-		{ Vector3.new(-7.9, 0, -e), Vector3.new(-7.9, 0, -8.3) }, -- 아트리움 왼쪽
-		{ Vector3.new(-7.9, 0, -8.3), Vector3.new(7.9, 0, -8.3) }, -- 아트리움 앞
-		{ Vector3.new(7.9, 0, -8.3), Vector3.new(7.9, 0, -14.7) }, -- 아트리움 오른쪽
-		{ Vector3.new(7.9, 0, -14.7), Vector3.new(14.5, 0, -14.7) }, -- 오른쪽 날개 앞 (계단 위)
-	}
-	for _, edge in edges do
-		railEdge(ctx, edge[1], edge[2])
-	end
+	surfaceText(mat, Enum.NormalId.Top, "🐾 어서 와요 🐾", UDim2.fromScale(0.05, 0.15), UDim2.fromScale(0.9, 0.7))
 end
 
 ----------------------------------------------------------------------
 -- 받침대
 ----------------------------------------------------------------------
--- 잠긴 받침대 글자: 가격 / 2층 혜택 / 자물쇠만
+-- 잠긴 받침대 글자: 가격 / N층 혜택 / 자물쇠만
 local function lockText(slot: number): string
 	local price = Config.Plot.SlotPrices[slot]
 	if price then
 		return "🔒 💰" .. Config.FormatNumber(price)
 	end
-	if slot > SLOTS_PER_FLOOR then
-		return "🔒 2층 혜택"
+	local f = Config.SlotFloor(slot)
+	if f >= 2 then
+		return "🔒 " .. f .. "층 혜택"
 	end
 	return "🔒"
 end
@@ -671,21 +803,24 @@ local function applyPedestal(top: BasePart, base: BasePart?, bb: BillboardGui?, 
 end
 
 local function buildPedestals(ctx: Ctx, slotsUnlocked: number): { [number]: BasePart }
+	local L = ctx.L
 	local pedestals: { [number]: BasePart } = {}
-	local count = if ctx.floors >= 2 then Config.Plot.TotalSlots else SLOTS_PER_FLOOR
-	for slot = 1, count do
-		local x, z = slotXZ(slot)
-		local bottom = floorTopOf(slot)
-		local m = Instance.new("Model")
-		m.Name = "Pedestal" .. slot
-		local base = vcyl(ctx, x, z, bottom, PED_BASE_H, PED_BASE_D, { Name = "Base", Color = WHITE, Parent = m })
-		local top = vcyl(ctx, x, z, bottom + PED_BASE_H, PED_TOP_H, PED_TOP_D, { Name = "Top", Color = ctx.theme.Accent, Parent = m })
-		top:SetAttribute("Slot", slot)
-		local bb, label = makeBillboard(top, 2.2, 5, 1.6, 50, "Label")
-		bb.Enabled = false
-		m.Parent = ctx.house
-		applyPedestal(top, base, bb, label, slot, slotsUnlocked, ctx.theme, true)
-		pedestals[slot] = top
+	for f = 1, ctx.floors do
+		local y = HouseLayout.FloorY(f)
+		for i, s in L.Slots do
+			local slot = (f - 1) * SLOTS_PER_FLOOR + i
+			local m = Instance.new("Model")
+			m.Name = "Pedestal" .. slot
+			local base = vcyl(ctx, s.X, s.Z, y, PED_BASE_H, L.PedD, { Name = "Base", Color = WHITE, Parent = m })
+			local top = vcyl(ctx, s.X, s.Z, y + PED_BASE_H, PED_TOP_H, L.PedTopD, { Name = "Top", Color = ctx.theme.Accent, Parent = m })
+			top:SetAttribute("Slot", slot)
+			top:SetAttribute("Floor", f)
+			local bb, label = makeBillboard(top, 2.2, 5, 1.6, 50, "Label")
+			bb.Enabled = false
+			m.Parent = ctx.house
+			applyPedestal(top, base, bb, label, slot, slotsUnlocked, ctx.theme, true)
+			pedestals[slot] = top
+		end
 	end
 	return pedestals
 end
@@ -702,8 +837,9 @@ local function findPart(plotModel: Model, name: string): BasePart?
 end
 
 local function buildCollector(ctx: Ctx, plotModel: Model): BasePart
+	local cl = ctx.L.Collector
 	-- 흰 테두리 링은 House 안 (매번 새로)
-	vcyl(ctx, COLLECTOR_POS.X, COLLECTOR_POS.Z, FLOOR_TOP, 0.3, 7.2, { Name = "CollectorRing", Color = WHITE })
+	vcyl(ctx, cl.X, cl.Z, FLOOR1_TOP, 0.25, cl.D + 0.8, { Name = "CollectorRing", Color = WHITE, CanCollide = false, CanTouch = false })
 	local collector = findPart(plotModel, "Collector")
 	if not collector then
 		local p = Instance.new("Part")
@@ -717,8 +853,8 @@ local function buildCollector(ctx: Ctx, plotModel: Model): BasePart
 	c.CanTouch = true
 	c.TopSurface = Enum.SurfaceType.Smooth
 	c.BottomSurface = Enum.SurfaceType.Smooth
-	c.Size = Vector3.new(0.6, 6, 6)
-	c.CFrame = ctx.origin * CFrame.new(COLLECTOR_POS.X, FLOOR_TOP + 0.3, COLLECTOR_POS.Z) * CFrame.Angles(0, 0, math.pi / 2)
+	c.Size = Vector3.new(0.6, cl.D, cl.D)
+	c.CFrame = ctx.origin * CFrame.new(cl.X, FLOOR1_TOP + 0.3, cl.Z) * CFrame.Angles(0, 0, math.pi / 2)
 	c.Color = GOLD
 	c.Material = Enum.Material.Neon
 	c.Transparency = 0
@@ -736,6 +872,7 @@ local function buildCollector(ctx: Ctx, plotModel: Model): BasePart
 end
 
 local function buildSpawn(ctx: Ctx, plotModel: Model): BasePart
+	local sp = ctx.L.Spawn
 	local spawn = findPart(plotModel, "SpawnPoint")
 	if not spawn then
 		local p = Instance.new("Part")
@@ -744,8 +881,8 @@ local function buildSpawn(ctx: Ctx, plotModel: Model): BasePart
 	end
 	local s = spawn :: BasePart
 	s.Anchored = true
-	s.Size = Vector3.new(4, 1, 4)
-	s.CFrame = ctx.origin * CFrame.new(SPAWN_POS) -- 입구(컨베이어) 쪽을 바라봄
+	s.Size = Vector3.new(sp.Size, 1, sp.Size)
+	s.CFrame = ctx.origin * CFrame.new(sp.X, FLOOR1_TOP + 0.5, sp.Z) -- 입구(컨베이어) 쪽을 바라봄
 	s.Material = Enum.Material.SmoothPlastic
 	s.Transparency = 1
 	s.CanCollide = false
@@ -758,22 +895,8 @@ local function buildSpawn(ctx: Ctx, plotModel: Model): BasePart
 end
 
 ----------------------------------------------------------------------
--- 테마 장식
+-- 테마 장식 (마당 빈 자리 / 1층 벽 위 / 지붕)
 ----------------------------------------------------------------------
--- 작은 장식을 올려 두는 자리: 앞마당 (y=0) 과 벽 위 띠 (y=CAP_TOP)
-local YARD_SPOTS = { Vector3.new(15.3, 0, YARD_Z), Vector3.new(18.2, 0, YARD_Z), Vector3.new(-11.2, 0, YARD_Z) }
-local CAP_SPOTS = {
-	Vector3.new(-HALF + 0.5, CAP_TOP, -11),
-	Vector3.new(-HALF + 0.5, CAP_TOP, -1),
-	Vector3.new(-HALF + 0.5, CAP_TOP, 9),
-	Vector3.new(HALF - 0.5, CAP_TOP, -11),
-	Vector3.new(HALF - 0.5, CAP_TOP, -1),
-	Vector3.new(HALF - 0.5, CAP_TOP, 9),
-	Vector3.new(-12, CAP_TOP, HALF - 0.5),
-	Vector3.new(0, CAP_TOP, HALF - 0.5),
-	Vector3.new(12, CAP_TOP, HALF - 0.5),
-}
-
 local function flower(ctx: Ctx, base: Vector3, h: number, color: Color3)
 	vcyl(ctx, base.X, base.Z, base.Y, h, 0.22, { Name = "Stem", Color = LEAF, CanCollide = false, CanTouch = false })
 	ball(ctx, base + Vector3.new(0, h + 0.3, 0), 0.8, { Name = "Flower", Color = color })
@@ -821,100 +944,132 @@ local function neonStar(ctx: Ctx, pos: Vector3, color: Color3)
 	end
 end
 
-local DECO: { [string]: (Ctx, number) -> () } = {}
+-- 고리 달린 행성 (공 + 납작한 원판)
+local function planet(ctx: Ctx, pos: Vector3, d: number, color: Color3, ringColor: Color3)
+	ball(ctx, pos, d, { Name = "Planet", Color = color, Material = Enum.Material.SmoothPlastic, CastShadow = false })
+	hcyl(ctx, CFrame.new(pos) * CFrame.Angles(0, 0, math.pi / 2 + 0.35), 0.15, d * 1.7, {
+		Name = "PlanetRing",
+		Color = ringColor,
+		Material = Enum.Material.Neon,
+		Transparency = 0.25,
+		CastShadow = false,
+	})
+end
+
+local DECO: { [string]: (Ctx) -> () } = {}
 
 -- 기본 집: 꽃밭 + 벽 위 꽃 상자
 DECO.flowers = function(ctx: Ctx)
 	local theme = ctx.theme
-	-- 앞마당 꽃밭 (우편함 오른쪽)
-	part(ctx, { Name = "FlowerBed", Size = Vector3.new(5.6, 0.6, 2.2), Local = CFrame.new(15.8, 0.3, YARD_Z), Color = darker(theme.Floor, 0.2), Material = Enum.Material.Grass })
+	local bed = ctx.yardSpots[1] + Vector3.new(2, 0, 0)
+	box(ctx, "FlowerBed", bed.X - 2.8, bed.X + 2.8, 0, 0.6, bed.Z - 1.1, bed.Z + 1.1, { Color = darker(theme.Floor, 0.2), Material = Enum.Material.Grass })
 	for k = 0, 4 do
-		local x = 13.9 + k * 0.95
-		local z = YARD_Z + (if k % 2 == 0 then -0.45 else 0.45)
+		local x = bed.X - 1.9 + k * 0.95
+		local z = bed.Z + (if k % 2 == 0 then -0.45 else 0.45)
 		flower(ctx, Vector3.new(x, 0.6, z), 0.9 + (k % 3) * 0.2, FLOWER_COLORS[k % #FLOWER_COLORS + 1])
 	end
-	-- 벽 위 꽃 상자 4개 (양옆 벽)
-	for i, spot in { CAP_SPOTS[1], CAP_SPOTS[3], CAP_SPOTS[4], CAP_SPOTS[6] } do
-		part(ctx, { Name = "FlowerBox", Size = Vector3.new(1.2, 0.6, 5), Local = CFrame.new(spot + Vector3.new(0, 0.3, 0)), Color = darker(theme.Accent, 0.15) })
-		for k = -1, 1 do
-			ball(ctx, spot + Vector3.new(0, 1.0, k * 1.5), 0.9, { Name = "BoxFlower", Color = FLOWER_COLORS[(i + k + 3) % #FLOWER_COLORS + 1] })
+	for i, idx in { 1, 3, 4 } do
+		local c = ctx.capSpots[idx]
+		if c then
+			local spot = c.pos
+			local sz = if c.alongX then Vector3.new(5, 0.6, 1.2) else Vector3.new(1.2, 0.6, 5)
+			part(ctx, { Name = "FlowerBox", Size = sz, Local = CFrame.new(spot + Vector3.new(0, 0.3, 0)), Color = darker(theme.Accent, 0.15) })
+			for k = -1, 1 do
+				local off = if c.alongX then Vector3.new(k * 1.5, 1.0, 0) else Vector3.new(0, 1.0, k * 1.5)
+				ball(ctx, spot + off, 0.9, { Name = "BoxFlower", Color = FLOWER_COLORS[(i + k + 3) % #FLOWER_COLORS + 1] })
+			end
 		end
 	end
 end
 
 -- 캔디 하우스: 막대사탕, 지팡이 사탕, 줄무늬 지붕, 지붕 위 큰 사탕
-DECO.candy = function(ctx: Ctx, eaveY: number)
+DECO.candy = function(ctx: Ctx)
 	local theme = ctx.theme
+	local L = ctx.L
 	local pastel = { Color3.fromRGB(255, 150, 200), Color3.fromRGB(160, 235, 205), Color3.fromRGB(255, 240, 150), Color3.fromRGB(205, 180, 255) }
-	for i, spot in { YARD_SPOTS[1], YARD_SPOTS[2], YARD_SPOTS[3], CAP_SPOTS[8] } do
+	for i, spot in { ctx.yardSpots[1], ctx.yardSpots[2], ctx.yardSpots[3], ctx.sideSpots[2] } do
 		lollipop(ctx, spot, pastel[(i - 1) % #pastel + 1])
 	end
-	-- 지팡이 사탕 (입구 양옆 바깥)
+	-- 지팡이 사탕 (현관 양옆 바깥, 갈고리는 바깥쪽으로)
 	for _, sx in { -1, 1 } do
-		local x, z = sx * 5.9, YARD_Z + 0.5
+		local x, z = sx * (L.Door.MaxX + 1.3), L.FrontZ - 0.9
 		vcyl(ctx, x, z, 0, 4.2, 0.55, { Name = "CandyCane", Color = RED, CanCollide = false, CanTouch = false })
 		hcyl(ctx, CFrame.new(x + sx * 0.65, 4.2, z), 1.3, 0.55, { Name = "CandyCaneHook", Color = WHITE })
 		vcyl(ctx, x + sx * 1.3, z, 3.2, 1.0, 0.55, { Name = "CandyCaneTip", Color = RED, CanCollide = false, CanTouch = false })
 	end
-	roofStripes(ctx, eaveY, { theme.Accent, WHITE })
-	local top = Vector3.new(0, eaveY + ROOF_H + 2.0, 0)
+	roofStripes(ctx, { theme.Accent, WHITE })
+	local top = Vector3.new(0, ctx.roofBase + ctx.roofH + 2.0, L.CenterZ)
 	ball(ctx, top, 3, { Name = "RoofCandy", Color = theme.Accent })
 	ball(ctx, top + Vector3.new(0.7, 0.8, -0.6), 1.0, { Name = "RoofCandyShine", Color = WHITE })
 end
 
--- 숲속 오두막: 버섯 램프, 통나무, 기둥 덩굴
+-- 숲속 오두막: 버섯 램프, 통나무, 앞 기둥 덩굴
 DECO.mushrooms = function(ctx: Ctx)
+	local L = ctx.L
 	local caps = { Color3.fromRGB(255, 110, 120), Color3.fromRGB(255, 170, 90), Color3.fromRGB(255, 150, 200) }
-	for i, spot in YARD_SPOTS do
-		mushroomLamp(ctx, spot, caps[i])
+	for i = 1, 3 do
+		mushroomLamp(ctx, ctx.yardSpots[i], caps[i])
 	end
-	for i, spot in { CAP_SPOTS[7], CAP_SPOTS[9], CAP_SPOTS[2] } do
-		local along = if i <= 2 then CFrame.new(spot + Vector3.new(0, 0.55, 0)) else CFrame.new(spot + Vector3.new(0, 0.55, 0)) * CFrame.Angles(0, math.pi / 2, 0)
-		hcyl(ctx, along, 3.2, 1.1, { Name = "Log", Color = WOOD, Material = Enum.Material.Wood })
+	for _, idx in { 6, 7, 2 } do
+		local c = ctx.capSpots[idx]
+		if c then
+			local along = if c.alongX then CFrame.new(c.pos + Vector3.new(0, 0.55, 0)) else CFrame.new(c.pos + Vector3.new(0, 0.55, 0)) * CFrame.Angles(0, math.pi / 2, 0)
+			hcyl(ctx, along, 3.2, 1.1, { Name = "Log", Color = WOOD, Material = Enum.Material.Wood })
+		end
 	end
-	for _, c in { { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } } do
-		local sx, sz = c[1], c[2]
-		local inward = Vector3.new(-sx, 0, -sz).Unit
-		local foot = Vector3.new(sx * (HALF - PILLAR / 2), 0, sz * (HALF - PILLAR / 2)) + inward * 1.5
-		deco(ctx, { Name = "Vine", Size = Vector3.new(0.3, 7.5, 0.3), Local = CFrame.new(foot + Vector3.new(0, FLOOR_TOP + 3.75, 0)), Color = LEAF })
-		ball(ctx, foot + Vector3.new(sx * 0.3, 2.6, 0), 0.8, { Name = "VineLeaf", Color = lighter(LEAF, 0.2) })
-		ball(ctx, foot + Vector3.new(0, 5.2, sz * 0.3), 0.7, { Name = "VineLeaf", Color = LEAF })
+	for _, sx in { -1, 1 } do
+		local foot = Vector3.new(sx * (L.Half - PILLAR / 2), 0, L.FrontZ - 0.25)
+		deco(ctx, { Name = "Vine", Size = Vector3.new(0.3, 9, 0.3), Local = CFrame.new(foot + Vector3.new(-sx * 0.5, FLOOR1_TOP + 4.5, 0)), Color = LEAF })
+		ball(ctx, foot + Vector3.new(-sx * 0.5, 3, -0.2), 0.8, { Name = "VineLeaf", Color = lighter(LEAF, 0.2) })
+		ball(ctx, foot + Vector3.new(-sx * 0.5, 6.4, -0.2), 0.7, { Name = "VineLeaf", Color = LEAF })
 	end
 end
 
 -- 바다 집: 조개, 불가사리, 작은 물웅덩이(오리 포함)
 DECO.shells = function(ctx: Ctx)
 	local theme = ctx.theme
-	-- 물웅덩이 (앞마당 오른쪽)
-	local poolX, poolZ = 15.6, YARD_Z - 0.3
-	vcyl(ctx, poolX, poolZ, 0, 0.7, 5.2, { Name = "PoolRim", Color = lighter(theme.Floor, 0.3) })
-	vcyl(ctx, poolX, poolZ, 0.3, 0.5, 4.6, { Name = "PoolWater", Color = SKY, Material = Enum.Material.Glass, Transparency = 0.25, CanCollide = false, CanTouch = false })
-	ball(ctx, Vector3.new(poolX - 0.8, 1.15, poolZ + 0.4), 0.9, { Name = "Duck", Color = Color3.fromRGB(255, 225, 80) })
-	ball(ctx, Vector3.new(poolX - 0.8, 1.1, poolZ - 0.15), 0.35, { Name = "DuckBeak", Color = Color3.fromRGB(255, 150, 70) })
-	-- 조개 4개
+	local pool = ctx.yardSpots[1] + Vector3.new(1.5, 0, 0)
+	vcyl(ctx, pool.X, pool.Z, 0, 0.7, 5.2, { Name = "PoolRim", Color = lighter(theme.Floor, 0.3) })
+	vcyl(ctx, pool.X, pool.Z, 0.3, 0.5, 4.6, { Name = "PoolWater", Color = SKY, Material = Enum.Material.Glass, Transparency = 0.25, CanCollide = false, CanTouch = false })
+	ball(ctx, Vector3.new(pool.X - 0.8, 1.15, pool.Z + 0.4), 0.9, { Name = "Duck", Color = Color3.fromRGB(255, 225, 80) })
+	ball(ctx, Vector3.new(pool.X - 0.8, 1.1, pool.Z - 0.15), 0.35, { Name = "DuckBeak", Color = Color3.fromRGB(255, 150, 70) })
 	local shellColors = { Color3.fromRGB(255, 200, 215), Color3.fromRGB(255, 240, 220), Color3.fromRGB(230, 200, 255), Color3.fromRGB(255, 215, 180) }
-	for i, spot in { YARD_SPOTS[3], Vector3.new(18.8, 0, YARD_Z + 0.6), CAP_SPOTS[2], CAP_SPOTS[5] } do
-		blob(ctx, spot + Vector3.new(0, 0.35, 0), Vector3.new(1.3, 0.7, 1.1), { Name = "Shell", Color = shellColors[i] })
+	local spots = { ctx.yardSpots[3], ctx.yardSpots[4] }
+	for _, idx in { 2, 4 } do
+		local c = ctx.capSpots[idx]
+		if c then
+			table.insert(spots, c.pos)
+		end
 	end
-	starfish(ctx, CAP_SPOTS[3] + Vector3.new(0, 0.11, 0), Color3.fromRGB(255, 150, 110))
-	starfish(ctx, CAP_SPOTS[8] + Vector3.new(0, 0.11, 0), Color3.fromRGB(255, 180, 200))
+	for i, spot in spots do
+		blob(ctx, spot + Vector3.new(0, 0.35, 0), Vector3.new(1.3, 0.7, 1.1), { Name = "Shell", Color = shellColors[(i - 1) % #shellColors + 1] })
+	end
+	for i, idx in { 3, 6 } do
+		local c = ctx.capSpots[idx]
+		if c then
+			starfish(ctx, c.pos + Vector3.new(0, 0.11, 0), if i == 1 then Color3.fromRGB(255, 150, 110) else Color3.fromRGB(255, 180, 200))
+		end
+	end
 end
 
 -- 우주 기지: 네온 별, 로켓, 지붕 위 접시 안테나
-DECO.stars = function(ctx: Ctx, eaveY: number)
+DECO.stars = function(ctx: Ctx)
 	local theme = ctx.theme
+	local L = ctx.L
+	local ridgeY = ctx.roofBase + ctx.roofH
 	local starPos = {
-		Vector3.new(-(HALF - PILLAR / 2), 8.3, -HALF - 0.35),
-		Vector3.new(HALF - PILLAR / 2, 8.3, -HALF - 0.35),
-		Vector3.new(0, FLOOR_TOP + POST_H + 1.6, -HALF + WALL_T / 2),
-		Vector3.new(-8, eaveY + ROOF_H + 1.4, 0),
-		Vector3.new(8, eaveY + ROOF_H + 1.4, 0),
+		Vector3.new(-(L.Half - PILLAR / 2), 9.5, L.FrontZ - 0.35),
+		Vector3.new(L.Half - PILLAR / 2, 9.5, L.FrontZ - 0.35),
+		Vector3.new(-L.Size * 0.3, ridgeY + 1.6, L.CenterZ),
+		Vector3.new(L.Size * 0.3, ridgeY + 1.6, L.CenterZ),
+		Vector3.new(-(GATE_HALF + 4.4), 8, -FENCE + 0.85),
 	}
 	for _, p in starPos do
 		neonStar(ctx, p, theme.Accent)
 	end
 	-- 로켓 (앞마당 오른쪽)
-	local rx, rz = 15.5, YARD_Z - 0.2
+	local r = ctx.yardSpots[1]
+	local rx, rz = r.X, r.Z
 	vcyl(ctx, rx, rz, 0.6, 4.2, 1.9, { Name = "RocketBody", Color = WHITE, Material = Enum.Material.Metal })
 	ball(ctx, Vector3.new(rx, 4.8, rz), 1.9, { Name = "RocketNose", Color = RED })
 	ball(ctx, Vector3.new(rx, 3.2, rz - 0.85), 0.7, { Name = "RocketWindow", Color = SKY, Material = Enum.Material.Neon })
@@ -928,69 +1083,201 @@ DECO.stars = function(ctx: Ctx, eaveY: number)
 			Color = RED,
 		})
 	end
-	-- 접시 안테나 (지붕 왼쪽)
-	local dx, dz = -10, 5
-	local base = eaveY + roofRise(dx, dz)
+	-- 접시 안테나 (지붕 앞쪽 경사 왼편)
+	local dx, dz = -L.Size * 0.25, L.CenterZ - ctx.roofD * 0.35
+	local base = roofY(ctx, dz)
 	part(ctx, { Name = "DishBase", Size = Vector3.new(1.2, 1.2, 1.2), Local = CFrame.new(dx, base + 0.3, dz), Color = lighter(theme.Wall, 0.1), Material = Enum.Material.Metal })
 	deco(ctx, { Name = "DishPole", Size = Vector3.new(0.3, 1.8, 0.3), Local = CFrame.new(dx, base + 1.7, dz), Color = DARK })
 	deco(ctx, {
 		Name = "Dish",
 		Shape = Enum.PartType.Cylinder,
 		Size = Vector3.new(0.35, 2.8, 2.8),
-		Local = CFrame.new(dx, base + 2.8, dz) * CFrame.Angles(0, 0, math.rad(-55)),
+		Local = CFrame.new(dx, base + 2.8, dz) * CFrame.Angles(0, math.pi / 2, math.rad(-55)),
 		Color = WHITE,
 		Material = Enum.Material.Metal,
 	})
 end
 
--- 무지개 궁전: 입구 위 무지개 아치 + 파스텔 지붕 줄무늬
-DECO.rainbow = function(ctx: Ctx, eaveY: number)
-	local bandW = 0.95
-	local thick = 1.4
-	local segs = 7
-	local outerR = 11.2
-	local archZ = YARD_Z - 1.2
+-- 무지개 궁전: 앞마당 오른쪽 작은 무지개 아치 (길 위가 아니에요) + 구름 + 파스텔 지붕 줄무늬
+DECO.rainbow = function(ctx: Ctx)
+	local bandW = 0.9
+	local thick = 1.2
+	local segs = 4
+	local bands = 4
+	local outerR = 5.6
+	local c = ctx.yardSpots[1] + Vector3.new(2.2, 0, 0)
 	local da = math.pi / segs
-	for b = 1, 5 do
+	for b = 1, bands do
 		local r = outerR - (b - 0.5) * bandW
 		local len = 2 * r * math.sin(da / 2) + 0.3
 		for k = 0, segs - 1 do
 			local am = (k + 0.5) * da
 			local radial = Vector3.new(math.cos(am), math.sin(am), 0)
 			local tangent = Vector3.new(-math.sin(am), math.cos(am), 0)
-			local pos = Vector3.new(0, 0, archZ) + radial * r
 			deco(ctx, {
 				Name = "RainbowBand",
 				Size = Vector3.new(len, bandW, thick),
-				Local = CFrame.fromMatrix(pos, tangent, radial),
+				Local = CFrame.fromMatrix(c + radial * r, tangent, radial),
 				Color = RAINBOW_COLORS[b],
 				CastShadow = false,
 			})
 		end
 	end
-	-- 아치 발밑 구름
 	for _, sx in { -1, 1 } do
-		blob(ctx, Vector3.new(sx * (outerR - 2.4), 1.0, archZ), Vector3.new(5.5, 2.4, 3.6), { Name = "Cloud", Color = Color3.new(1, 1, 1), CastShadow = false })
+		blob(ctx, c + Vector3.new(sx * (outerR - 1.6), 0.8, 0), Vector3.new(3.6, 1.8, 2.6), { Name = "Cloud", Color = Color3.new(1, 1, 1), CastShadow = false })
 	end
-	roofStripes(ctx, eaveY, RAINBOW_COLORS)
+	roofStripes(ctx, RAINBOW_COLORS)
+end
+
+-- 왕궁: 빨간 카펫 길 + 금 테두리, 마당 문 왕관(buildYard), 현관 양옆 깃발, 지붕 위 큰 왕관, 둥근 정원수
+DECO.royal = function(ctx: Ctx)
+	local L = ctx.L
+	local edge = FENCE + FENCE_T / 2
+	for _, sx in { -1, 1 } do
+		local x = sx * (L.Door.MaxX - 0.2)
+		box(ctx, "CarpetTrim", x - 0.2, x + 0.2, 0.1, 0.14, -edge, L.FrontZ, { Color = GOLD, CanCollide = false, CanTouch = false })
+	end
+	-- 깃발: 2층 바닥 밑(1층짜리면 처마 밑)에 매달려요. 길(|x| ≤ 5) 밖이에요
+	local hangY = if ctx.floors >= 2 then HouseLayout.FloorY(2) - SLAB_T - 0.1 else ctx.eaveY - 0.4
+	for _, sx in { -1, 1 } do
+		local x = sx * (L.Door.MaxX + 2.6)
+		box(ctx, "Banner", x - 0.8, x + 0.8, hangY - 6, hangY, L.FrontZ - 0.35, L.FrontZ - 0.2, { Color = ROYAL_RED, CanCollide = false, CanTouch = false, Material = Enum.Material.Fabric })
+		box(ctx, "BannerTrim", x - 0.85, x + 0.85, hangY - 6.4, hangY - 6, L.FrontZ - 0.4, L.FrontZ - 0.15, { Color = GOLD, CanCollide = false, CanTouch = false })
+	end
+	crown(ctx, Vector3.new(0, ctx.roofBase + ctx.roofH + 0.4, L.CenterZ), 2.4)
+	for _, i in { 1, 3 } do
+		local s = ctx.yardSpots[i]
+		box(ctx, "TopiaryPot", s.X - 0.9, s.X + 0.9, 0, 1.2, s.Z - 0.9, s.Z + 0.9, { Color = WHITE, Material = Enum.Material.Marble })
+		ball(ctx, s + Vector3.new(0, 2.6, 0), 2.8, { Name = "Topiary", Color = Color3.fromRGB(70, 160, 80), Material = Enum.Material.Grass })
+		ball(ctx, s + Vector3.new(0, 4.2, 0), 0.6, { Name = "TopiaryGold", Color = GOLD })
+	end
+end
+
+-- 은하 궁전: 고리 행성, 네온 별 반짝이, 성운 띠 (1층 벽 위 띠는 capLook 이 네온으로)
+DECO.galaxy = function(ctx: Ctx)
+	local theme = ctx.theme
+	local L = ctx.L
+	local y1 = ctx.yardSpots[1]
+	local y3 = ctx.yardSpots[3]
+	planet(ctx, y1 + Vector3.new(0, 3.2, 0), 2.8, Color3.fromRGB(255, 150, 120), NEBULA_COLORS[3])
+	planet(ctx, y3 + Vector3.new(0, 2.6, 0), 1.9, Color3.fromRGB(130, 200, 255), NEBULA_COLORS[2])
+	planet(ctx, Vector3.new(L.Size * 0.18, ctx.roofBase + ctx.roofH + 4, L.CenterZ), 4, Color3.fromRGB(190, 140, 255), theme.Accent)
+	-- 별 반짝이: 1층 벽 바깥, 울타리 위
+	local wallW = L.Half - PILLAR - L.Door.MaxX -- 현관 옆 앞벽 길이 (문 구멍 밖에만 붙여요)
+	local specks = {
+		Vector3.new(-(L.Door.MaxX + wallW * 0.7), 1.6, L.FrontZ - 0.15),
+		Vector3.new(-(L.Door.MaxX + wallW * 0.3), 2.6, L.FrontZ - 0.15),
+		Vector3.new(L.Door.MaxX + wallW * 0.35, 2.1, L.FrontZ - 0.15),
+		Vector3.new(L.Door.MaxX + wallW * 0.75, 1.3, L.FrontZ - 0.15),
+		Vector3.new(-L.Half - 0.15, 2.4, L.CenterZ - 4),
+		Vector3.new(L.Half + 0.15, 1.8, L.CenterZ + 3),
+		Vector3.new(-20, FENCE_H + 0.6, -FENCE),
+		Vector3.new(16, FENCE_H + 0.6, -FENCE),
+		Vector3.new(-28, FENCE_H + 0.6, -FENCE),
+		Vector3.new(26, FENCE_H + 0.6, -FENCE),
+	}
+	for i, p in specks do
+		ball(ctx, p, if i % 3 == 0 then 0.55 else 0.4, {
+			Name = "StarSpeck",
+			Color = if i % 2 == 0 then Color3.fromRGB(255, 245, 170) else Color3.new(1, 1, 1),
+			Material = Enum.Material.Neon,
+			CastShadow = false,
+		})
+	end
+	-- 성운 띠: 처마 앞뒤
+	for i, sz in { -1, 1 } do
+		local z = if sz < 0 then L.FrontZ - 1.3 else L.BackZ + 1.3
+		box(ctx, "Nebula", -L.Half - 1.2, L.Half + 1.2, ctx.eaveY - 0.15, ctx.eaveY + 0.15, z - 0.12, z + 0.12, {
+			Color = NEBULA_COLORS[i],
+			Material = Enum.Material.Neon,
+			CanCollide = false,
+			CanTouch = false,
+			CastShadow = false,
+		})
+	end
+end
+
+----------------------------------------------------------------------
+-- 장식 자리 계산
+----------------------------------------------------------------------
+local function decoSpots(ctx: Ctx)
+	local L = ctx.L
+	local st = L.Stair
+	local S = L.Size
+	-- 앞마당 (울타리 근처, 길 |x| ≤ 5 밖)
+	ctx.yardSpots = {
+		Vector3.new(15.5, 0, -28.6),
+		Vector3.new(20.5, 0, -28.6),
+		Vector3.new(-13.6, 0, -27.6),
+		Vector3.new(25.2, 0, -28.6),
+		Vector3.new(-25, 0, -28.6),
+	}
+	local sideX = (L.Half + FENCE - FENCE_T / 2) / 2
+	ctx.sideSpots = { Vector3.new(-sideX, 0, L.CenterZ), Vector3.new(sideX, 0, L.CenterZ) }
+	-- 1층 벽 위: 왼쪽 3, 오른쪽 2, 뒤 2
+	local rightEnd = if ctx.floors >= 2 then st.MinZ else L.BackZ - PILLAR
+	local backEnd = if ctx.floors >= 2 then st.GlassX else L.Half - PILLAR
+	local caps: { { pos: Vector3, alongX: boolean } } = {}
+	for _, k in { 0.3, 0.55, 0.8 } do
+		table.insert(caps, { pos = Vector3.new(-L.Half + 0.5, CAP_TOP, L.FrontZ + S * k), alongX = false })
+	end
+	for _, k in { 0.3, 0.5 } do
+		local z = L.FrontZ + S * k
+		if z < rightEnd - 3 then
+			table.insert(caps, { pos = Vector3.new(L.Half - 0.5, CAP_TOP, z), alongX = false })
+		end
+	end
+	for _, k in { -0.3, -0.05 } do
+		local x = S * k
+		if x < backEnd - 3 then
+			table.insert(caps, { pos = Vector3.new(x, CAP_TOP, L.BackZ - 0.5), alongX = true })
+		end
+	end
+	ctx.capSpots = caps
 end
 
 ----------------------------------------------------------------------
 -- 공개 API
 ----------------------------------------------------------------------
-HouseBuilder.FLOOR_HEIGHT = FLOOR_HEIGHT
+HouseBuilder.FLOOR_HEIGHT = HouseLayout.FLOOR_HEIGHT
+HouseBuilder.Layout = HouseLayout
 
--- 받침대 윗면 (아이템 모델의 바닥 피벗 자리), 월드 CFrame. 인스턴스 없이 계산만 해요
-function HouseBuilder.SlotCFrame(origin: CFrame, slot: number): CFrame
-	local x, z = slotXZ(slot)
-	return origin * CFrame.new(x, floorTopOf(slot) + PED_H, z)
+function HouseBuilder.FloorY(floor: number): number
+	return HouseLayout.FloorY(floor)
 end
 
--- 집 전체를 (다시) 지어요. 기존 House 는 지우고, Collector / SpawnPoint 는 재사용
+-- 받침대 윗면 (아이템 모델의 바닥 피벗 자리), 월드 CFrame. 인스턴스 없이 계산만 해요
+function HouseBuilder.SlotCFrame(origin: CFrame, slot: number, themeId: string?): CFrame
+	return HouseLayout.SlotCFrame(origin, slot, themeId)
+end
+
+function HouseBuilder.SlotLocal(slot: number, themeId: string?): CFrame
+	return HouseLayout.SlotLocal(slot, themeId)
+end
+
+function HouseBuilder.FloorBounds(themeId: string?, floor: number): HouseLayout.Bounds
+	return HouseLayout.FloorBounds(themeId, floor)
+end
+
+function HouseBuilder.BlockedRects(themeId: string?, floor: number): { HouseLayout.Rect }
+	return HouseLayout.BlockedRects(themeId, floor)
+end
+
+function HouseBuilder.FloorSpawn(origin: CFrame, themeId: string?, floor: number): CFrame
+	return HouseLayout.FloorSpawn(origin, themeId, floor)
+end
+
+function HouseBuilder.ElevatorLocal(themeId: string?, floor: number): CFrame
+	return HouseLayout.ElevatorLocal(themeId, floor)
+end
+
+-- 집 전체를 (다시) 지어요. 기존 House 는 지우고, Collector / SpawnPoint 는 재사용.
+-- 엘리베이터 프롬프트 주인은 plotModel 의 OwnerUserId 속성 (부르는 쪽이 짓기 전에 맞춰요)
 function HouseBuilder.Build(plotModel: Model, origin: CFrame, themeId: string, floors: number, slotsUnlocked: number): Handles
 	local theme, id = themeOf(themeId)
 	local floorCount = math.clamp(math.floor(tonumber(floors) or 1), 1, Config.House.MaxFloors)
 	local unlocked = math.clamp(math.floor(tonumber(slotsUnlocked) or Config.Plot.StartSlots), 0, Config.Plot.TotalSlots)
+	local L = HouseLayout.Get(id)
 
 	local old = plotModel:FindFirstChild("House")
 	if old then
@@ -1001,41 +1288,63 @@ function HouseBuilder.Build(plotModel: Model, origin: CFrame, themeId: string, f
 	house.ModelStreamingMode = Enum.ModelStreamingMode.Default
 	house:SetAttribute("Theme", id)
 	house:SetAttribute("Floors", floorCount)
+	house:SetAttribute("Size", L.Size)
 
+	local eaveY = HouseLayout.RoofY(floorCount)
+	local roofD = (L.Size + 2) / 2
 	local ctx: Ctx = {
 		origin = origin,
 		house = house,
 		theme = theme,
+		deco = theme.Deco,
 		mats = MATERIALS[theme.Deco] or MATERIALS.flowers,
 		floors = floorCount,
 		count = 0,
+		L = L,
+		ownerId = tonumber(plotModel:GetAttribute("OwnerUserId")) or 0,
+		eaveY = eaveY,
+		roofBase = eaveY + 0.3,
+		roofH = 4 + L.Size * 0.2,
+		roofD = roofD,
+		yardSpots = {},
+		sideSpots = {},
+		capSpots = {},
 	}
-	local roofY = if floorCount >= 2 then ROOF_Y2 else ROOF_Y1
+	decoSpots(ctx)
 
-	buildFloor(ctx)
-	buildWalls(ctx)
-	buildPillars(ctx, roofY)
-	buildGate(ctx)
-	buildRoof(ctx, roofY)
 	buildYard(ctx)
-	if floorCount >= 2 then
-		buildFloor2(ctx)
+	buildGroundFloor(ctx)
+	buildPillars(ctx)
+	buildDoor(ctx)
+	for f = 1, floorCount do
+		if f >= 2 then
+			buildSlab(ctx, f)
+		end
+		buildPerimeter(ctx, f)
 	end
+	buildTower(ctx)
+	local elevators: { [number]: BasePart } = {}
+	for f = 1, floorCount do
+		elevators[f] = buildElevator(ctx, f)
+	end
+	buildRoof(ctx)
 	local pedestals = buildPedestals(ctx, unlocked)
 	local collector = buildCollector(ctx, plotModel)
 	local spawn = buildSpawn(ctx, plotModel)
 	local decorate = DECO[theme.Deco] or DECO.flowers
-	decorate(ctx, roofY)
+	decorate(ctx)
 
 	house:SetAttribute("PartCount", ctx.count)
 	house.Parent = plotModel
 
+	local baseY = origin.Position.Y
 	return {
 		House = house,
 		Pedestals = pedestals,
 		SpawnPoint = spawn,
 		Collector = collector,
-		Bounds = { MinY = origin.Position.Y - 1, MaxY = origin.Position.Y + roofY + ROOF_H + 3.5 },
+		Elevators = elevators,
+		Bounds = { MinY = baseY - 1, MaxY = baseY + ctx.roofBase + ctx.roofH + 6 },
 	}
 end
 

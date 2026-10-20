@@ -270,7 +270,7 @@ return function(Kit, PET_BUILDERS, EGG_BUILDERS, ACC_BUILDERS)
 		local Bm = V(0, -f.drop + 0.12 * S, math.max(0.22 * S, T.Z + 0.1 * S))
 		local L = (Bm - T).Magnitude
 		local frame = CFrame.fromMatrix(T, Vector3.xAxis, (T - Bm).Unit)
-		local W, F = 0.8 * S, 0.32 * S
+		local W, F = 0.9 * S, 0.62 * S -- 아래로 몸보다 넓게 퍼져서 앞에서도 끝자락이 보여요
 		addPart(b, "CapeCloth", "Block", V(W, L, 0.05 * S), frame * CFrame.new(0, -L * 0.5, 0), RED)
 		for _, sx in SIDES do
 			-- 옆으로 퍼지는 직각 세모 (직각 = 아래 안쪽 모서리)
@@ -288,13 +288,14 @@ return function(Kit, PET_BUILDERS, EGG_BUILDERS, ACC_BUILDERS)
 	ACC_BUILDERS.AngelWings = function(b, f)
 		local S = f.s
 		local W1, W2 = WHITE, RGB(232, 240, 255)
-		ell(b, "WingRoot", V(0.34, 0.3, 0.22) * S, CFrame.new(0, 0.15 * S, 0.08 * S), W1)
+		ell(b, "WingRoot", V(0.5, 0.3, 0.22) * S, CFrame.new(0, 0.15 * S, 0.08 * S), W1)
+		-- 큰 머리 뒤에 숨지 않게 몸보다 넓게 펼쳐요 (앞에서도 보여요)
 		for _, sx in SIDES do
-			local root = V(sx * 0.12, 0.18, 0.12) * S
+			local root = V(sx * 0.28, 0.18, 0.12) * S
 			local feathers = {
-				{ V(sx * 0.75, 0.62, 0.3), 1.05, 0.44, W1 },
-				{ V(sx * 0.95, 0.15, 0.3), 0.9, 0.38, W2 },
-				{ V(sx * 0.85, -0.25, 0.3), 0.7, 0.32, W2 },
+				{ V(sx * 0.85, 0.5, 0.3), 1.25, 0.48, W1 },
+				{ V(sx * 1, 0.05, 0.3), 1.15, 0.4, W2 },
+				{ V(sx * 0.9, -0.35, 0.3), 0.85, 0.34, W2 },
 			}
 			for _, fe in feathers do
 				local d = fe[1].Unit

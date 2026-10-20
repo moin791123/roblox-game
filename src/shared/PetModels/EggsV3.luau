@@ -105,11 +105,11 @@ return function(Kit, PET_BUILDERS, EGG_BUILDERS)
 			ell(b, "Puff", V(d, d * 0.85, d), CFrame.new(EGG_C + V(0, y, 0) + dir * (radAt(y) - d * 0.22)), col)
 		end
 		local STAR = RGB(255, 210, 70)
-		local sc = CFrame.new(0, TOP + 0.28, 0)
-		ell(b, "Star", V(0.22, 0.22, 0.12), sc, STAR, NEON)
+		local sc = CFrame.new(0, TOP + 0.24, 0)
+		ell(b, "Star", V(0.2, 0.2, 0.11), sc, STAR, NEON)
 		for i = 0, 4 do
-			local cf = sc * CFrame.Angles(0, 0, i * math.pi * 2 / 5) * CFrame.new(0, 0.17, 0)
-			ell(b, "Star", V(0.13, 0.3, 0.08), cf, STAR, NEON)
+			local cf = sc * CFrame.Angles(0, 0, i * math.pi * 2 / 5) * CFrame.new(0, 0.15, 0)
+			ell(b, "Star", V(0.12, 0.27, 0.07), cf, STAR, NEON)
 		end
 	end
 end
