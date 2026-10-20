@@ -63,7 +63,8 @@ function State.RescanPlot()
 		local idx = player:GetAttribute("PlotIndex") or (snap and snap.PlotIndex)
 		if idx then
 			local m = folder:FindFirstChild("Plot" .. tostring(idx))
-			if m and m:IsA("Model") and m:GetAttribute("OwnerUserId") == nil then
+			local owner = if m then m:GetAttribute("OwnerUserId") else nil
+			if m and m:IsA("Model") and (owner == nil or owner == 0 or owner == player.UserId) then
 				found = m
 			end
 		end

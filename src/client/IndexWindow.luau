@@ -28,7 +28,9 @@ local function setDiscovered(petId: string, entry: Entry, discovered: boolean)
 	local wasKnown = entry.Discovered
 	entry.Discovered = discovered
 	for _, child in entry.Holder:GetChildren() do
-		child:Destroy()
+		if child:IsA("GuiObject") then -- UICorner 같은 꾸밈은 남김
+			child:Destroy()
+		end
 	end
 	UiKit.Viewport("Pet", petId, entry.Holder, not discovered)
 	local def = Config.Pets[petId]
@@ -160,7 +162,7 @@ function IndexWindow.Init(gui: Instance)
 			rebuild()
 		end
 	end
-	rebuild()
+	-- 처음 열 때 만들어요 (시작할 때 18마리 뷰포트를 한꺼번에 만들면 잠깐 멈칫함)
 end
 
 function IndexWindow.OnSync()

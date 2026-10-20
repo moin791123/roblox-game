@@ -483,7 +483,7 @@ PET_BUILDERS.Frog = function(b: Builder)
 		blushY = -0.15,
 	})
 	for _, sx in SIDES do
-		local bc = c.H + V(sx * 0.48, 0.66, -0.22)
+		local bc = c.H + V(sx * 0.5, 0.74, -0.45) -- 머리 밖으로 살짝 나오게 (눈이 안 묻히도록)
 		ell(b, "EyeBulb", V(0.62, 0.6, 0.6), CFrame.new(bc), G)
 		table.insert(c.eyes, addEye(b, bc, V(0.31, 0.3, 0.3), 0, 0.02, V(0.34, 0.38, 0.14), 0))
 	end
@@ -890,7 +890,8 @@ end
 -- 크리스탈 알: 보라 유리 + 빛나는 속, 삐죽 크리스탈 조각
 EGG_BUILDERS.Crystal = function(b: Builder)
 	eggBase(b, RGB(185, 140, 255), Enum.Material.Glass, 0.2)
-	ell(b, "Core", V(1.3, 1.8, 1.3), CFrame.new(EGG_C), RGB(235, 200, 255), Enum.Material.Neon, 0.35)
+	-- 유리 뒤의 반투명 파트는 고화질에서 안 보여서 속은 불투명 네온으로
+	ell(b, "Core", V(1.3, 1.8, 1.3), CFrame.new(EGG_C), RGB(235, 200, 255), Enum.Material.Neon, 0)
 	local dirs = {
 		V(0.7, 0.4, -0.6),
 		V(-0.6, -0.1, -0.8),
@@ -1067,7 +1068,11 @@ function PetModels.AddRarityEffects(model: Model, rarity: string)
 	})
 	pe.Lifetime = NumberRange.new(0.8, 1.5)
 	pe.Rate = if level == 1 then 3 elseif level == 2 then 7 else 12
-	pe.Speed = NumberRange.new(0.4, 1.2)
+	-- 몸 표면에서 바깥쪽으로 뿌려야 몸속에 가려지지 않음
+	pe.Shape = Enum.ParticleEmitterShape.Sphere
+	pe.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+	pe.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
+	pe.Speed = NumberRange.new(1, 2.5)
 	pe.SpreadAngle = Vector2.new(180, 180)
 	pe.Rotation = NumberRange.new(0, 360)
 	pe.RotSpeed = NumberRange.new(-90, 90)

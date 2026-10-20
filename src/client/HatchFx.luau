@@ -1,6 +1,7 @@
 -- 🐣 부화 연출: 화면 어둡게 → 알 흔들흔들 → 번쩍 → 펫 등장 + 빙글빙글 + 색종이
 local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
+local UserInputService = game:GetService("UserInputService")
 
 local UiKit = require(script.Parent.UiKit)
 local State = require(script.Parent.State)
@@ -15,6 +16,7 @@ type Job = { PetId: string, EggId: string, IsNew: boolean }
 local gui: ScreenGui
 local queue: { Job } = {}
 local running = false
+local activeSpin: RBXScriptConnection? = nil -- 연출 중 오류가 나도 끊을 수 있게 보관
 local usedEggUids: { [string]: boolean } = {}
 
 local CONFETTI_COLORS = { C.Pink, C.Lemon, C.Mint, C.Sky, C.Lavender, C.Peach, C.White }
@@ -131,16 +133,17 @@ local function showOne(job: Job)
 	local rarity = (Config.Rarities :: any)[def.Rarity]
 	local rc = UiKit.RarityColor(def.Rarity)
 
-	local root: TextButton = Make("TextButton", {
+	-- 입력을 막지 않는 Frame (모바일 조이스틱·점프가 계속 동작해야 함)
+	local root: Frame = Make("Frame", {
 		Name = "Hatch",
-		Text = "",
-		AutoButtonColor = false,
+		Active = false,
 		Size = UDim2.fromScale(1, 1),
 		BackgroundColor3 = Color3.fromRGB(40, 20, 65),
 		BackgroundTransparency = 1,
 		Parent = gui,
 	})
-	UiKit.Tween(root, 0.3, { BackgroundTransparency = 0.3 })
+	local manyQueued = #queue > 0 -- 뒤에 기다리는 부화가 있으면 짧게
+	UiKit.Tween(root, 0.3, { BackgroundTransparency = 0.45 })
 
 	-- 무대 (정사각형)
 	local stage: Frame = Make("Frame", {
@@ -202,7 +205,9 @@ local function showOne(job: Job)
 	task.wait(0.4)
 	local eggScale = UiKit.Scale(eggHolder)
 	UiKit.Tween(eggScale, 1.6, { Scale = 1.2 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-	local amps = { 5, -5, 7, -7, 10, -10, 13, -13, 16, -16, 20, -20, 24, -24 }
+	local amps = if manyQueued
+		then { 8, -8, 14, -14, 20, -20 }
+		else { 5, -5, 7, -7, 10, -10, 13, -13, 16, -16, 20, -20, 24, -24 }
 	for i, a in amps do
 		local dt = math.max(0.06, 0.13 - i * 0.005)
 		UiKit.Tween(eggHolder, dt, { Rotation = a }, Enum.EasingStyle.Sine)
@@ -244,6 +249,7 @@ local function showOne(job: Job)
 			model:PivotTo(baseCf * CFrame.Angles(0, t * 1.6, 0))
 		end
 	end)
+	activeSpin = spin
 
 	title.Text = if job.IsNew then "새 친구가 태어났어요!" else "짜잔! 부화했어요!"
 	UiKit.Bump(title, 0.3)
@@ -317,15 +323,17 @@ local function showOne(job: Job)
 	}, { MaxText = 24 })
 	hint.Visible = true
 
-	-- 4) 탭하거나 3초 뒤 닫기
+	-- 4) 탭/클릭하거나 시간이 지나면 닫기 (뒤에 기다리는 부화가 있으면 1초)
 	local closed = false
 	local revealAt = os.clock()
-	local conn = root.Activated:Connect(function()
-		if os.clock() - revealAt > 0.4 then
+	local conn = UserInputService.InputBegan:Connect(function(input)
+		local t = input.UserInputType
+		if (t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch) and os.clock() - revealAt > 0.4 then
 			closed = true
 		end
 	end)
-	while not closed and os.clock() - revealAt < 3 do
+	local hold = if #queue > 0 then 1.0 else 3
+	while not closed and os.clock() - revealAt < hold do
 		task.wait()
 	end
 	conn:Disconnect()
@@ -335,6 +343,7 @@ local function showOne(job: Job)
 	hint.Visible = false
 	task.wait(0.26)
 	spin:Disconnect()
+	activeSpin = nil
 	root:Destroy()
 end
 
@@ -346,6 +355,10 @@ local function runQueue()
 			local ok, err = pcall(showOne, job)
 			if not ok then
 				warn("[HatchFx]", err)
+				if activeSpin then
+					activeSpin:Disconnect()
+					activeSpin = nil
+				end
 				for _, child in gui:GetChildren() do
 					child:Destroy()
 				end

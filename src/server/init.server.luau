@@ -29,8 +29,13 @@ local function onCharacterAdded(player: Player, character: Model)
 		return
 	end
 	PlotService.OnCharacterAdded(player, character)
-	FollowService.Refresh(player)
 	FollowService.UpdateSpeed(player)
+	-- 기지로 텔레포트가 끝난 뒤에 펫을 불러야 맵을 가로질러 끌려오지 않음
+	task.delay(0.4, function()
+		if player.Parent and player.Character == character then
+			FollowService.Refresh(player)
+		end
+	end)
 end
 
 local function onPlayerAdded(player: Player)
@@ -59,9 +64,13 @@ for _, player in Players:GetPlayers() do
 end
 
 Players.PlayerRemoving:Connect(function(player)
-	CarryService.OnPlayerRemoving(player)
-	FollowService.Clear(player)
-	PlotService.ReleasePlot(player)
+	-- 앞 단계에서 오류가 나도 저장(Release)은 반드시 실행
+	for _, fn in { CarryService.OnPlayerRemoving, FollowService.Clear, PlotService.ReleasePlot } do
+		local ok, err = pcall(fn, player)
+		if not ok then
+			warn("[Server] PlayerRemoving 처리 오류:", err)
+		end
+	end
 	DataService.Release(player)
 end)
 
@@ -72,6 +81,9 @@ Remotes.RequestSync.OnServerEvent:Connect(function(player)
 end)
 
 game:BindToClose(function()
-	CarryService.ReturnAll()
+	local ok, err = pcall(CarryService.ReturnAll)
+	if not ok then
+		warn("[Server] ReturnAll 오류:", err)
+	end
 	DataService.SaveAll()
 end)

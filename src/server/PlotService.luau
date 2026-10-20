@@ -841,6 +841,21 @@ function PlotService.ReleasePlot(player: Player)
 	updateCollector(plot)
 	updateLockLabel(plot)
 	setSign(plot)
+
+	-- 빈 기지가 생겼으니 기지 없이 기다리던 사람에게 바로 배정
+	for _, other in Players:GetPlayers() do
+		if other ~= player and not plotByPlayer[other] and DataService.Get(other) then
+			local assigned = PlotService.AssignPlot(other)
+			if assigned then
+				notify(other, "기지가 생겼어요! 🏠", "good")
+				if other.Character then
+					PlotService.OnCharacterAdded(other, other.Character)
+				end
+				DataService.Sync(other)
+				break
+			end
+		end
+	end
 end
 
 function PlotService.OnCharacterAdded(player: Player, character: Model)

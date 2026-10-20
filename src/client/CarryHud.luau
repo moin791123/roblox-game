@@ -102,18 +102,22 @@ local function stop()
 	end
 end
 
+local gen = 0 -- 루프 세대 (멈춘 직후 다시 시작해도 루프가 두 개 돌지 않게)
+
 local function start()
 	if running then
 		return
 	end
 	running = true
+	gen += 1
+	local myGen = gen
 	banner.Visible = true
 	UiKit.Pop(banner, 0.4)
 	UiKit.PlaySound("Steal")
 	task.spawn(function()
 		local lastSec = -1
 		local t0 = os.clock()
-		while running do
+		while running and gen == myGen do
 			local deadline = tonumber(player:GetAttribute("CarryDeadline")) or 0
 			local left = math.max(0, math.ceil(deadline - workspace:GetServerTimeNow()))
 			local name = player:GetAttribute("CarryItemName")

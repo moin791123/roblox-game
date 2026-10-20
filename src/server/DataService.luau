@@ -2,6 +2,7 @@
 -- 플레이어 데이터: 불러오기/저장/코인/아이템. (설계: docs/DESIGN.md "DataService")
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
@@ -61,7 +62,11 @@ local function warnDisabledOnce(reason: any)
 end
 
 -- Studio 에서 API 접근이 꺼져 있을 때 나오는 에러인지
+-- (라이브 서버에서는 일시적인 403도 있을 수 있어서 절대 영구 비활성화하지 않음)
 local function isAccessError(err: any): boolean
+	if not RunService:IsStudio() then
+		return false
+	end
 	local s = tostring(err)
 	return string.find(s, "403", 1, true) ~= nil
 		or string.find(s, "Studio", 1, true) ~= nil

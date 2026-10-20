@@ -21,9 +21,11 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 -- 예전 GUI 가 남아 있으면 정리
-local old = playerGui:FindFirstChild("PetWorldGui")
-if old then
-	old:Destroy()
+for _, name in { "PetWorldGui", "PetWorldToasts" } do
+	local old = playerGui:FindFirstChild(name)
+	if old then
+		old:Destroy()
+	end
 end
 
 local gui: ScreenGui = UiKit.Make("ScreenGui", {
@@ -52,7 +54,16 @@ local function toggleIndex()
 	end
 end
 
-Toasts.Init(gui)
+-- 알림은 부화 연출(DisplayOrder 20)보다 위에 보이도록 따로
+local toastGui: ScreenGui = UiKit.Make("ScreenGui", {
+	Name = "PetWorldToasts",
+	ResetOnSpawn = false,
+	IgnoreGuiInset = false,
+	DisplayOrder = 30,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	Parent = playerGui,
+})
+Toasts.Init(toastGui)
 Hud.Init(gui, { ToggleBag = toggleBag, ToggleIndex = toggleIndex })
 BagWindow.Init(gui)
 IndexWindow.Init(gui)
