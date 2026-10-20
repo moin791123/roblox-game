@@ -1,5 +1,6 @@
 -- 🐣 부화 연출: 화면 어둡게 → 알 흔들흔들 → 번쩍 → 펫 등장 + 빙글빙글 + 색종이
 -- ✨ 합성 연출(mode "Fuse"): 알 대신 작은 펫 3마리가 가운데로 모여 합쳐진 뒤 다음 등급 펫 등장
+-- 등급 7단계 (기본 / 🥉 브론즈 / 🥈 실버 / 🥇 골드 / 🌈 레인보우 / 💎 다이아 / 🌌 갤럭시): 색·글자는 Config.Tiers
 local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
 local UserInputService = game:GetService("UserInputService")
@@ -101,7 +102,8 @@ local function worldBurst(position: Vector3, color: Color3)
 	Debris:AddItem(att, 3)
 end
 
-local function confetti(root: GuiObject)
+local function confetti(root: GuiObject, colors: { Color3 }?)
+	local palette = if colors and #colors > 0 then colors else CONFETTI_COLORS
 	local rng = Random.new()
 	for _ = 1, 22 do
 		task.delay(rng:NextNumber(0, 0.5), function()
@@ -114,7 +116,7 @@ local function confetti(root: GuiObject)
 				Position = UDim2.fromScale(x, -0.05),
 				Size = UDim2.fromOffset(rng:NextInteger(10, 16), rng:NextInteger(14, 24)),
 				Rotation = rng:NextNumber(0, 360),
-				BackgroundColor3 = CONFETTI_COLORS[rng:NextInteger(1, #CONFETTI_COLORS)],
+				BackgroundColor3 = palette[rng:NextInteger(1, #palette)],
 				ZIndex = 30,
 				Parent = root,
 			})
@@ -248,7 +250,7 @@ local function showOne(job: Job)
 	local tier = job.Tier
 	local tinfo = Config.TierInfo(tier)
 	local isFuse = job.Mode == "Fuse"
-	local tc = if tier >= 2 then UiKit.TierColor(tier) else rc -- 황금/무지개면 등급색으로 꾸며요
+	local tc = if tier >= 2 then UiKit.TierColor(tier) else rc -- 브론즈 이상이면 등급색으로 꾸며요
 	local displayName = Config.PetDisplayName(job.PetId, tier)
 
 	-- 입력을 막지 않는 Frame (모바일 조이스틱·점프가 계속 동작해야 함)
@@ -353,7 +355,7 @@ local function showOne(job: Job)
 	activeSpin = spin
 
 	title.Text = if isFuse
-		then "✨ 합성 성공!"
+		then (if tinfo.Label ~= "" then "✨ 합성 성공! " .. tinfo.Label else "✨ 합성 성공!")
 		elseif tier >= 2 then tinfo.Label .. " 펫이 태어났어요!" -- 운 좋게 상위 등급으로 부화
 		elseif job.IsNew then "새 친구가 태어났어요!"
 		else "짜잔! 부화했어요!"
@@ -416,7 +418,19 @@ local function showOne(job: Job)
 		end)
 	end
 
-	confetti(root)
+	-- 레인보우 이상은 등급 반짝이 색으로 색종이 (흰색 섞어서)
+	local confettiColors: { Color3 }? = nil
+	local visual = Config.TierVisual(tier)
+	if tier >= 5 and visual and type(visual.ParticleColors) == "table" then
+		local list: { Color3 } = { C.White }
+		for _, color in visual.ParticleColors do
+			if typeof(color) == "Color3" then
+				table.insert(list, color)
+			end
+		end
+		confettiColors = list
+	end
+	confetti(root, confettiColors)
 
 	local hint = UiKit.Label({
 		Text = "화면을 누르면 닫혀요",
@@ -474,7 +488,7 @@ local function runQueue()
 	running = false
 end
 
--- mode: "Hatch"(기본) 또는 "Fuse". tier: 새 펫의 등급 (없으면 1)
+-- mode: "Hatch"(기본) 또는 "Fuse". tier: 새 펫의 등급 1..7 (없으면 1)
 function HatchFx.Play(petId: any, position: any, isNew: any, tier: any, mode: any)
 	if type(petId) ~= "string" or not Config.Pets[petId] then
 		return

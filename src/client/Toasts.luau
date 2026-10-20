@@ -21,7 +21,7 @@ function Toasts.Init(gui: Instance)
 	local frame: Frame = Make("Frame", {
 		Name = "Toasts",
 		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 116),
+		Position = UDim2.new(0.5, 0, 0, 124), -- 코인 줄 + 초당 수익 줄 아래
 		Size = UDim2.new(0.5, 0, 0, 260),
 		BackgroundTransparency = 1,
 		ZIndex = 40,

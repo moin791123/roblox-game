@@ -1,4 +1,5 @@
--- 🔄 환생 창: 코인을 0으로 돌리고 영구 보너스를 받아요 (펫·집·받침대는 그대로)
+-- 🔄 환생 창: 코인을 0으로 돌리고 영구 보너스를 받아요 (펫·집·받침대·옷·가구는 그대로)
+-- 다음 환생 선물(새 지역 🗺 / 새 층 🏗)과 앞으로 열릴 것도 보여 줘요
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local UiKit = require(script.Parent.UiKit)
@@ -21,28 +22,76 @@ local haveLabel: TextLabel
 local confirmButton: TextButton
 local confirmLabel: TextLabel
 local rows: { [string]: Row } = {}
+local giftLabel: TextLabel
+local futureLabel: TextLabel
+local giftCard: Frame
 local dirty = true
 local confirmToken = 0
 local lastFire = 0
 
+-- ×1.25 → "×1.25", ×2 → "×2", ×1.5 → "×1.5"
+local function mult(x: number): string
+	local s = string.format("%.2f", x)
+	s = string.gsub(s, "0+$", "")
+	s = string.gsub(s, "%.$", "")
+	return "×" .. s
+end
+
 -- 보너스 표 (이름, 지금/다음 값 만드는 함수)
 local BONUS: { { Key: string, Icon: string, Name: string, Fn: (number) -> string } } = {
 	{ Key = "Income", Icon = "🏠", Name = "집 수익", Fn = function(n)
-		return string.format("×%.1f", Config.RebirthIncomeMult(n))
+		return mult(Config.RebirthIncomeMult(n))
 	end },
 	{ Key = "Coin", Icon = "💰", Name = "들판 코인", Fn = function(n)
-		return string.format("×%.1f", Config.RebirthCoinMult(n))
+		return mult(Config.RebirthCoinMult(n))
 	end },
 	{ Key = "Speed", Icon = "🏃", Name = "이동 속도", Fn = function(n)
 		return string.format("+%d%%", math.floor((Config.RebirthSpeedMult(n) - 1) * 100 + 0.5))
 	end },
-	{ Key = "Luck", Icon = "✨", Name = "황금·무지개 운", Fn = function(n)
-		return string.format("×%.0f", Config.RebirthLuckMult(n))
+	{ Key = "Luck", Icon = "🍀", Name = "높은 등급 운", Fn = function(n)
+		return mult(Config.RebirthLuckMult(n))
 	end },
 	{ Key = "Hatch", Icon = "🐣", Name = "부화 속도", Fn = function(n)
-		return string.format("×%.1f", 1 + Config.Rebirth.HatchSpeedPerRebirth * n)
+		return mult(1 + Config.Rebirth.HatchSpeedPerRebirth * n)
 	end },
 }
+
+-- 환생 r 번째에 새로 열리는 것들 (지역 / 층)
+local function unlocksAt(r: number): { string }
+	local list: { string } = {}
+	for _, zone in Config.Zones do
+		if zone.MinRebirth == r and r > 0 then
+			table.insert(list, string.format("🗺 %s %s 열림", zone.Emoji, zone.Name))
+		end
+	end
+	for f, info in Config.FloorInfo do
+		if f >= 2 and info.MinRebirth == r and r > 0 then
+			table.insert(list, string.format("🏗 %d층 가능", f))
+		end
+	end
+	return list
+end
+
+-- r 보다 뒤에 처음 열리는 지역 / 층: (글자) 또는 nil
+local function nextUnlockAfter(r: number): string?
+	local parts: { string } = {}
+	for _, zone in Config.Zones do
+		if zone.MinRebirth > r then
+			table.insert(parts, string.format("%s %s (환생 %d)", zone.Emoji, zone.Name, zone.MinRebirth))
+			break
+		end
+	end
+	for f, info in Config.FloorInfo do
+		if f >= 2 and info.MinRebirth > r then
+			table.insert(parts, string.format("🏗 %d층 (환생 %d)", f, info.MinRebirth))
+			break
+		end
+	end
+	if #parts == 0 then
+		return nil
+	end
+	return "🎯 그다음: " .. table.concat(parts, " · ")
+end
 
 local function coins(): number
 	local snap = State.Snapshot
@@ -109,6 +158,19 @@ local function rebuild()
 	local have = coins()
 
 	countLabel.Text = string.format("🔄 환생 %d회  (최대 %d회)", rebirths, Config.Rebirth.MaxRebirths)
+
+	-- 다음 환생 선물
+	if maxed then
+		giftLabel.Text = "🏆 모든 지역과 층이 열렸어요!"
+		futureLabel.Text = ""
+	else
+		local gifts = unlocksAt(rebirths + 1)
+		giftLabel.Text = if #gifts > 0
+			then "🎁 다음 환생 선물: " .. table.concat(gifts, " / ")
+			else "🎁 다음 환생 선물: 보너스가 더 커져요! ✨"
+		futureLabel.Text = nextUnlockAfter(rebirths + 1) or "🌟 이제 보너스만 더 커져요!"
+		giftCard.BackgroundColor3 = UiKit.Lighten(if #gifts > 0 then C.Gold else C.Lemon, 0.7)
+	end
 	for _, def in BONUS do
 		local row = rows[def.Key]
 		if row then
@@ -174,7 +236,7 @@ function RebirthWindow.Init(gui: Instance)
 	-- 설명
 	local explain = infoCard(scroll, C.Sky, 2, 66)
 	UiKit.Label({
-		Text = "코인이 0이 되지만 펫·집·받침대·테마는 그대로!\n대신 영구 보너스를 받아요 ✨",
+		Text = "코인이 0이 되지만 펫·집·받침대·테마·옷·가구는 그대로!\n대신 영구 보너스와 새 지역이 열려요 ✨",
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
 		Size = UDim2.fromScale(0.94, 0.8),
@@ -182,9 +244,26 @@ function RebirthWindow.Init(gui: Instance)
 		Parent = explain,
 	}, { Stroke = C.White, MaxText = 22 })
 
+	-- 다음 환생 선물 (새 지역 / 새 층)
+	giftCard = infoCard(scroll, C.Gold, 3, 74)
+	giftLabel = UiKit.Label({
+		Text = "",
+		Position = UDim2.new(0, 12, 0, 6),
+		Size = UDim2.new(1, -24, 0, 34),
+		TextColor3 = C.Ink,
+		Parent = giftCard,
+	}, { Stroke = C.White, MaxText = 24 })
+	futureLabel = UiKit.Label({
+		Text = "",
+		Position = UDim2.new(0, 12, 0, 42),
+		Size = UDim2.new(1, -24, 0, 26),
+		TextColor3 = UiKit.Darken(C.Lavender, 0.35),
+		Parent = giftCard,
+	}, { Stroke = C.White, MaxText = 20 })
+
 	-- 보너스 표
 	local rowH = 36
-	local table_ = infoCard(scroll, C.Mint, 3, 34 + rowH * #BONUS + 10)
+	local table_ = infoCard(scroll, C.Mint, 4, 34 + rowH * #BONUS + 10)
 	local function cell(parent: Instance, text: string, x: number, w: number, color: Color3, stroke: Color3?, maxText: number?): TextLabel
 		return UiKit.Label({
 			Text = text,
@@ -221,7 +300,7 @@ function RebirthWindow.Init(gui: Instance)
 	costPill = Make("Frame", {
 		Size = UDim2.new(1, -8, 0, 40),
 		BackgroundColor3 = C.Lemon,
-		LayoutOrder = 4,
+		LayoutOrder = 5,
 		Parent = scroll,
 	})
 	UiKit.Corner(costPill, UDim.new(0.5, 0))
@@ -238,7 +317,7 @@ function RebirthWindow.Init(gui: Instance)
 		Text = "",
 		Size = UDim2.new(1, -8, 0, 26),
 		TextColor3 = C.Ink,
-		LayoutOrder = 5,
+		LayoutOrder = 6,
 		Parent = scroll,
 	}, { Stroke = C.White, MaxText = 20 })
 
@@ -246,7 +325,7 @@ function RebirthWindow.Init(gui: Instance)
 	local btnRow: Frame = Make("Frame", {
 		Size = UDim2.new(1, -8, 0, 64),
 		BackgroundTransparency = 1,
-		LayoutOrder = 6,
+		LayoutOrder = 7,
 		Parent = scroll,
 	})
 	confirmButton, confirmLabel = UiKit.Button({
@@ -270,6 +349,14 @@ function RebirthWindow.Init(gui: Instance)
 			rebuild()
 		end
 	end
+	-- 코인이 바뀌면 "살 수 있어요" 표시 다시 (열려 있을 때만)
+	State.OnCoins(function()
+		if window.IsOpen() then
+			rebuild()
+		else
+			dirty = true
+		end
+	end)
 end
 
 function RebirthWindow.OnSync()

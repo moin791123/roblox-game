@@ -1,4 +1,5 @@
--- 📖 도감 창: 모든 펫을 희귀도별로. 찾은 펫은 최고 등급 모습, 못 찾은 펫은 그림자 + ???
+-- 📖 도감 창: 펫 66마리를 지역별로 (지역 머리글에 잠김 표시). 찾은 펫은 최고 등급 모습 + 등급 배지,
+-- 못 찾은 펫은 그림자 + ??? (비밀 펫은 "<알 이름>에서 아주 드물게… ✨" 힌트)
 local UiKit = require(script.Parent.UiKit)
 local State = require(script.Parent.State)
 
@@ -16,7 +17,7 @@ type Entry = {
 	Tier: number?, -- nil = 아직 안 그림, 0 = 미발견, 1~ = 발견한 최고 등급
 }
 
-type Group = { Rarity: string, Header: TextLabel, Section: Frame, Pets: { string } }
+type Group = { Zone: number, Header: TextLabel, HeaderPill: Frame, Section: Frame, Pets: { string } }
 
 local window: UiKit.Window
 local progressLabel: TextLabel
@@ -26,7 +27,30 @@ local groups: { Group } = {}
 local dirty = true
 local lastCount = -1
 
-local TIER_BADGE = { [2] = "✨", [3] = "🌈" }
+-- 비밀 펫 힌트: 그 펫이 가장 잘 나오는 알 이름 (알 표에서 찾아요)
+local secretHints: { [string]: string } = {}
+for _, eggId in Config.EggOrder do
+	local egg = Config.Eggs[eggId]
+	for petId, weight in egg.Pets do
+		local def = Config.Pets[petId]
+		if def and def.Rarity == "Secret" then
+			local best = secretHints[petId]
+			local bestWeight = if best then (Config.Eggs[best].Pets[petId] or 0) else -1
+			if weight > bestWeight then
+				secretHints[petId] = eggId
+			end
+		end
+	end
+end
+
+local function secretHint(petId: string): string
+	local eggId = secretHints[petId]
+	local egg = if eggId then Config.Eggs[eggId] else nil
+	if egg then
+		return egg.Name .. "에서\n아주 드물게… ✨"
+	end
+	return "아주 드문 비밀 펫… ✨"
+end
 
 -- 도감 값 → 발견한 최고 등급 (예전 데이터 true = 1, 없으면 0)
 local function indexTier(value: any): number
@@ -63,12 +87,12 @@ local function setTier(petId: string, entry: Entry, tier: number)
 		end
 	else
 		-- 비밀 펫은 힌트만 살짝
-		entry.Name.Text = if def.Rarity == "Secret" then "별빛 알에서… 🌌" else "???"
+		entry.Name.Text = if def.Rarity == "Secret" then secretHint(petId) else "???"
 		entry.Frame.BackgroundColor3 = if def.Rarity == "Secret" then Color3.fromRGB(40, 35, 80) else Color3.fromRGB(225, 222, 235)
 	end
-	local badge = TIER_BADGE[tier]
-	entry.Badge.Visible = badge ~= nil
-	if badge then
+	local badge = if tier >= 2 then UiKit.TierEmoji(tier) else nil
+	entry.Badge.Visible = badge ~= nil and badge ~= ""
+	if badge and badge ~= "" then
 		entry.BadgeLabel.Text = badge
 		entry.Badge.BackgroundColor3 = UiKit.TierColor(tier)
 		if before ~= nil then
@@ -85,6 +109,7 @@ local function rebuild()
 	local myGen = rebuildGen
 	local snap = State.Snapshot
 	local index: { [string]: any } = if snap then snap.Index else {}
+	local rebirths = State.Rebirths()
 	local count = 0
 	local built = 0
 	for _, group in groups do
@@ -99,7 +124,7 @@ local function rebuild()
 			if entry and entry.Tier ~= tier then
 				setTier(petId, entry, tier)
 				built += 1
-				-- 뷰포트(펫 모델) 만들기는 무거워서 6개마다 한 프레임 쉬어요 (처음 열 때 48개)
+				-- 뷰포트(펫 모델) 만들기는 무거워서 6개마다 한 프레임 쉬어요 (처음 열 때 66개)
 				if built % 6 == 0 then
 					task.wait()
 					if rebuildGen ~= myGen then
@@ -108,8 +133,12 @@ local function rebuild()
 				end
 			end
 		end
-		local rinfo = (Config.Rarities :: any)[group.Rarity]
-		group.Header.Text = string.format("%s  %d / %d", if rinfo then rinfo.Name else group.Rarity, found, #group.Pets)
+		local zone = Config.Zones[group.Zone]
+		local unlocked = Config.ZoneUnlocked(group.Zone, rebirths)
+		group.Header.Text = if unlocked
+			then string.format("%s %s  %d / %d", zone.Emoji, zone.Name, found, #group.Pets)
+			else string.format("🔒 %s %s · 환생 %d  %d / %d", zone.Emoji, zone.Name, zone.MinRebirth, found, #group.Pets)
+		group.HeaderPill.BackgroundColor3 = if unlocked then zone.Palette.Accent else C.Grey
 	end
 	local total = #Config.PetOrder
 	progressLabel.Text = string.format("📖 %d / %d", count, total)
@@ -157,7 +186,7 @@ local function createEntry(parent: Instance, petId: string, order: number): Entr
 	})
 	UiKit.Corner(rpill, UDim.new(0.5, 0))
 	UiKit.Label({ Text = rinfo and rinfo.Name or "", Size = UDim2.fromScale(0.86, 0.8), Position = UDim2.fromScale(0.07, 0.1), Parent = rpill }, { Stroke = UiKit.Darken(rc, 0.45), MaxText = 18 })
-	-- 등급 배지 (✨ 황금 / 🌈 무지개), 오른쪽 위
+	-- 등급 배지 (🥉🥈🥇🌈💎🌌), 오른쪽 위
 	local badge: Frame = Make("Frame", {
 		Name = "TierBadge",
 		AnchorPoint = Vector2.new(1, 0),
@@ -220,26 +249,22 @@ function IndexWindow.Init(gui: Instance)
 
 	local scroll = UiKit.ListScroller(content, { Position = UDim2.new(0, 0, 0, 52), Size = UDim2.new(1, 0, 1, -52), ScrollBarImageColor3 = C.Sky })
 
-	-- 희귀도별 묶음 (PetOrder 순서대로 처음 나온 희귀도 순)
-	local byRarity: { [string]: Group } = {}
+	-- 지역별 묶음 (지역 순서, 지역 안에서는 PetOrder = 희귀도 순)
+	for zoneIndex, zone in Config.Zones do
+		local header = UiKit.SectionHeader(scroll, "", zone.Palette.Accent, zoneIndex * 2 - 1, 300)
+		local pill = header.Parent :: Frame
+		local section: Frame = Make("Frame", {
+			Name = zone.Id,
+			Size = UDim2.new(1, 0, 0, 0),
+			BackgroundTransparency = 1,
+			LayoutOrder = zoneIndex * 2,
+			Parent = scroll,
+		})
+		table.insert(groups, { Zone = zoneIndex, Header = header, HeaderPill = pill, Section = section, Pets = {} })
+	end
 	for _, petId in Config.PetOrder do
 		local def = Config.Pets[petId]
-		local group = byRarity[def.Rarity]
-		if not group then
-			local order = #groups
-			local rc = UiKit.RarityColor(def.Rarity)
-			local header = UiKit.SectionHeader(scroll, "", rc, order * 2 + 1)
-			local section: Frame = Make("Frame", {
-				Name = def.Rarity,
-				Size = UDim2.new(1, 0, 0, 0),
-				BackgroundTransparency = 1,
-				LayoutOrder = order * 2 + 2,
-				Parent = scroll,
-			})
-			group = { Rarity = def.Rarity, Header = header, Section = section, Pets = {} }
-			byRarity[def.Rarity] = group
-			table.insert(groups, group)
-		end
+		local group = groups[math.clamp(def.Zone or 1, 1, #groups)]
 		table.insert(group.Pets, petId)
 	end
 	for _, group in groups do
@@ -254,7 +279,7 @@ function IndexWindow.Init(gui: Instance)
 			rebuild()
 		end
 	end
-	-- 뷰포트는 처음 열 때 만들어요 (시작할 때 47마리를 한꺼번에 만들면 잠깐 멈칫함)
+	-- 뷰포트는 처음 열 때 만들어요 (시작할 때 66마리를 한꺼번에 만들면 잠깐 멈칫함)
 end
 
 function IndexWindow.OnSync()

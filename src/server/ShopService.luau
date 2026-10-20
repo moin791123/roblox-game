@@ -322,7 +322,9 @@ function ShopService.RenderFurniture(player: Player)
 		return
 	end
 	for fid, f in data.Furniture do
-		local ok, err = pcall(renderOne, player, plot, fid, f)
+		local ok, err = pcall(function()
+			renderOne(player, plot, fid, f)
+		end)
 		if not ok then
 			warn("[ShopService] 가구 그리기 오류:", fid, err)
 		end
@@ -526,7 +528,9 @@ local function onPlaceFurniture(player: Player, furnId: any, floor: any, x: any,
 	end
 	local f: Furniture = { Id = furnId, Floor = floor, X = snap(x), Z = snap(z), R = normRot(r) :: number }
 	data.Furniture[fid] = f
-	local okR, err = pcall(renderOne, player, plot, fid, f)
+	local okR, err = pcall(function()
+		renderOne(player, plot, fid, f)
+	end)
 	if not okR then
 		warn("[ShopService] 가구 그리기 오류:", fid, err)
 	end
@@ -557,7 +561,9 @@ local function onMoveFurniture(player: Player, fid: any, floor: any, x: any, z: 
 	f.X = snap(x)
 	f.Z = snap(z)
 	f.R = normRot(r) :: number
-	local okR, err = pcall(renderOne, player, plot, fid, f)
+	local okR, err = pcall(function()
+		renderOne(player, plot, fid, f)
+	end)
 	if not okR then
 		warn("[ShopService] 가구 그리기 오류:", fid, err)
 	end
@@ -635,7 +641,9 @@ function ShopService.Start()
 	local hook = (PlotService :: any).OnPlotChanged
 	if type(hook) == "function" then
 		hook(function(player: Player, plot: any, reason: string)
-			local ok, err = pcall(onPlotChanged, player, plot, reason)
+			local ok, err = pcall(function()
+				onPlotChanged(player, plot, reason)
+			end)
 			if not ok then
 				warn("[ShopService] OnPlotChanged 오류:", err)
 			end
@@ -650,7 +658,10 @@ function ShopService.Start()
 			if throttled(player) then
 				return
 			end
-			local ok, err = pcall(fn, player, ...)
+			local args = table.pack(...)
+			local ok, err = pcall(function()
+				fn(player, table.unpack(args, 1, args.n))
+			end)
 			if not ok then
 				warn("[ShopService] " .. remote.Name .. " 오류:", err)
 			end

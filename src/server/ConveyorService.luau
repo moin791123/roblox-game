@@ -1,5 +1,8 @@
--- 컨베이어(알 공장 벨트): 알이 나와서 굴러가고, 프롬프트로 사요.
--- 환생 알(MinRebirth)은 환생한 사람이 접속해 있을 때만 나오고, 환생 횟수가 모자라면 못 사요.
+-- 컨베이어(알 공장 벨트): 지역마다 벨트 1개 (workspace.Conveyors.Zone<k>), 그 지역 알 2종만 나와요.
+-- 그 지역이 열린 사람이 접속해 있을 때만 알이 나오고 (숲 마을은 항상), 지역이 잠긴 사람은 못 사요.
+-- 산 알은 집 받침대로 날아가요. 집이 아주 멀면 "뿅" 하고 사라졌다가 받침대에 바로 나타나요.
+-- 벨트 줄무늬 애니메이션은 클라이언트(ZoneClient)가 해요 (서버 복제 줄이기).
+local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -18,9 +21,12 @@ local BELT_TOP = 1.2
 local DROP_TIME = 0.7 -- 슈트에서 벨트로 떨어지는 시간
 local DROP_HEIGHT = 9 -- 슈트 안에서 알이 나오는 높이
 local FALL_TIME = 0.7 -- 끝에서 통 안으로 떨어지는 시간
-local FLY_TIME = 0.9 -- 산 알이 기지로 날아가는 시간
+local FLY_TIME = 0.9 -- 산 알이 집으로 날아가는 시간 (가까울 때)
+local FLY_TIME_MAX = 1.8
 local STRIPE_SPACING = 8
 local BUY_DISTANCE = 20
+local WATCH_DISTANCE = 260 -- 이 안에 사람이 있는 벨트만 알을 매 프레임 움직여요
+local ANNOUNCE_GAP = 45 -- 좋은 알 등장 알림 간격 (벨트마다)
 
 type EggEntry = {
 	Model: Model,
@@ -33,18 +39,26 @@ type EggEntry = {
 	Wobble: number,
 }
 
-local rng = Random.new()
-local folder: Folder? = nil
-local eggs: { EggEntry } = {}
-local buyDebounce: { [Player]: number } = {}
+type Belt = {
+	Zone: number,
+	Folder: Folder,
+	Start: Vector3,
+	Dir: Vector3,
+	Length: number,
+	Base: CFrame,
+	Speed: number,
+	Center: Vector3,
+	Eggs: { EggEntry },
+	Active: boolean, -- 알이 나오는지 (지역이 열린 사람이 접속 중)
+	Watched: boolean, -- 근처에 사람이 있는지
+	NextSpawn: number,
+	LastAnnounce: number,
+}
 
--- 벨트 좌표계 (시작점 기준, -Z 가 진행 방향)
-local startPos = Config.Layout.ConveyorStart
-local endPos = Config.Layout.ConveyorEnd
-local beltLength = (endPos - startPos).Magnitude
-local beltDir = (endPos - startPos).Unit
-local beltBase = CFrame.lookAt(startPos, startPos + beltDir)
-local speed = beltLength / Config.Conveyor.TravelTime
+local rng = Random.new()
+local belts: { Belt } = {}
+local buyDebounce: { [Player]: number } = {}
+local started = false
 
 local function notify(player: Player, text: string, kind: string)
 	Remotes.Notify:FireClient(player, text, kind)
@@ -63,28 +77,33 @@ local function makePart(props: { [string]: any }): Part
 end
 
 -- 벨트 위 거리 s, 높이 y 의 CFrame
-local function beltCFrame(s: number, y: number): CFrame
-	return beltBase * CFrame.new(0, y, -s)
+local function beltCFrame(belt: Belt, s: number, y: number): CFrame
+	return belt.Base * CFrame.new(0, y, -s)
 end
 
 ----------------------------------------------------------------------
 -- 벨트 만들기
 ----------------------------------------------------------------------
-local stripes: { BasePart } = {}
-
-local function buildBelt(root: Folder)
+local function buildBelt(belt: Belt)
 	local beltFolder = Instance.new("Folder")
 	beltFolder.Name = "Belt"
-	beltFolder.Parent = root
+	-- ZoneClient 가 줄무늬를 움직일 때 쓰는 값
+	beltFolder:SetAttribute("Start", belt.Start)
+	beltFolder:SetAttribute("Dir", belt.Dir)
+	beltFolder:SetAttribute("Length", belt.Length)
+	beltFolder:SetAttribute("Speed", belt.Speed)
+	beltFolder:SetAttribute("StripeSpacing", STRIPE_SPACING)
+	beltFolder:SetAttribute("StripeY", BELT_TOP + 0.02)
+	beltFolder.Parent = belt.Folder
 
 	local W = Config.Layout.ConveyorWidth
-	local L = beltLength
+	local L = belt.Length
 
 	-- 받침 프레임
 	makePart({
 		Name = "Frame",
 		Size = Vector3.new(W + 1.2, 0.9, L + 1),
-		CFrame = beltCFrame(L / 2, 0.45),
+		CFrame = beltCFrame(belt, L / 2, 0.45),
 		Color = Color3.fromRGB(150, 170, 210),
 		Parent = beltFolder,
 	})
@@ -92,12 +111,12 @@ local function buildBelt(root: Folder)
 	local top = makePart({
 		Name = "BeltTop",
 		Size = Vector3.new(W, 0.3, L),
-		CFrame = beltCFrame(L / 2, BELT_TOP - 0.15),
+		CFrame = beltCFrame(belt, L / 2, BELT_TOP - 0.15),
 		Color = Color3.fromRGB(55, 58, 75),
 		Material = Enum.Material.Fabric,
 		Parent = beltFolder,
 	})
-	top.AssemblyLinearVelocity = beltDir * speed
+	top.AssemblyLinearVelocity = belt.Dir * belt.Speed
 
 	-- 옆 난간 (보기용, 통과 가능)
 	local railColors = { Color3.fromRGB(255, 140, 190), Color3.fromRGB(110, 210, 230) }
@@ -105,18 +124,17 @@ local function buildBelt(root: Folder)
 		makePart({
 			Name = "Rail",
 			Size = Vector3.new(0.5, 0.5, L),
-			CFrame = beltCFrame(L / 2, BELT_TOP + 0.35) * CFrame.new(side * (W / 2 + 0.3), 0, 0),
+			CFrame = beltCFrame(belt, L / 2, BELT_TOP + 0.35) * CFrame.new(side * (W / 2 + 0.3), 0, 0),
 			Color = railColors[i],
 			CanCollide = false,
 			Parent = beltFolder,
 		})
-		-- 난간 기둥
-		local posts = math.floor(L / 12)
+		local posts = math.floor(L / 20)
 		for k = 0, posts do
 			makePart({
 				Name = "Post",
 				Size = Vector3.new(0.4, 0.9, 0.4),
-				CFrame = beltCFrame(k * (L / posts), BELT_TOP - 0.1) * CFrame.new(side * (W / 2 + 0.3), 0, 0),
+				CFrame = beltCFrame(belt, k * (L / posts), BELT_TOP - 0.1) * CFrame.new(side * (W / 2 + 0.3), 0, 0),
 				Color = Color3.fromRGB(255, 255, 255),
 				CanCollide = false,
 				Parent = beltFolder,
@@ -130,21 +148,21 @@ local function buildBelt(root: Folder)
 			Name = "Roller",
 			Shape = Enum.PartType.Cylinder,
 			Size = Vector3.new(W + 0.4, 1.3, 1.3),
-			CFrame = beltCFrame(s, BELT_TOP - 0.6),
+			CFrame = beltCFrame(belt, s, BELT_TOP - 0.6),
 			Color = Color3.fromRGB(255, 210, 80),
 			CanCollide = false,
 			Parent = beltFolder,
 		})
 	end
 
-	-- 움직이는 줄무늬 (네온)
+	-- 줄무늬 (네온). 움직이는 건 클라이언트가 해요
 	local stripeColors = { Color3.fromRGB(255, 230, 120), Color3.fromRGB(140, 230, 255), Color3.fromRGB(255, 160, 210) }
 	local count = math.floor(L / STRIPE_SPACING)
 	for i = 1, count do
 		local stripe = makePart({
 			Name = "Stripe",
 			Size = Vector3.new(W - 1.2, 0.06, 0.8),
-			CFrame = beltCFrame((i - 1) * STRIPE_SPACING, BELT_TOP + 0.02),
+			CFrame = beltCFrame(belt, (i - 1) * STRIPE_SPACING, BELT_TOP + 0.02),
 			Color = stripeColors[(i - 1) % #stripeColors + 1],
 			Material = Enum.Material.Neon,
 			Transparency = 0.25,
@@ -153,18 +171,18 @@ local function buildBelt(root: Folder)
 			CanQuery = false,
 			Parent = beltFolder,
 		})
-		table.insert(stripes, stripe)
+		stripe:SetAttribute("StripeIndex", i)
 	end
 
 	-- 시작점 알 슈트
-	local chuteFolder = Instance.new("Model")
-	chuteFolder.Name = "Chute"
-	chuteFolder.Parent = beltFolder
+	local chute = Instance.new("Model")
+	chute.Name = "Chute"
+	chute.Parent = beltFolder
 	local cw = 5
 	local chuteBottom = BELT_TOP + 3.6
 	local chuteTop = DROP_HEIGHT + 3
 	local chuteH = chuteTop - chuteBottom
-	local chuteCenter = beltCFrame(0, chuteBottom + chuteH / 2)
+	local chuteCenter = beltCFrame(belt, 0, chuteBottom + chuteH / 2)
 	local chuteColor = Color3.fromRGB(255, 190, 220)
 	for _, off in { Vector3.new(cw / 2, 0, 0), Vector3.new(-cw / 2, 0, 0), Vector3.new(0, 0, cw / 2), Vector3.new(0, 0, -cw / 2) } do
 		local isX = off.X ~= 0
@@ -176,27 +194,26 @@ local function buildBelt(root: Folder)
 			Material = Enum.Material.Glass,
 			Transparency = 0.45,
 			CanCollide = false,
-			Parent = chuteFolder,
+			Parent = chute,
 		})
 	end
 	makePart({
 		Name = "ChuteCap",
 		Shape = Enum.PartType.Ball,
 		Size = Vector3.new(cw + 1.5, cw + 1.5, cw + 1.5),
-		CFrame = beltCFrame(0, chuteTop + 0.6),
+		CFrame = beltCFrame(belt, 0, chuteTop + 0.6),
 		Color = Color3.fromRGB(255, 120, 170),
 		CanCollide = false,
-		Parent = chuteFolder,
+		Parent = chute,
 	})
-	-- 슈트 다리
 	for _, off in { Vector3.new(cw / 2, 0, cw / 2), Vector3.new(-cw / 2, 0, cw / 2), Vector3.new(cw / 2, 0, -cw / 2), Vector3.new(-cw / 2, 0, -cw / 2) } do
 		makePart({
 			Name = "ChuteLeg",
 			Size = Vector3.new(0.4, chuteBottom - BELT_TOP + 0.2, 0.4),
-			CFrame = beltCFrame(0, (BELT_TOP + chuteBottom) / 2) * CFrame.new(off),
+			CFrame = beltCFrame(belt, 0, (BELT_TOP + chuteBottom) / 2) * CFrame.new(off),
 			Color = Color3.fromRGB(255, 255, 255),
 			CanCollide = false,
-			Parent = chuteFolder,
+			Parent = chute,
 		})
 	end
 
@@ -207,7 +224,7 @@ local function buildBelt(root: Folder)
 	local binLen = 5.5
 	local binW = W + 1
 	local binH = 1.1
-	local binCenter = beltCFrame(L + binLen / 2 + 0.3, 0)
+	local binCenter = beltCFrame(belt, L + binLen / 2 + 0.3, 0)
 	makePart({
 		Name = "BinFloor",
 		Size = Vector3.new(binW, 0.2, binLen),
@@ -230,20 +247,6 @@ local function buildBelt(root: Folder)
 	end
 end
 
-local function animateStripes(now: number)
-	if #stripes == 0 then
-		return
-	end
-	local span = #stripes * STRIPE_SPACING
-	local offset = (now * speed * span / beltLength) % span
-	local cfs = table.create(#stripes)
-	for i = 1, #stripes do
-		local s = ((i - 1) * STRIPE_SPACING + offset) % span
-		cfs[i] = beltCFrame(s * (beltLength / span), BELT_TOP + 0.02)
-	end
-	workspace:BulkMoveTo(stripes, cfs, Enum.BulkMoveMode.FireCFrameChanged)
-end
-
 ----------------------------------------------------------------------
 -- 알
 ----------------------------------------------------------------------
@@ -253,7 +256,6 @@ local function buildEggModel(eggId: string): Model
 		return model
 	end
 	warn("[ConveyorService] BuildEgg 실패:", model)
-	-- 대체 모델
 	local m = Instance.new("Model")
 	local body = Instance.new("Part")
 	body.Name = "Body"
@@ -273,12 +275,14 @@ end
 
 local function makeBillboard(adornee: BasePart, egg: any, price: number)
 	local rarity = Config.Rarities[egg.Rarity]
+	local premium = egg.Premium == true
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "EggInfo"
 	gui.Adornee = adornee
-	gui.Size = UDim2.new(7, 0, 3, 0)
-	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.2, 0)
-	gui.MaxDistance = 90
+	-- 비싼 알은 간판도 커요
+	gui.Size = if premium then UDim2.new(9, 0, 4, 0) else UDim2.new(7, 0, 3, 0)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, if premium then 3.8 else 3.2, 0)
+	gui.MaxDistance = if premium then 120 else 90
 	gui.LightInfluence = 0
 	gui.ResetOnSpawn = false
 
@@ -296,53 +300,74 @@ local function makeBillboard(adornee: BasePart, egg: any, price: number)
 		l.Parent = gui
 		return l
 	end
-	if egg.MinRebirth then
-		-- 환생 알: 한 줄 더 (환생 N 필요)
-		gui.Size = UDim2.new(7, 0, 3.9, 0)
-		gui.StudsOffsetWorldSpace = Vector3.new(0, 3.6, 0)
-		label(egg.Name, rarity.Color, 0, 0.31)
-		label("💰 " .. Config.FormatNumber(price), Color3.fromRGB(255, 225, 90), 0.31, 0.25)
-		label(rarity.Name, rarity.Color, 0.56, 0.21)
-		label("🔄 환생 " .. egg.MinRebirth .. " 필요", Color3.fromRGB(190, 230, 255), 0.77, 0.23)
-	else
-		label(egg.Name, rarity.Color, 0, 0.4)
-		label("💰 " .. Config.FormatNumber(price), Color3.fromRGB(255, 225, 90), 0.4, 0.33)
-		label(rarity.Name, rarity.Color, 0.73, 0.27)
-	end
+	label(if premium then "✨ " .. egg.Name .. " ✨" else egg.Name, rarity.Color, 0, 0.4)
+	label("💰 " .. Config.FormatNumber(price), Color3.fromRGB(255, 225, 90), 0.4, 0.33)
+	label(rarity.Name, rarity.Color, 0.73, 0.27)
 	gui.Parent = adornee
 end
 
--- 접속 중인 사람들 중 가장 많이 환생한 횟수
-local function maxOnlineRebirths(): number
-	local best = 0
-	for _, player in Players:GetPlayers() do
-		best = math.max(best, DataService.GetRebirths(player))
-	end
-	return best
+-- 비싼 알 반짝임 (빛 + 반짝이)
+local function addPremiumGlow(main: BasePart, egg: any)
+	local color = Config.Rarities[egg.Rarity].Color
+	local light = Instance.new("PointLight")
+	light.Name = "PremiumGlow"
+	light.Color = color
+	light.Brightness = 1.6
+	light.Range = 9
+	light.Parent = main
+	local sparkle = Instance.new("ParticleEmitter")
+	sparkle.Name = "PremiumSparkle"
+	sparkle.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+	sparkle.Color = ColorSequence.new(color, Color3.new(1, 1, 1))
+	sparkle.LightEmission = 0.8
+	sparkle.Size = NumberSequence.new(0.5, 0)
+	sparkle.Lifetime = NumberRange.new(0.6, 1)
+	sparkle.Speed = NumberRange.new(1, 2.5)
+	sparkle.SpreadAngle = Vector2.new(180, 180)
+	sparkle.Rate = 6
+	sparkle.Parent = main
 end
 
--- 지금 나올 수 있는 알 뽑기 (환생 알은 조건 맞는 사람이 있을 때만). 아무것도 없으면 Basic
-local function rollEggId(): string
-	local maxRebirth = maxOnlineRebirths()
-	local weights: { [string]: number } = {}
-	local any = false
-	for id, egg in Config.Eggs do
-		local minRebirth = tonumber(egg.MinRebirth) or 0
-		if minRebirth <= maxRebirth and egg.SpawnWeight > 0 then
-			weights[id] = egg.SpawnWeight
-			any = true
-		end
-	end
-	if not any then
-		return "Basic"
-	end
-	return Config.WeightedPick(weights, rng)
-end
-
-local function removeEntry(entry: EggEntry)
-	local i = table.find(eggs, entry)
+local function removeEntry(belt: Belt, entry: EggEntry)
+	local i = table.find(belt.Eggs, entry)
 	if i then
-		table.remove(eggs, i)
+		table.remove(belt.Eggs, i)
+	end
+end
+
+-- 잠깐 반짝 터지는 효과 (보이지 않는 파트 + 파티클 한 번)
+local function poofAt(pos: Vector3, color: Color3)
+	local p = Instance.new("Part")
+	p.Name = "EggPoof"
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanTouch = false
+	p.CanQuery = false
+	p.Transparency = 1
+	p.Size = Vector3.new(1, 1, 1)
+	p.CFrame = CFrame.new(pos)
+	p.Parent = workspace
+	local e = Instance.new("ParticleEmitter")
+	e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+	e.Color = ColorSequence.new(color, Color3.new(1, 1, 1))
+	e.LightEmission = 0.7
+	e.Size = NumberSequence.new(0.9, 0)
+	e.Lifetime = NumberRange.new(0.5, 0.9)
+	e.Speed = NumberRange.new(6, 12)
+	e.SpreadAngle = Vector2.new(180, 180)
+	e.Rate = 0
+	e.Parent = p
+	e:Emit(24)
+	Debris:AddItem(p, 1.5)
+end
+
+local function placeIfStillThere(player: Player, uid: string)
+	if player.Parent == nil then
+		return
+	end
+	local item = DataService.GetItem(player, uid)
+	if item and item.Loc == "Slot" then
+		PlotService.PlaceItem(player, uid)
 	end
 end
 
@@ -351,10 +376,12 @@ local function flyToSlot(model: Model, player: Player, uid: string, target: CFra
 		local from = model:GetPivot()
 		local p0 = from.Position
 		local p2 = target.Position
-		local p1 = (p0 + p2) / 2 + Vector3.new(0, math.max(10, (p2 - p0).Magnitude * 0.35), 0)
+		local dist = (p2 - p0).Magnitude
+		local p1 = (p0 + p2) / 2 + Vector3.new(0, math.max(10, dist * 0.35), 0)
+		local flyTime = math.clamp(FLY_TIME + dist / 500, FLY_TIME, FLY_TIME_MAX)
 		local t0 = os.clock()
 		while true do
-			local a = math.clamp((os.clock() - t0) / FLY_TIME, 0, 1)
+			local a = math.clamp((os.clock() - t0) / flyTime, 0, 1)
 			if model.Parent == nil then
 				break
 			end
@@ -369,17 +396,19 @@ local function flyToSlot(model: Model, player: Player, uid: string, target: CFra
 		end
 		model:Destroy()
 		-- 날아가는 동안 상황이 바뀌었을 수 있으니 다시 확인
-		if player.Parent == nil then
-			return
-		end
-		local item = DataService.GetItem(player, uid)
-		if item and item.Loc == "Slot" then
-			PlotService.PlaceItem(player, uid)
-		end
+		placeIfStillThere(player, uid)
 	end)
 end
 
-local function onBuy(entry: EggEntry, player: Player)
+-- 너무 먼 집: 그 자리에서 뿅! 하고 받침대에 바로 나타나요
+local function poofToSlot(model: Model, player: Player, uid: string, target: CFrame, color: Color3)
+	poofAt(model:GetPivot().Position + Vector3.new(0, 1.5, 0), color)
+	model:Destroy()
+	placeIfStillThere(player, uid)
+	poofAt(target.Position + Vector3.new(0, 1.5, 0), color)
+end
+
+local function onBuy(belt: Belt, entry: EggEntry, player: Player)
 	if entry.Claimed or entry.Done or entry.Phase >= 3 then
 		return
 	end
@@ -393,7 +422,14 @@ local function onBuy(entry: EggEntry, player: Player)
 		return
 	end
 	if not PlotService.GetPlot(player) then
-		notify(player, "아직 내 기지가 없어요!", "warn")
+		notify(player, "아직 내 집이 없어요! 🏠", "warn")
+		return
+	end
+	local egg = Config.Eggs[entry.EggId]
+	local rebirths = DataService.GetRebirths(player)
+	local zone = Config.EggZone(entry.EggId)
+	if not Config.ZoneUnlocked(zone, rebirths) then
+		notify(player, "🔒 환생 " .. Config.Zones[zone].MinRebirth .. "회가 필요해요!", "warn")
 		return
 	end
 	local character = player.Character
@@ -406,15 +442,10 @@ local function onBuy(entry: EggEntry, player: Player)
 		return
 	end
 
-	local egg = Config.Eggs[entry.EggId]
-	local rebirths = DataService.GetRebirths(player)
-	if egg.MinRebirth and rebirths < egg.MinRebirth then
-		notify(player, "환생 " .. egg.MinRebirth .. "회가 필요해요! 🔄", "warn")
-		return
-	end
+	-- 빈 받침대 먼저 확인하고 돈을 빼요 (반대 순서면 돈만 빠질 수 있어요)
 	local slot = PlotService.FreeSlot(player)
 	if not slot then
-		notify(player, "기지에 빈 자리가 없어요!", "warn")
+		notify(player, "집에 빈 받침대가 없어요! 🏠", "warn")
 		return
 	end
 	if not DataService.TrySpend(player, entry.Price) then
@@ -425,7 +456,7 @@ local function onBuy(entry: EggEntry, player: Player)
 	-- 여기부터는 이 알은 이 플레이어 것 (중간에 yield 없음)
 	entry.Claimed = true
 	entry.Done = true
-	removeEntry(entry)
+	removeEntry(belt, entry)
 
 	local uid = DataService.AddItem(player, {
 		Kind = "Egg",
@@ -449,18 +480,25 @@ local function onBuy(entry: EggEntry, player: Player)
 		end
 	end
 	local target = PlotService.GetSlotCFrame(player, slot)
-	flyToSlot(model, player, uid, target)
-
-	notify(player, "알을 샀어요! 기지에서 부화를 기다려요 🥚", "good")
+	if (target.Position - main.Position).Magnitude <= Config.Conveyor.FlyMaxDistance then
+		flyToSlot(model, player, uid, target)
+		notify(player, "알을 샀어요! 집에서 부화를 기다려요 🥚", "good")
+	else
+		poofToSlot(model, player, uid, target, Config.Rarities[egg.Rarity].Color)
+		notify(player, "✨ 뿅! 알이 집 받침대로 갔어요 🥚", "good")
+	end
 	DataService.Sync(player)
 end
 
-local function spawnEgg()
-	if not folder or #eggs >= Config.Conveyor.MaxEggs then
+local function spawnEgg(belt: Belt)
+	if #belt.Eggs >= Config.Conveyor.MaxEggs then
 		return
 	end
-	local eggId = rollEggId()
+	local eggId = Config.RollEgg(rng, belt.Zone)
 	local egg = Config.Eggs[eggId]
+	if not egg then
+		return
+	end
 	local rarity = Config.Rarities[egg.Rarity]
 	local price = egg.Price
 
@@ -468,6 +506,7 @@ local function spawnEgg()
 	model.Name = "ConveyorEgg_" .. eggId
 	model:SetAttribute("EggId", eggId)
 	model:SetAttribute("Price", price)
+	model:SetAttribute("Zone", belt.Zone)
 
 	local main = getMainPart(model)
 	if not main then
@@ -486,7 +525,9 @@ local function spawnEgg()
 	if rarity.Order >= 4 then
 		pcall(PetModels.AddRarityEffects, model, egg.Rarity)
 	end
-
+	if egg.Premium then
+		addPremiumGlow(main, egg)
+	end
 	makeBillboard(main, egg, price)
 
 	local prompt = Instance.new("ProximityPrompt")
@@ -510,21 +551,29 @@ local function spawnEgg()
 		Wobble = rng:NextNumber() * 10,
 	}
 	prompt.Triggered:Connect(function(player)
-		onBuy(entry, player)
+		onBuy(belt, entry, player)
 	end)
 
-	model:PivotTo(beltCFrame(0, DROP_HEIGHT))
-	model.Parent = folder
-	table.insert(eggs, entry)
+	model:PivotTo(beltCFrame(belt, 0, DROP_HEIGHT))
+	model.Parent = belt.Folder
+	table.insert(belt.Eggs, entry)
 
-	if egg.Rarity == "Legendary" or egg.Rarity == "Mythic" then
-		Remotes.Notify:FireAllClients("✨ " .. egg.Name .. "이 나타났어요!", "info")
+	-- 좋은 알 등장 알림: 그 지역에 있는 사람한테만, 가끔
+	local now = os.clock()
+	if egg.Premium and rarity.Order >= 5 and now - belt.LastAnnounce >= ANNOUNCE_GAP then
+		belt.LastAnnounce = now
+		for _, player in Players:GetPlayers() do
+			if player:GetAttribute("Zone") == belt.Zone then
+				notify(player, "✨ " .. egg.Name .. "이 나타났어요!", "info")
+			end
+		end
 	end
 end
 
--- 모든 알을 한 번에 움직여요
-local function updateEggs(now: number)
+-- 벨트 하나의 알을 한 번에 움직여요 (근처에 아무도 없으면 시간만 세고 움직이진 않아요)
+local function updateEggs(belt: Belt, now: number)
 	local travel = Config.Conveyor.TravelTime
+	local eggs = belt.Eggs
 	for i = #eggs, 1, -1 do
 		local e = eggs[i]
 		local t = now - e.Born
@@ -536,7 +585,7 @@ local function updateEggs(now: number)
 			y = DROP_HEIGHT + (BELT_TOP - DROP_HEIGHT) * (a * a)
 		elseif t < DROP_TIME + travel then
 			e.Phase = 2
-			s = (t - DROP_TIME) * speed
+			s = (t - DROP_TIME) * belt.Speed
 			y = BELT_TOP
 		elseif t < DROP_TIME + travel + FALL_TIME then
 			if e.Phase < 3 then
@@ -547,7 +596,7 @@ local function updateEggs(now: number)
 				end
 			end
 			local ft = t - DROP_TIME - travel
-			s = beltLength + ft * speed
+			s = belt.Length + ft * belt.Speed
 			y = BELT_TOP - 1.4 * (ft / FALL_TIME) ^ 2
 		else
 			e.Done = true
@@ -555,21 +604,97 @@ local function updateEggs(now: number)
 			e.Model:Destroy()
 			continue
 		end
-		local phase = e.Wobble
-		local wobble = CFrame.Angles(0, now * 0.8 + phase, 0) * CFrame.Angles(math.sin(now * 5 + phase) * 0.07, 0, math.sin(now * 4 + phase) * 0.1)
-		e.Model:PivotTo(beltCFrame(s, y) * wobble)
+		if belt.Watched then
+			local phase = e.Wobble
+			local wobble = CFrame.Angles(0, now * 0.8 + phase, 0)
+				* CFrame.Angles(math.sin(now * 5 + phase) * 0.07, 0, math.sin(now * 4 + phase) * 0.1)
+			e.Model:PivotTo(beltCFrame(belt, s, y) * wobble)
+		end
 	end
 end
 
+-- 벨트마다: 알이 나와도 되는지 / 근처에 사람이 있는지
+local function refreshBeltStates()
+	local players = Players:GetPlayers()
+	for _, belt in belts do
+		local active = belt.Zone == 1
+		local watched = false
+		local minRebirth = Config.Zones[belt.Zone].MinRebirth
+		for _, player in players do
+			if not active and DataService.Get(player) and DataService.GetRebirths(player) >= minRebirth then
+				active = true
+			end
+			local char = player.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			if hrp and hrp:IsA("BasePart") then
+				local d = hrp.Position - belt.Center
+				if d.X * d.X + d.Z * d.Z <= WATCH_DISTANCE * WATCH_DISTANCE then
+					watched = true
+				end
+			end
+		end
+		if active and not belt.Active then
+			belt.NextSpawn = os.clock() + rng:NextNumber(0, Config.Conveyor.SpawnInterval)
+		end
+		belt.Active = active
+		belt.Watched = watched
+	end
+end
+
+----------------------------------------------------------------------
+-- 공개 API
+----------------------------------------------------------------------
+
+-- 지역 k 의 벨트 폴더 (workspace.Conveyors.Zone<k>)
+function ConveyorService.GetZoneFolder(zone: number): Folder?
+	for _, belt in belts do
+		if belt.Zone == zone then
+			return belt.Folder
+		end
+	end
+	return nil
+end
+
 function ConveyorService.Start()
-	local old = workspace:FindFirstChild("Conveyor")
-	if old then
-		old:Destroy()
+	if started then
+		return
+	end
+	started = true
+	for _, name in { "Conveyor", "Conveyors" } do
+		local old = workspace:FindFirstChild(name)
+		if old then
+			old:Destroy()
+		end
 	end
 	local root = Instance.new("Folder")
-	root.Name = "Conveyor"
-	folder = root
-	buildBelt(root)
+	root.Name = "Conveyors"
+
+	for k, def in Config.Zones do
+		local startPos, endPos = def.ConveyorStart, def.ConveyorEnd
+		local zoneFolder = Instance.new("Folder")
+		zoneFolder.Name = "Zone" .. k
+		zoneFolder:SetAttribute("ZoneIndex", k)
+		zoneFolder.Parent = root
+		local length = (endPos - startPos).Magnitude
+		local dir = (endPos - startPos).Unit
+		local belt: Belt = {
+			Zone = k,
+			Folder = zoneFolder,
+			Start = startPos,
+			Dir = dir,
+			Length = length,
+			Base = CFrame.lookAt(startPos, startPos + dir),
+			Speed = length / Config.Conveyor.TravelTime,
+			Center = (startPos + endPos) / 2,
+			Eggs = {},
+			Active = k == 1,
+			Watched = false,
+			NextSpawn = os.clock() + (k - 1) * 0.3,
+			LastAnnounce = -math.huge,
+		}
+		buildBelt(belt)
+		table.insert(belts, belt)
+	end
 	root.Parent = workspace
 
 	Players.PlayerRemoving:Connect(function(player)
@@ -578,17 +703,34 @@ function ConveyorService.Start()
 
 	RunService.Heartbeat:Connect(function()
 		local now = os.clock()
-		animateStripes(now)
-		updateEggs(now)
+		for _, belt in belts do
+			if #belt.Eggs > 0 then
+				updateEggs(belt, now)
+			end
+		end
 	end)
 
 	task.spawn(function()
+		local nextRefresh = 0
 		while true do
-			local ok, err = pcall(spawnEgg)
-			if not ok then
-				warn("[ConveyorService] 알 생성 오류:", err)
+			local now = os.clock()
+			if now >= nextRefresh then
+				nextRefresh = now + 0.5
+				local ok, err = pcall(refreshBeltStates)
+				if not ok then
+					warn("[ConveyorService] 벨트 상태 오류:", err)
+				end
 			end
-			task.wait(Config.Conveyor.SpawnInterval)
+			for _, belt in belts do
+				if belt.Active and now >= belt.NextSpawn then
+					belt.NextSpawn = now + Config.Conveyor.SpawnInterval
+					local ok, err = pcall(spawnEgg, belt)
+					if not ok then
+						warn("[ConveyorService] 알 생성 오류:", err)
+					end
+				end
+			end
+			task.wait(0.25)
 		end
 	end)
 end

@@ -1,7 +1,7 @@
--- 들판 코인 (플레이어마다 따로): 서버는 파트를 만들지 않고 메모리에만 코인 목록을 둬요.
--- 그리기/자석은 클라이언트(CoinField)가 하고, 먹기 요청(PickupCoin)은 여기서 거리·상태를 검증해요.
--- 코인 값 = 기본값 × (1 + 집 초당 수익 / IncomeScale) × (1 + 펫 보너스) × 환생 코인 배율
--- (집 초당 수익은 DataService.GetIncome 이라 환생 수익 배율이 이미 들어 있어요)
+-- 들판 코인 (플레이어마다 따로, 열린 지역마다 따로): 서버는 파트를 만들지 않고 메모리에만 코인 목록을 둬요.
+-- 그리기/자석은 클라이언트(CoinField)가 하고, 먹기 요청(PickupCoin)은 여기서 거리·지역·상태를 검증해요.
+-- 코인 값 = 기본값 × 지역 CoinMult × (1 + 집 초당 수익 / IncomeScale) × (1 + min(펫 보너스, MaxBoost)) × 환생 코인 배율
+-- (집 초당 수익은 DataService.GetIncome 이라 환생·테마 수익 배율이 이미 들어 있어요)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -17,30 +17,50 @@ local Layout = Config.Layout
 local HALF_PLOT = Layout.PlotSize / 2
 
 local PLOT_MARGIN = 2 -- 집 가장자리에서 띄우는 거리
-local MIN_SPACING = 4 -- 같은 플레이어 코인끼리 최소 간격
+local MIN_SPACING = 4 -- 같은 지역 코인끼리 최소 간격
 local DECO_RADIUS = 2.2 -- 장식 겹침 검사 반경
 local DECO_TOP_MAX = 0.6 -- 이보다 높이 솟은 파트가 있으면 장식이라 보고 피함
+local BIN_EXTRA = 7 -- 컨베이어 끝 알 통까지 여유
+local CHUTE_EXTRA = 3 -- 시작점 슈트 여유
 local PICKUP_SLACK = 8 -- 서버 거리 판정 여유 (지연 대비)
 local MAX_HEIGHT_DIFF = 14 -- 코인과 캐릭터 높이 차 허용치
 local LOAD_TIMEOUT = 20 -- 데이터 로딩 기다리는 최대 초
 local MAX_PICKUPS_PER_SEC = 20
+local ZONE_POLL = 5 -- 새로 열린 지역 확인 간격
 
 type CoinKind = { Name: string, Value: number, Weight: number, Color: Color3, Size: number }
-type Coin = { Id: number, Kind: string, Position: Vector3, Alive: boolean }
+type Coin = { Id: number, Kind: string, Position: Vector3, Zone: number, Alive: boolean }
 type Field = {
-	coins: { Coin }, -- 인덱스 = Id
+	coins: { [number]: Coin },
+	zones: { [number]: boolean }, -- 코인을 깐 지역
+	nextId: number,
 	rng: Random,
 	windowStart: number,
 	windowCount: number,
 }
+-- 지역마다 코인 놓는 곳 (들판 상자 + 컨베이어 선분)
+type ZoneGeo = { Min: Vector3, Max: Vector3, SegA: Vector3, SegB: Vector3, Fallback: Vector3 }
 
 local fields: { [Player]: Field } = {}
 local hooked: { [Player]: RBXScriptConnection } = {}
+local geos: { [number]: ZoneGeo } = {}
 local started = false
 
 ----------------------------------------------------------------------
 -- 도우미
 ----------------------------------------------------------------------
+
+for k, def in Config.Zones do
+	local a, b = def.ConveyorStart, def.ConveyorEnd
+	local dir = (b - a).Unit
+	geos[k] = {
+		Min = def.FieldMin,
+		Max = def.FieldMax,
+		SegA = a - dir * CHUTE_EXTRA,
+		SegB = b + dir * BIN_EXTRA,
+		Fallback = Vector3.new((def.FieldMin.X + def.FieldMax.X) / 2 + 6, 0, def.FieldMax.Z - 4),
+	}
+end
 
 local function kindByName(name: string): CoinKind?
 	for _, k in FC.Kinds do
@@ -76,9 +96,18 @@ local function insidePlot(pos: Vector3): boolean
 	return false
 end
 
-local function tooClose(field: Field, pos: Vector3, selfId: number?): boolean
+-- 컨베이어 선분까지 수평 거리
+local function distToSegment(p: Vector3, a: Vector3, b: Vector3): number
+	local ab = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
+	local ap = Vector3.new(p.X - a.X, 0, p.Z - a.Z)
+	local len2 = ab:Dot(ab)
+	local t = if len2 > 0 then math.clamp(ap:Dot(ab) / len2, 0, 1) else 0
+	return (ap - ab * t).Magnitude
+end
+
+local function tooClose(field: Field, zone: number, pos: Vector3, selfId: number?): boolean
 	for _, c in field.coins do
-		if c.Id ~= selfId then
+		if c.Zone == zone and c.Id ~= selfId then
 			local d = c.Position - pos
 			if d.X * d.X + d.Z * d.Z < MIN_SPACING * MIN_SPACING then
 				return true
@@ -89,14 +118,19 @@ local function tooClose(field: Field, pos: Vector3, selfId: number?): boolean
 end
 
 -- 장식(나무, 꽃 등) 위에 놓이는지: workspace.World 파트 중 0.6 보다 높이 솟은 게 반경 안에 있으면 안 돼요
+local overlapParams: OverlapParams? = nil
 local function onDecoration(pos: Vector3): boolean
 	local world = workspace:FindFirstChild("World")
 	if not world then
 		return false
 	end
-	local params = OverlapParams.new()
-	params.FilterType = Enum.RaycastFilterType.Include
-	params.FilterDescendantsInstances = { world }
+	local params = overlapParams
+	if not params then
+		params = OverlapParams.new()
+		params.FilterType = Enum.RaycastFilterType.Include
+		params.FilterDescendantsInstances = { world }
+		overlapParams = params
+	end
 	local hits = workspace:GetPartBoundsInRadius(pos + Vector3.new(0, 2, 0), DECO_RADIUS, params)
 	for _, part in hits do
 		if part.Position.Y + part.Size.Y / 2 > DECO_TOP_MAX then
@@ -106,58 +140,21 @@ local function onDecoration(pos: Vector3): boolean
 	return false
 end
 
--- 컨베이어 여유 구역 밖의 z 값 하나 고르기
-local function randomZ(rng: Random): number
-	local clear = Layout.FieldConveyorClearance
-	local zMin, zMax = Layout.FieldMin.Z, Layout.FieldMax.Z
-	-- 구간 [zMin, -clear] 와 [clear, zMax]
-	local lowLen = math.max(0, math.min(zMax, -clear) - zMin)
-	local highLen = math.max(0, zMax - math.max(zMin, clear))
-	if lowLen + highLen <= 0 then
-		return rng:NextNumber(zMin, zMax)
-	end
-	local r = rng:NextNumber(0, lowLen + highLen)
-	if r < lowLen then
-		return zMin + r
-	end
-	return math.max(zMin, clear) + (r - lowLen)
-end
-
-local function randomPosition(field: Field, selfId: number?): Vector3
+local function randomPosition(field: Field, zone: number, selfId: number?): Vector3
+	local geo = geos[zone] or geos[1]
 	local rng = field.rng
+	local clearance = Layout.FieldConveyorClearance
 	local fallback: Vector3? = nil
 	for _ = 1, 40 do
-		local pos = Vector3.new(rng:NextNumber(Layout.FieldMin.X, Layout.FieldMax.X), 0, randomZ(rng))
-		if not insidePlot(pos) and not onDecoration(pos) then
-			if not tooClose(field, pos, selfId) then
+		local pos = Vector3.new(rng:NextNumber(geo.Min.X, geo.Max.X), 0, rng:NextNumber(geo.Min.Z, geo.Max.Z))
+		if distToSegment(pos, geo.SegA, geo.SegB) > clearance and not insidePlot(pos) and not onDecoration(pos) then
+			if not tooClose(field, zone, pos, selfId) then
 				return pos
 			end
 			fallback = fallback or pos
 		end
 	end
-	return fallback or Vector3.new(0, 0, Layout.FieldConveyorClearance + 2)
-end
-
--- 집 초당 수익. DataService.GetIncome 이 있으면 그걸 쓰고, 없으면 직접 더해요
-local function getIncome(player: Player): number
-	local fn = (DataService :: any).GetIncome
-	if type(fn) == "function" then
-		local ok, n = pcall(fn, player)
-		if ok and type(n) == "number" and n == n then
-			return math.max(0, n)
-		end
-	end
-	local data = DataService.Get(player)
-	if not data then
-		return 0
-	end
-	local total = 0
-	for _, item in data.Items do
-		if item.Loc == "Slot" then
-			total += Config.ItemIncome(item)
-		end
-	end
-	return total
+	return fallback or geo.Fallback
 end
 
 local function getHRP(player: Player): BasePart?
@@ -170,7 +167,7 @@ local function getHRP(player: Player): BasePart?
 end
 
 local function payload(coin: Coin)
-	return { Id = coin.Id, Kind = coin.Kind, Position = coin.Position }
+	return { Id = coin.Id, Kind = coin.Kind, Position = coin.Position, Zone = coin.Zone }
 end
 
 local function sendReset(player: Player)
@@ -191,17 +188,54 @@ end
 -- 플레이어별 코인 만들기 / 정리
 ----------------------------------------------------------------------
 
+-- 지역 하나에 코인 CountPerZone 개 깔기. 만든 코인 목록을 돌려줘요
+local function addZone(field: Field, zone: number): { Coin }
+	local made = {}
+	if field.zones[zone] or not Config.Zones[zone] then
+		return made
+	end
+	field.zones[zone] = true
+	for _ = 1, FC.CountPerZone or FC.Count do
+		local id = field.nextId
+		field.nextId += 1
+		local coin: Coin = { Id = id, Kind = pickKind(field.rng).Name, Position = Vector3.zero, Zone = zone, Alive = true }
+		field.coins[id] = coin
+		coin.Position = randomPosition(field, zone, id)
+		table.insert(made, coin)
+	end
+	return made
+end
+
 local function buildField(player: Player): Field
 	local seed = (math.floor(os.clock() * 1000) % 1000000) + player.UserId % 100000 * 31
-	local field: Field = { coins = {}, rng = Random.new(seed), windowStart = os.clock(), windowCount = 0 }
-	for id = 1, FC.Count do
-		local kind = pickKind(field.rng)
-		local coin: Coin = { Id = id, Kind = kind.Name, Position = Vector3.zero, Alive = true }
-		field.coins[id] = coin
-		coin.Position = randomPosition(field, id)
+	local field: Field = {
+		coins = {},
+		zones = {},
+		nextId = 1,
+		rng = Random.new(seed),
+		windowStart = os.clock(),
+		windowCount = 0,
+	}
+	for zone = 1, DataService.GetMaxZone(player) do
+		addZone(field, zone)
 	end
 	fields[player] = field
 	return field
+end
+
+-- 환생으로 새 지역이 열렸으면 그 지역 코인을 더해요 (클라이언트에 "Add")
+local function checkNewZones(player: Player)
+	local field = fields[player]
+	if not field or player.Parent == nil or not DataService.Get(player) then
+		return
+	end
+	for zone = 1, DataService.GetMaxZone(player) do
+		if not field.zones[zone] then
+			for _, coin in addZone(field, zone) do
+				Remotes.CoinField:FireClient(player, "Add", payload(coin))
+			end
+		end
+	end
 end
 
 local function respawnCoin(player: Player, field: Field, coin: Coin)
@@ -209,7 +243,7 @@ local function respawnCoin(player: Player, field: Field, coin: Coin)
 		return
 	end
 	coin.Kind = pickKind(field.rng).Name
-	coin.Position = randomPosition(field, coin.Id)
+	coin.Position = randomPosition(field, coin.Zone, coin.Id)
 	coin.Alive = true
 	Remotes.CoinField:FireClient(player, "Add", payload(coin))
 end
@@ -252,6 +286,23 @@ end
 -- 먹기 요청
 ----------------------------------------------------------------------
 
+-- 코인 하나 값 (지역 배율 · 집 수익 · 펫 보너스(최대 MaxBoost) · 환생)
+function CoinFieldService.CoinValue(player: Player, kindName: string, zone: number): number
+	local kind = kindByName(kindName)
+	local def = Config.Zones[zone]
+	if not kind or not def then
+		return 0
+	end
+	local income = math.max(0, DataService.GetIncome(player))
+	local boost = math.clamp(FollowService.GetBoost(player), 0, FC.MaxBoost)
+	local rebirthMult = Config.RebirthCoinMult(DataService.GetRebirths(player))
+	local value = math.floor(kind.Value * def.CoinMult * (1 + income / FC.IncomeScale) * (1 + boost) * rebirthMult)
+	if value ~= value or value < 1 then
+		value = 1
+	end
+	return value
+end
+
 local function onPickup(player: Player, coinId: any)
 	if type(coinId) ~= "number" or coinId ~= coinId or coinId ~= math.floor(coinId) then
 		return
@@ -276,8 +327,8 @@ local function onPickup(player: Player, coinId: any)
 	if not coin or not coin.Alive then
 		return
 	end
-	local kind = kindByName(coin.Kind)
-	if not kind then
+	-- 잠긴 지역 코인은 못 먹어요
+	if not Config.ZoneUnlocked(coin.Zone, DataService.GetRebirths(player)) then
 		return
 	end
 	local char = player.Character
@@ -295,18 +346,10 @@ local function onPickup(player: Player, coinId: any)
 		return
 	end
 
-	local income = getIncome(player)
-	local boost = FollowService.GetBoost(player)
-	local rebirthMult = Config.RebirthCoinMult(DataService.GetRebirths(player))
-	local value = math.floor(kind.Value * (1 + income / FC.IncomeScale) * (1 + boost) * rebirthMult)
-	if value < 1 then
-		value = 1
-	end
-
+	local value = CoinFieldService.CoinValue(player, coin.Kind, coin.Zone)
 	coin.Alive = false
-	DataService.AddCoins(player, value)
+	DataService.AddCoins(player, value) -- CoinSync 는 AddCoins 가 보내요
 	Remotes.CoinFx:FireClient(player, value, coin.Position, true) -- 소리는 클라이언트가 자석 때 이미 냄
-	DataService.Sync(player)
 	Remotes.CoinField:FireClient(player, "Remove", coin.Id)
 
 	task.delay(FC.RespawnTime, respawnCoin, player, field, coin)
@@ -315,6 +358,11 @@ end
 ----------------------------------------------------------------------
 -- 공개 API
 ----------------------------------------------------------------------
+
+-- 새로 열린 지역이 있으면 바로 코인을 깔아요 (환생 직후 불러도 되고, 안 불러도 5초마다 확인해요)
+function CoinFieldService.Refresh(player: Player)
+	checkNewZones(player)
+end
 
 function CoinFieldService.Start()
 	if started then
@@ -338,6 +386,19 @@ function CoinFieldService.Start()
 		end
 		if fields[player] then
 			sendReset(player)
+		end
+	end)
+
+	-- 환생으로 열린 지역 확인
+	task.spawn(function()
+		while true do
+			task.wait(ZONE_POLL)
+			for player in fields do
+				local ok, err = pcall(checkNewZones, player)
+				if not ok then
+					warn("[CoinFieldService] 지역 확인 오류:", err)
+				end
+			end
 		end
 	end)
 end

@@ -1,25 +1,37 @@
--- 처음 2분 동안 아래쪽에 도움말이 바뀌며 나와요
+-- 처음 2분 반 동안 아래쪽에 도움말이 바뀌며 나와요 (지도·상점·자동 배치·옷·엘리베이터 소개)
+local UserInputService = game:GetService("UserInputService")
+
 local UiKit = require(script.Parent.UiKit)
 
 local Make, C = UiKit.Make, UiKit.Colors
 
 local Tips = {}
 
+-- PC(키보드)에서만 "(B)" 같은 단축키를 붙여요
+local showKeys = UserInputService.KeyboardEnabled and not UserInputService.TouchEnabled
+local function key(k: string): string
+	return if showKeys then "(" .. k .. ")" else ""
+end
+
 local TIPS = {
-	"🥚 가운데 컨베이어에서 알을 사세요 (E)",
+	"🥚 컨베이어에서 알을 사세요" .. (if showKeys then " (E)" else ""),
 	"🐣 집 받침대에 둔 알은 시간이 지나면 부화해요",
 	"💰 들판의 코인을 주우면 코인이 늘어요",
 	"🏦 집의 금색 판을 밟으면 모인 코인을 받아요",
-	"🎒 가방(B)에서 펫을 따라오게 할 수 있어요",
-	"🏇 가방(B)에서 '타기'를 누르면 펫을 타고 더 빨라져요",
-	"✨ 같은 펫 3마리를 모아 가방(B)에서 합성해 보세요",
-	"🙌 가방(B)에서 '들기'를 누르면 펫을 머리 위에 올려요",
-	"📖 도감(N)에서 찾은 펫을 모아 보세요",
-	"🏠 집(H)에서 테마를 바꾸고 2층도 올릴 수 있어요",
-	"🔄 환생하면 코인은 0이 되지만 영구 보너스를 받아요",
+	"⭐ 가방" .. key("B") .. "의 '최고 펫 자동 배치'로 집을 가장 센 펫으로 채워요",
+	"🎒 가방" .. key("B") .. "에서 펫을 눌러 따라오게 하거나 타 보세요 🏇",
+	"✨ 같은 펫 3마리를 모아 합성해 보세요 (집 받침대 펫은 빼고 세요)",
+	"🛍 상점" .. key("P") .. "에서 펫 옷 👕 과 가구 🛋 를 살 수 있어요",
+	"👕 가방" .. key("B") .. "에서 펫을 누르고 '옷 입히기'를 해 보세요",
+	"🗺 지도" .. key("M") .. "로 열린 지역에 바로 갈 수 있어요",
+	"🏠 집" .. key("H") .. "에서 테마를 바꾸면 집이 커지고 수익도 늘어요",
+	"🛗 집 엘리베이터로 층을 오르내려요",
+	"📖 도감" .. key("N") .. "에서 지역마다 숨은 비밀 펫을 찾아보세요",
+	"🏆 순위" .. key("L") .. "에서 친구들 기록을 볼 수 있어요",
+	"🔄 환생" .. key("R") .. "하면 새 지역이 열리고 영구 보너스를 받아요",
 }
 
-local DURATION = 120
+local DURATION = 150
 local INTERVAL = 6
 
 function Tips.Init(gui: Instance)
