@@ -76,6 +76,11 @@ local function guessEgg(petId: string): string
 		usedEggUids[bestUid] = true
 		return bestId
 	end
+	-- ★v6 희귀 알 펫은 EggOrder 에 없는 그 알에서 나와요
+	local special = UiKit.SpecialEggOfPet(petId)
+	if special then
+		return special
+	end
 	local rarity = Config.Pets[petId].Rarity
 	local fallback = nil
 	for _, eggId in Config.EggOrder do

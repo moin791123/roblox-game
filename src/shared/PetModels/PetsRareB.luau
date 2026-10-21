@@ -420,7 +420,7 @@ return function(Kit, PET_BUILDERS, _EGG_BUILDERS)
 		end
 	end
 
-	-- 사탕 여왕 냥이 (이터널): 연분홍 고양이, 젤리 보석 사탕 왕관, 하트 브로치가 달린 보라 망토 + 하얀 털 깃,
+	-- 사탕 여왕 냥이 (이터널): 연분홍 고양이, 젤리 보석 사탕 왕관, 하트 브로치가 달린 보라 망토,
 	-- 오른손에 별 요술봉 (별 가운데만 은은하게), 사탕 줄무늬 꼬리
 	PET_BUILDERS.SweetQueenCat = function(b)
 		local PKW = RGB(255, 228, 240)
@@ -449,9 +449,8 @@ return function(Kit, PET_BUILDERS, _EGG_BUILDERS)
 			ell(b, "Gumdrop", V(0.22, 0.36, 0.22), tcf * CFrame.new(math.sin(g[1]) * 0.36, 0.27, -math.cos(g[1]) * 0.36), g[2])
 		end
 		ell(b, "Jewel", V(0.2, 0.17, 0.08), tcf * CFrame.new(0, 0, -0.48), RGB(255, 80, 130))
-		-- 망토: 등 뒤로 늘어진 넓은 판 + 하얀 털 깃 + 하트 브로치
+		-- 망토: 등 뒤로 늘어진 넓은 판 + 하트 브로치
 		ell(b, "Cape", V(2.5, 1.95, 0.16), CFrame.new(0, 1.02, 0.84) * CFrame.Angles(-0.16, 0, 0), CAPE)
-		ell(b, "Collar", V(1.72, 0.32, 1.58), CFrame.new(0, c.B.Y + c.BS.Y - 0.12, 0.05), WHITE)
 		ell(b, "Brooch", V(0.22, 0.22, 0.1), CFrame.new(0, c.B.Y + c.BS.Y - 0.14, -0.82), RGB(255, 90, 140))
 		accAnchor(b, "Back", CFrame.new(0, 1.15, 0.98))
 		-- 요술봉 (오른손): 막대 + 별 + 가운데 빛

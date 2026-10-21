@@ -902,14 +902,14 @@ function Hud.Update(snap: State.Snapshot)
 	end
 	lastPets = pets
 	refreshRebirth()
-	-- ★v6 환생해서 잠금이 풀렸나 (⚡ 슈퍼 자석). 들어올 때 첫 스냅샷은 조용히, 노는 중에 풀리면 말풍선
+	-- ★v6 환생해서 잠금이 풀렸나 (⚡ 슈퍼 자석). 들어올 때 첫 스냅샷은 조용히, 노는 중에 딱 그 환생으로 풀리면 말풍선
 	local rebirths = tonumber(snap.Rebirths) or 0
 	for _, t in toggles do
 		local locked = lockedNow(t.Def, rebirths)
 		if locked ~= t.Locked then
 			t.Locked = locked
 			paintToggle(t, State.GetSetting(t.Def.Key), false)
-			if not locked and lockSeen then
+			if not locked and lockSeen and rebirths == t.Def.MinRebirth then
 				UiKit.Pop(t.Button, 0.35)
 				Toasts.Show(t.Def.Emoji .. " " .. UiKit.Josa(t.Def.Caption, "이", "가") .. " 열렸어요! 눌러서 켜 보세요", "good")
 			end

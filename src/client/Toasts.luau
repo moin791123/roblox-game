@@ -740,6 +740,15 @@ local function rareOfText(str: string): string?
 			end
 		end
 	end
+	-- 희귀 알을 샀어요 (서버 "🌟 <알 이름>을 샀어요!")
+	if string.find(str, "샀어요", 1, true) then
+		for eggId, egg in Config.Eggs do
+			local tier = UiKit.EggSpecial(eggId)
+			if tier and type(egg.Name) == "string" and string.find(str, egg.Name, 1, true) then
+				return tier
+			end
+		end
+	end
 	return nil
 end
 
