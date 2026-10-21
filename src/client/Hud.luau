@@ -1,9 +1,10 @@
 -- 화면 고정 UI: 코인(CoinSync 로 바로바로), 초당 수익, 집 금고, 펫 수, 왼쪽 큰 버튼 7개
 -- (가방 B / 도감 N / 집 H / 상점 P / 지도 M / 순위 L / 환생 R). 화면이 낮으면 2~3열로 접혀요.
 -- Hud.SetBadge("집", true): 버튼 오른쪽 위에 빨간 "!" (새 집을 살 수 있을 때 init.client 가 켜요)
--- 큰 버튼 칸 바로 오른쪽 위에 켜고 끄는 작은 버튼 3개 (🙈 부화 숨기기 / 🏦 자동 수금 / 🧲 자석):
---   한 번 누르면 바로 켜짐/꺼짐 (스위치 + 색), 서버로 Remotes.SetSetting, 스냅샷 Settings 를 따라가요.
---   좁은 폰(화면 너비 < 700)은 왼쪽 위에 가로 한 줄. 꾸미기 모드 동안은 큰 버튼과 같이 숨어요.
+-- 켜고 끄는 버튼 3개 (🙈 부화 숨기기 / 🏦 자동 수금 / 🧲 자석): 한 번 누르면 바로 켜짐/꺼짐 (색 + ON/OFF 스위치),
+--   서버로 Remotes.SetSetting, 스냅샷 Settings 를 따라가요 (State.GetSetting). PC·태블릿은 이름이 보이는 가로 버튼,
+--   폰은 작은 네모. 자리: 큰 버튼 칸 바로 오른쪽 (위 → 아래 맞춤) → 왼쪽 위 가로 줄 → 오른쪽 위 (코인 줄·점프·조이스틱은 피해요).
+--   꾸미기 모드 동안은 큰 버튼과 같이 숨어요.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 
@@ -409,13 +410,10 @@ local function layoutToggles(gui: ScreenGui, column: Frame, cell: number, gap: n
 	if sub then
 		table.insert(avoid, UiKit.RectOf(sub, 2)) -- 금고 알약이 보이든 안 보이든 그 줄 전체 (버튼이 왔다 갔다 하지 않게)
 	end
-	local side = UiKit.RectOf(column, 0)
-	-- 큰 버튼 칸은 LayoutOrder/셀 크기로 바로 계산 (AbsolutePosition 이 아직 안 바뀌었을 수도 있어요)
+	-- 큰 버튼 칸은 방금 정한 Position/Size 로 바로 계산 (AbsolutePosition 은 아직 안 바뀌었을 수도 있어요). 기준점 (0, 0.5)
 	local colPos, colSize = column.Position, column.Size
-	side.X0 = colPos.X.Offset
-	side.X1 = side.X0 + colSize.X.Offset
-	side.Y0 = colPos.Y.Offset - colSize.Y.Offset / 2
-	side.Y1 = side.Y0 + colSize.Y.Offset
+	local sx0, sy0 = colPos.X.Offset, colPos.Y.Offset - colSize.Y.Offset / 2
+	local side: UiKit.Rect = { X0 = sx0, Y0 = sy0, X1 = sx0 + colSize.X.Offset, Y1 = sy0 + colSize.Y.Offset }
 	table.insert(avoid, { X0 = side.X0 - 4, Y0 = side.Y0 - 4, X1 = side.X1 + 4, Y1 = side.Y1 + 4 })
 	if rebirthPill and rebirthButton then
 		-- 환생 알약: 환생 버튼(마지막 칸) 오른쪽
