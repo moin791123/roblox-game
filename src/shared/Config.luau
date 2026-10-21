@@ -9,6 +9,13 @@ Config.GameName = "펫 월드"
 Config.DataStoreName = "EggThiefPets_v1" -- 절대 바꾸지 마세요 (예전 저장을 못 불러와요)
 Config.DataVersion = 3 -- v3: 등급 7단계 (예전 2→4, 3→5 로 옮겨요)
 Config.StartCoins = 200
+
+-- ★v5 켜고 끄는 버튼 (플레이어마다 저장, Remotes.SetSetting). 값은 기본값.
+Config.Settings = {
+	HideHatch = false, -- 알 까는 화면 숨기기 (작은 알림만)
+	AutoCollect = false, -- 집에 모인 돈 자동으로 먹기
+	Magnet = false, -- 맵 돈 자석 (넓은 범위 자동으로 먹기)
+}
 Config.MaxFollow = 3 -- 데리고 다닐 수 있는 펫 수
 Config.MaxBagItems = 150 -- 가방 최대 칸 (Loc == "Bag" 인 아이템 수)
 Config.BaseWalkSpeed = 18

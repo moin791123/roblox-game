@@ -31,6 +31,7 @@ local NAMES = {
 	"PlaceFurniture", -- (furnId: string, floor: number, x: number, z: number, r: number) 가구 가방에서 꺼내 놓기 ★
 	"MoveFurniture", -- (fid: string, floor: number, x: number, z: number, r: number) 놓인 가구 옮기기/돌리기 ★
 	"PickupFurniture", -- (fid: string) 놓인 가구를 가구 가방으로 ★
+	"SetSetting", -- (key: string, value: boolean) 켜고 끄는 버튼 (Config.Settings 의 키만) ★v5
 }
 
 local Remotes: { [string]: RemoteEvent } = {}

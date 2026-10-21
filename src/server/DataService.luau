@@ -41,6 +41,7 @@ export type Data = {
 	Furniture: { [string]: Furniture }, -- 놓인 가구 (fid "f12" → 가구)
 	FurnitureInv: { [string]: number }, -- 가구 가방 (furnId → 개수, 0 이면 키 없음)
 	NextFid: number,
+	Settings: { [string]: boolean }, -- ★v5 켜고 끄는 버튼 (Config.Settings 키만)
 }
 
 local DataService = {}
@@ -126,6 +127,7 @@ local function defaultData(): Data
 		Furniture = {},
 		FurnitureInv = {},
 		NextFid = 1,
+		Settings = {},
 	}
 end
 
@@ -404,6 +406,14 @@ local function sanitize(raw: any): Data
 		data.NextFid = maxFid + 1
 	end
 
+	if type(raw.Settings) == "table" then
+		for key in Config.Settings do
+			if type(raw.Settings[key]) == "boolean" then
+				data.Settings[key] = raw.Settings[key]
+			end
+		end
+	end
+
 	data.Version = Config.DataVersion
 	return data
 end
@@ -629,7 +639,42 @@ function DataService.SaveAll()
 	end
 end
 
+-- ★v5 켜고 끄는 버튼 값 (저장 안 된 키는 Config.Settings 기본값)
+function DataService.GetSetting(player: Player, key: string): boolean
+	local data = cache[player]
+	local v = if data then data.Settings[key] else nil
+	if v == nil then
+		v = Config.Settings[key]
+	end
+	return v == true
+end
+
+local settingListeners: { (Player, string, boolean) -> () } = {}
+
+-- 버튼 값이 바뀔 때 (다른 서비스가 바로 반응하고 싶을 때)
+function DataService.OnSettingChanged(fn: (Player, string, boolean) -> ())
+	table.insert(settingListeners, fn)
+end
+
+function DataService.SetSetting(player: Player, key: string, value: boolean): boolean
+	local data = cache[player]
+	if not data or Config.Settings[key] == nil or type(value) ~= "boolean" then
+		return false
+	end
+	data.Settings[key] = value
+	for _, fn in settingListeners do
+		task.spawn(fn, player, key, value)
+	end
+	DataService.Sync(player)
+	return true
+end
+
 function DataService.Start()
+	Remotes.SetSetting.OnServerEvent:Connect(function(player, key, value)
+		if type(key) == "string" and type(value) == "boolean" then
+			DataService.SetSetting(player, key, value)
+		end
+	end)
 	task.spawn(function()
 		while true do
 			task.wait(AUTOSAVE_INTERVAL)
@@ -994,6 +1039,7 @@ function DataService.Sync(player: Player)
 			Furniture = data.Furniture,
 			FurnitureInv = data.FurnitureInv,
 			Stats = data.Stats,
+			Settings = data.Settings, -- ★v5 (없는 키는 Config.Settings 기본값)
 		})
 	end
 	local waitLeft = MIN_SYNC_INTERVAL - (os.clock() - (lastSync[player] or 0))
