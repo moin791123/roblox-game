@@ -97,11 +97,11 @@ local function worldBurst(position: Vector3, color: Color3)
 		SpreadAngle = Vector2.new(180, 180),
 		Acceleration = Vector3.new(0, -14, 0),
 		Drag = 2,
-		LightEmission = 0.7,
+		LightEmission = 0.4, -- 집 안이 번쩍이지 않게 (예전 0.7)
 		LightInfluence = 0,
 		Color = ColorSequence.new(color, Color3.new(1, 1, 1)),
 		Size = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 1.2),
+			NumberSequenceKeypoint.new(0, 0.9),
 			NumberSequenceKeypoint.new(1, 0),
 		}),
 		Transparency = NumberSequence.new({
@@ -113,7 +113,7 @@ local function worldBurst(position: Vector3, color: Color3)
 		RotSpeed = NumberRange.new(-180, 180),
 		Parent = att,
 	})
-	pe:Emit(30)
+	pe:Emit(18)
 	Debris:AddItem(att, 3)
 end
 

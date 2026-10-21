@@ -2,7 +2,7 @@
 -- 화면(UI)과 효과를 만들고 서버 이벤트를 연결해요. 창은 한 번에 하나만 열려요.
 -- 단축키: B 가방 / N 도감 / H 집 / P 상점 / M 지도 / L 순위 / R 환생
 -- (꾸미기 모드 중에는 단축키를 쉬어요. R 회전 · X 치우기 · Esc/Q 끝내기는 DecorateMode 가 직접 받아요)
--- ✨ 좋은 알 알림 (EggAlert): 위쪽 가운데 큰 배너 + "🗺 바로 가기" (꾸미기 중에는 쉬어요)
+-- ✨ 좋은 알 알림 (EggAlert): 오른쪽 아래 알림 줄의 배너 + "🗺 바로 가기" (꾸미기 중에는 쉬어요)
 -- 🏠 HUD "집" 버튼의 빨간 "!": 아직 없는 더 좋은 집을 지금 살 수 있을 때
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

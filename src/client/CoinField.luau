@@ -1,7 +1,7 @@
 -- 내 들판 코인: 서버가 보내는 CoinField 이벤트대로 로컬 파트를 그리고, 가까이 가면 빨려 들어와요.
 -- 코인은 지역마다 있어요 (payload.Zone). 가벼우려고 내가 있는 지역 코인 + 가까운(RenderDistance) 코인만 파트로 그려요.
 -- 파트는 workspace.ClientCoins 아래에 (나한테만 보임). 먹기는 PickupCoin 으로 서버에 요청해요.
--- ★v5 자석 버튼 (스냅샷 Settings.Magnet, 또는 CoinField.SetMagnet): 기본 자석 밖 BigMagnetRadius 안 코인을
+-- ★v5 자석 버튼 (State.OnSetting → 누르자마자, 스냅샷 Settings.Magnet, 또는 CoinField.SetMagnet): 기본 자석 밖 BigMagnetRadius 안 코인을
 -- 가까운 것부터 초당 BigMagnetRate 개씩 빨아들여요 (서버도 같은 규칙으로 검사해요).
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -490,8 +490,9 @@ function CoinField.Init()
 	initialized = true
 	getFolder()
 
-	State.OnSync(function(snap: any)
-		local v = snapshotMagnet(snap)
+	State.OnSync(function()
+		-- 방금 누른 값(서버 답 전)이 있으면 그 값, 아니면 스냅샷 값 (State.GetSetting)
+		local v = State.GetSetting("Magnet")
 		if v ~= magnetOn and os.clock() >= magnetHoldUntil then
 			magnetOn = v
 		end
@@ -499,6 +500,13 @@ function CoinField.Init()
 	if State.Snapshot then
 		magnetOn = snapshotMagnet(State.Snapshot)
 	end
+	-- 🧲 버튼을 누르면 (State.SetSettingLocal) 서버 답을 기다리지 않고 바로 켜고 꺼요.
+	-- Remotes.SetSetting 이 다음 PickupCoin 보다 먼저 가서 서버도 큰 자석으로 받아 줘요
+	State.OnSetting(function(key: string, value: boolean)
+		if key == "Magnet" then
+			CoinField.SetMagnet(value)
+		end
+	end)
 
 	Remotes.CoinField.OnClientEvent:Connect(function(op: any, arg: any)
 		if op == "Reset" then

@@ -1,5 +1,5 @@
 -- 알림은 모두 오른쪽 아래 구석에 한 줄로 쌓여요 (화면 가운데·눈높이·다른 창을 가리지 않게).
---  · 말풍선 Toasts.Show(text, kind)
+--  · 말풍선 Toasts.Show(text, kind). "🆕 NEW!" 말풍선(새 친구)은 금색 + 조금 더 오래, 많이 밀려와도 먼저 버리지 않아요
 --  · 좋은 알 배너 Toasts.Banner(spec): "✨ 정글에 점박이 알이 나타났어요!" 처럼 그림 + "🗺 바로 가기" 버튼.
 --    같은 Key 가 또 오면 합치고 (×2), 다른 건 줄을 서서 차례로 (6초씩) 보여요. 꾸미기 중에는 쉬어요.
 --  · 다른 모듈의 알림 상자 Toasts.Dock(key, frame, ...) (ZoneClient 의 "🦆 호수에 왔어요!")
@@ -35,6 +35,7 @@ type Toast = {
 	Label: TextLabel,
 	Kind: string,
 	Tall: boolean,
+	Important: boolean, -- "alert" 이나 "🆕 NEW!" (부화 숨기기 중에는 이게 유일한 새 친구 알림): 넘치거나 줄이 밀려도 먼저 버리지 않아요
 	Seq: number,
 	Left: number, -- 보이는 동안 줄어드는 남은 시간
 	Waited: number, -- 자리가 없어서 숨어 있던 시간
@@ -464,13 +465,25 @@ local function layoutStack()
 	if not current or current.Closed then
 		bannerFits = false
 	end
-	-- 기다리는 말풍선이 있으면 가장 오래된 말풍선을 조금 일찍 보내요 (줄이 빨리 흘러요)
+	-- 기다리는 말풍선이 있으면 가장 오래된 말풍선을 조금 일찍 보내요 (줄이 빨리 흘러요). 중요한 건 (NEW! 같은) 될 수 있으면 그대로
 	if waiting then
+		local cut: Toast? = nil
 		for _, t in toasts do
-			if t.Placed then
-				t.Left = math.min(t.Left, 0.6)
+			if t.Placed and not t.Important then
+				cut = t
 				break
 			end
+		end
+		if not cut then
+			for _, t in toasts do
+				if t.Placed then
+					cut = t
+					break
+				end
+			end
+		end
+		if cut then
+			cut.Left = math.min(cut.Left, 0.6)
 		end
 	end
 	UiKit.SetSideRect("Banner", union)
@@ -554,8 +567,10 @@ function Toasts.Show(text: any, kind: any)
 		return
 	end
 	local k = if type(kind) == "string" and KIND_COLORS[kind] then kind else "info"
-	local color = KIND_COLORS[k]
 	local str = tostring(text)
+	-- 🆕 새 친구 (서버 말풍선 "🆕 NEW! ..."): 금색으로 눈에 띄게
+	local isNew = string.find(str, "NEW!", 1, true) ~= nil
+	local color = if isNew then C.Gold else KIND_COLORS[k]
 	seq += 1
 	local len = utf8.len(str)
 	local tall = len ~= nil and (len :: number) > TALL_CHARS
@@ -597,8 +612,9 @@ function Toasts.Show(text: any, kind: any)
 		Label = label,
 		Kind = k,
 		Tall = tall,
+		Important = k == "alert" or isNew,
 		Seq = seq,
-		Left = if k == "alert" then 5 elseif tall then 4 else 3.2,
+		Left = if k == "alert" or isNew then 5 elseif tall then 4 else 3.2,
 		Waited = 0,
 		Placed = false,
 		Played = false,
@@ -609,7 +625,15 @@ function Toasts.Show(text: any, kind: any)
 	}
 	table.insert(toasts, t)
 	while #toasts > MAX do
-		local old = table.remove(toasts, 1)
+		-- 너무 많으면 가장 오래된 보통 말풍선부터 버려요 (모두 중요하면 가장 오래된 것)
+		local drop = 1
+		for i, old in toasts do
+			if not old.Important then
+				drop = i
+				break
+			end
+		end
+		local old = table.remove(toasts, drop)
 		if old then
 			old.Outer:Destroy()
 		end
