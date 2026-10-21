@@ -15,6 +15,7 @@ Config.Settings = {
 	HideHatch = false, -- 알 까는 화면 숨기기 (작은 알림만)
 	AutoCollect = false, -- 집에 모인 돈 자동으로 먹기
 	Magnet = false, -- 맵 돈 자석 (넓은 범위 자동으로 먹기)
+	SuperMagnet = false, -- ★v6 슈퍼 자석 (지금 있는 지역 코인 대부분, 환생해야 열려요)
 }
 Config.MaxFollow = 3 -- 데리고 다닐 수 있는 펫 수
 Config.MaxBagItems = 150 -- 가방 최대 칸 (Loc == "Bag" 인 아이템 수)

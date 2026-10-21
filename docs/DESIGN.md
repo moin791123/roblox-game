@@ -1,4 +1,4 @@
-# 펫 월드 (v5): design contract
+# 펫 월드 (v6): design contract
 
 Kid-friendly **pet-collecting simulator**. Rojo project, Luau. All player-facing text is **Korean**, cute and short.
 Code comments: short Korean comments (match existing files). Tabs, `task.*` (never `wait`/`spawn`/`delay`).
@@ -10,6 +10,27 @@ need is missing here, do the simplest thing that fits the contract and write it 
 file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/shared/Remotes.luau` and
 `src/server/DataService.luau` are **done** (read them; they are the source of truth for numbers and helpers).
 
+> **v6 changes (this round)** — "조금 진행하니까 루즈해지네": a reason to rush to every map, plus a stronger magnet. ★v6 marks v6 below.
+> 1. **Three ultra-rare eggs per zone** (24 eggs): 시크릿 알 → 천상 알 → 이터널 알, each rarer than the last. They are NOT in the normal
+>    spawn ladder: every normal belt spawn also rolls for them (rough target per belt: 시크릿 ~1 / 250 spawns, 천상 ~1 / 1000,
+>    이터널 ~1 / 4000; the CONFIG agent tunes). They stay on the belt longer (wait at the end, ~60 s) so kids can get there, always fire
+>    a special EggAlert ("Rare" kind) with a distinct banner, and get a taller rainbow beacon. Each hatches ONE guaranteed pet.
+> 2. **Three new rarities above 비밀 (Secret)**: `Hidden` "시크릿" (Order 8), `Celestial` "천상" (Order 9), `Eternal` "이터널" (Order 10);
+>    one pet of each per zone (24 pets, table below). Income ≈ 2.5× / 6× / 15× the zone's Secret pet (tuned by sim).
+> 3. **Magnet**: bigger normal 🧲 radius; new ⚡ 슈퍼 자석 toggle (Config.Settings.SuperMagnet) that pulls most of the current zone's
+>    coins, unlocked after 1 rebirth (server-enforced), with its own rate cap.
+>
+> | zone | 시크릿 (Hidden) egg → pet | 천상 (Celestial) egg → pet | 이터널 (Eternal) egg → pet |
+> |---|---|---|---|
+> | 1 숲 마을 | ForestHidden "숲 시크릿 알" → CloverFox 네잎클로버 여우: orange chibi fox, glowing mint four-leaf clover on the forehead, clover-tipped tail | ForestCelestial "숲 천상 알" → BlossomFawn 꽃사슴 요정: pale-pink fawn with white spots, cherry-blossom antlers, tiny translucent petal wings | ForestEternal "숲 이터널 알" → WorldTreeDragon 세계수 용: chubby leaf-green baby dragon, a tiny glowing tree growing on its back, golden belly |
+> | 2 호수 | LakeHidden "호수 시크릿 알" → PearlOtter 진주 수달: brown otter on its back hugging a big shiny pearl | LakeCelestial "호수 천상 알" → MoonSwan 달빛 백조: white swan, crescent-moon crown, soft silver glow | LakeEternal "호수 이터널 알" → RainbowKoiDragon 무지개 잉어 용: koi-dragon with long whiskers and rainbow fins |
+> | 3 정글 | JungleHidden "정글 시크릿 알" → RainbowChameleon 무지개 카멜레온: round chameleon with rainbow stripes and curly tail | JungleCelestial "정글 천상 알" → GoldenJaguar 황금 재규어: golden jaguar cub with dark rosettes, gem collar | JungleEternal "정글 이터널 알" → EmeraldDragon 에메랄드 용: emerald baby dragon with leafy wings and a gem on the chest |
+> | 4 겨울 산 | SnowHidden "겨울 시크릿 알" → CrystalPenguin 수정 펭귄: penguin with an ice-crystal crown and frosty cheeks | SnowCelestial "겨울 천상 알" → AuroraWolf 오로라 늑대: white wolf pup with an aurora-coloured (mint→violet) mane | SnowEternal "겨울 이터널 알" → IcePhoenix 얼음 불사조: ice-blue phoenix with crystal tail feathers |
+> | 5 바다 | OceanHidden "바다 시크릿 알" → RainbowJelly 무지개 해파리: round rainbow jellyfish with curly tentacles and big eyes | OceanCelestial "바다 천상 알" → PearlSeahorse 진주 해마: pastel seahorse with a pearl crown | OceanEternal "바다 이터널 알" → BabyKraken 아기 크라켄: chubby purple baby kraken with a tiny captain hat |
+> | 6 캔디 랜드 | CandyHidden "캔디 시크릿 알" → LollipopPanda 막대사탕 판다: panda holding a swirl lollipop, candy-pink ears | CandyCelestial "캔디 천상 알" → MarshmallowBear 마시멜로 곰: puffy white marshmallow bear with toasted-gold edges | CandyEternal "캔디 이터널 알" → SweetQueenCat 사탕 여왕 냥이: cat with a candy crown, cape and a wand |
+> | 7 구름 왕국 | CloudHidden "구름 시크릿 알" → ThunderPup 번개 강아지: grey-blue puppy with a cloud tuft and a lightning-bolt tail | CloudCelestial "구름 천상 알" → SunGriffin 해님 그리핀: golden griffin chick with sun-ray feathers | CloudEternal "구름 이터널 알" → NineTailFox 구미호: white fox with nine fluffy glowing tails |
+> | 8 우주 | SpaceHidden "우주 시크릿 알" → MeteorHamster 운석 햄스터: hamster in a bubble space helmet riding a small meteor | SpaceCelestial "우주 천상 알" → GalaxyUnicorn 은하 유니콘: dark-blue unicorn with star speckles and a glowing horn | SpaceEternal "우주 이터널 알" → CosmoDragon 은하 용: deep-navy dragon with star speckles and a tiny ringed planet orbiting it |
+>
 > **v5 changes (this round)** — parent's feedback after playing with the kids. ★v5 marks v5 below.
 > 1. **Settings toggles** (saved per player): `Config.Settings` { HideHatch, AutoCollect, Magnet } (defaults false), client→server
 >    `Remotes.SetSetting(key, value: boolean)` (unknown keys / non-booleans ignored), `DataService.GetSetting(player, key)`,
