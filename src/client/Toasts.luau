@@ -1390,10 +1390,13 @@ end
 
 -- 큰 배너 띄우기 (줄 서기 · 같은 Key 는 합치기)
 function Toasts.Banner(rawSpec: BannerSpec)
-	if bannerSuppressed or not rootGui or type(rawSpec) ~= "table" or type(rawSpec.Title) ~= "string" then
+	if not rootGui or type(rawSpec) ~= "table" or type(rawSpec.Title) ~= "string" then
 		return
 	end
 	local spec, rare = rareSpec(rawSpec)
+	if bannerSuppressed and not rare then
+		return -- 꾸미기 중: 보통 배너는 버려요 (희귀 배너는 줄에 두었다가 끝나면 보여 줘요)
+	end
 	local key = spec.Key
 	local current = bannerCurrent
 	if key and current and not current.Closed and current.Spec.Key == key then
@@ -1467,16 +1470,27 @@ function Toasts.ExpectRare(petId: string, isNew: boolean?)
 	end)
 end
 
--- 배너 쉬기 (꾸미기 모드 동안): 켜면 지금 배너를 닫고 기다리던 것도 버려요
+-- 배너 쉬기 (꾸미기 모드 동안): 켜면 지금 배너를 닫고 기다리던 보통 배너는 버려요.
+-- ★v6 희귀 알 배너는 줄에 남겨 두었다가 (알이 ~60초 기다려요) 끄면 보여 줘요 (그 사이 알이 없어졌으면 건너뛰어요)
 function Toasts.SetBannerSuppressed(on: boolean)
 	bannerSuppressed = on
 	if on then
-		table.clear(bannerQueue)
+		for i = #bannerQueue, 1, -1 do
+			if not bannerQueue[i].Rare then
+				table.remove(bannerQueue, i)
+			end
+		end
 		local current = bannerCurrent
+		if current and not current.Closed and current.Rare then
+			-- 보이던 희귀 배너는 줄 맨 앞에 다시
+			table.insert(bannerQueue, 1, { Spec = current.Spec, Count = current.Count, Shown = 0, Until = 0, Closed = false, Rare = current.Rare, Uid = current.Uid })
+		end
 		if current then
 			current.Closed = true
 		end
 		hideBanner()
+	elseif #bannerQueue > 0 then
+		runBanners()
 	end
 end
 

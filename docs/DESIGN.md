@@ -23,6 +23,10 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 >    30 studs of height, own 2.5/s bucket of 16); super wins when both are on (other-zone coins refused inside a zone; 🧲 still works on
 >    trails). The toggle always saves, the pull needs ≥ 1 rebirth; Hud's 4th toggle is grey "🔒 환생 1회" until then (toast on the
 >    unlocking rebirth). Toggles are positioned directly (no UIListLayout). Sim: zone 8 at 17.2 h (none) / 12.2 h (🧲) / 10.2 h (🧲 + ⚡).
+> 4. **Integration notes**: rare ("Rare" kind) alerts are queued while decorating (normal ones are still dropped) and shown when decorating
+>    ends unless that egg is gone. `PetModels.AddRarityEffects` gives Hidden/Celestial/Eternal a softer light than Secret (1.3 / range 10,
+>    tier colour) and 6 slower sparkles/s, rainbow only for Eternal; WorldFx pedestal dimming applies to them too. RideFly: on small
+>    screens (< 120 px above the stacked ⬆) ⬆ sits left of ⬇ in one row so egg banners still fit while flying.
 >
 > | zone | 시크릿 (Hidden) egg → pet | 천상 (Celestial) egg → pet | 이터널 (Eternal) egg → pet |
 > |---|---|---|---|

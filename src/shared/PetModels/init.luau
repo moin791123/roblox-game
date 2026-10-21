@@ -23,7 +23,7 @@ local RAINBOW = {
 	RGB(175, 120, 255),
 }
 
-type RarityInfo = { Name: string, Color: Color3, Order: number }
+type RarityInfo = { Name: string, Color: Color3, Order: number, Special: boolean?, Rainbow: boolean? }
 
 ----------------------------------------------------------------------
 -- 파트 만들기 도우미
@@ -2246,40 +2246,44 @@ function PetModels.AddRarityEffects(model: Model, rarity: string)
 		end
 	end
 	local col = info.Color
-	local level = math.clamp(info.Order - 3, 1, 3) -- Epic 1, Legendary 2, Mythic 3
+	local level = math.clamp(info.Order - 3, 1, 3) -- Epic 1, Legendary 2, Mythic 3 (비밀도 3)
+	-- ★v6 시크릿/천상/이터널 (Special): 비밀보다 밝지 않게. 빛은 한 단계 낮게, 반짝이는 단계 색으로 크고 느리게 떠올라요 (이터널만 무지개)
+	local special = info.Special == true
 
 	local light = Instance.new("PointLight")
 	light.Name = "RarityFx"
 	light.Color = col
-	light.Brightness = 0.3 + 0.5 * level
-	light.Range = 4 + 3 * level
+	light.Brightness = if special then 1.3 else 0.3 + 0.5 * level
+	light.Range = if special then 10 else 4 + 3 * level
 	light.Shadows = false
 	light.Parent = body
 
 	local pe = Instance.new("ParticleEmitter")
 	pe.Name = "RarityFx"
 	pe.Texture = SPARKLE_TEX
-	if level >= 3 then
+	if special then
+		pe.Color = if info.Rainbow then colorSeq(RAINBOW, col) else ColorSequence.new(col, WHITE)
+	elseif level >= 3 then
 		pe.Color = colorSeq(RAINBOW, col)
 	else
 		pe.Color = ColorSequence.new(col, WHITE)
 	end
-	pe.LightEmission = 1
+	pe.LightEmission = if special then 0.7 else 1
 	pe.Size = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.12 + 0.08 * level),
+		NumberSequenceKeypoint.new(0, if special then 0.42 else 0.12 + 0.08 * level),
 		NumberSequenceKeypoint.new(1, 0),
 	})
 	pe.Transparency = NumberSequence.new({
 		NumberSequenceKeypoint.new(0, 0.15),
 		NumberSequenceKeypoint.new(1, 1),
 	})
-	pe.Lifetime = NumberRange.new(0.8, 1.5)
-	pe.Rate = if level == 1 then 3 elseif level == 2 then 7 else 12
+	pe.Lifetime = if special then NumberRange.new(1.4, 2.2) else NumberRange.new(0.8, 1.5)
+	pe.Rate = if special then 6 elseif level == 1 then 3 elseif level == 2 then 7 else 12
 	-- 몸 표면에서 바깥쪽으로 뿌려야 몸속에 가려지지 않음
 	pe.Shape = Enum.ParticleEmitterShape.Sphere
 	pe.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
 	pe.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
-	pe.Speed = NumberRange.new(1, 2.5)
+	pe.Speed = if special then NumberRange.new(0.5, 1.2) else NumberRange.new(1, 2.5)
 	pe.SpreadAngle = Vector2.new(180, 180)
 	pe.Rotation = NumberRange.new(0, 360)
 	pe.RotSpeed = NumberRange.new(-90, 90)

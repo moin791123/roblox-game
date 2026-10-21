@@ -692,14 +692,23 @@ local function computeRects(gw: number, gh: number, flyingNow: boolean): { [GuiO
 			if downBtn then
 				out[downBtn] = rectAt(colX, downY, b, b)
 			end
+			-- ★v6 작은 폰: ⬆ 을 ⬇ 위에 쌓으면 그 위로 알림 줄(좋은 알 배너 ~114px)이 안 들어가요 → ⬇ 왼쪽에 한 줄로 (안 겹치면)
+			local up = rectAt(colX, upY, b, b)
+			local row = false
+			if upY - topMin < 120 then
+				local r = rectAt(colX - gap - b, downY, b, b)
+				if r.X0 >= 8 and not hitsAny(r, avoid) then
+					up, row = r, true
+				end
+			end
 			if upBtn then
-				out[upBtn] = rectAt(colX, upY, b, b)
+				out[upBtn] = up
 			end
 			if landBtn then
 				local l = math.floor(b * 0.8)
-				-- ⬇ 왼쪽 (조이스틱·도움말과 안 겹치면) → 아니면 ⬆ 위
-				local left = rectAt(colX - gap - l, downY + math.floor((b - l) / 2), l, l)
-				local above = rectAt(colX + math.floor((b - l) / 2), upY - gap - l, l, l)
+				-- ⬇ (한 줄이면 ⬆) 왼쪽 (조이스틱·도움말과 안 겹치면) → 아니면 ⬆ 위
+				local left = rectAt(up.X0 - gap - l, downY + math.floor((b - l) / 2), l, l)
+				local above = rectAt(up.X0 + math.floor((b - l) / 2), (if row then downY else upY) - gap - l, l, l)
 				out[landBtn] = if left.X0 >= 8 and not hitsAny(left, avoid) then left else above
 			end
 		end
