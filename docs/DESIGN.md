@@ -1,4 +1,4 @@
-# 펫 월드 (v4): design contract
+# 펫 월드 (v5): design contract
 
 Kid-friendly **pet-collecting simulator**. Rojo project, Luau. All player-facing text is **Korean**, cute and short.
 Code comments: short Korean comments (match existing files). Tabs, `task.*` (never `wait`/`spawn`/`delay`).
@@ -10,6 +10,35 @@ need is missing here, do the simplest thing that fits the contract and write it 
 file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/shared/Remotes.luau` and
 `src/server/DataService.luau` are **done** (read them; they are the source of truth for numbers and helpers).
 
+> **v5 changes (this round)** — parent's feedback after playing with the kids. ★v5 marks v5 below.
+> 1. **Settings toggles** (saved per player): `Config.Settings` { HideHatch, AutoCollect, Magnet } (defaults false), client→server
+>    `Remotes.SetSetting(key, value: boolean)` (unknown keys / non-booleans ignored), `DataService.GetSetting(player, key)`,
+>    `SetSetting`, `OnSettingChanged(fn(player, key, value))`, snapshot `Settings`; client `State.GetSetting/SetSettingLocal/OnSetting`.
+>    Hud shows three one-tap toggles 🙈 부화 숨기기 / 💰 자동 수금 / 🧲 자석 (ON = own colour + mint switch, OFF = grey; optimistic,
+>    falls back to the server value after 4 s; hidden while decorating; phones get 42 px squares).
+> 2. **HideHatch**: HatchFx skips the big show; the server's hatch/fuse toast is the notice (starts with "🆕 NEW!" for discoveries).
+> 3. **AutoCollect**: PlotService moves home `Pending` into coins about every 3 s from anywhere (collector label "🏦 자동 수금 중",
+>    silent "+N" only within 120 studs, Hud vault pill hidden).
+> 4. **Per-player eggs**: conveyor eggs are no longer shared server Models. ConveyorService keeps each player's own egg list per unlocked
+>    belt (same ladder/weights; a new or just-unlocked belt starts full without alerts; EggAlert rules per player). Server→client
+>    `EggBelt(op, payload)` ("Reset" {{Uid, EggId, Zone, Born}}, "Add", "Remove" uid, "Bought" {Uid, Target, FlyTime, Poof}),
+>    client→server `BuyEgg(uid)` validated in order: own uid, still on belt, has a house, zone unlocked, within 20 studs of
+>    `Config.BeltEggSpot(zone, age)`, free slot, coins (0.3 s debounce). `Born` uses `workspace:GetServerTimeNow()`. Client
+>    `EggBelt.luau` renders eggs, beacons + "✨ <알 이름>!" signs, price billboards and buy prompts under `workspace.ClientEggs`
+>    (models within 200 studs). `workspace.Conveyors.Zone<k>` now holds only the belt parts.
+> 5. **Map coins**: still per player (verified with 2 players); `FieldCoins.CountPerZone` 30 → 40, `RespawnTime` 5 → 3. **Magnet**
+>    (Settings.Magnet): client pulls coins within `BigMagnetRadius` 45 at `BigMagnetRate` 1.2/s (burst 6); server accepts only with the
+>    setting on, within 45 + 8 studs, through a 1.8/s, 10-coin token bucket. Sim: zone 8 at 17.6 h without magnet, 13.8 h with it.
+> 6. **Alerts bottom-right**: toasts, the good-egg banner and the zone banner stack bottom-right, newest on top (`Toasts.Dock/Undock`
+>    for ZoneClient); phones stay above the jump button; priority toasts > egg banner > zone banner (a waiting banner pauses its clock).
+> 7. **Calmer house**: pedestal pets don't hue-cycle, their lights/sparkles/reflectance roughly halved again (WorldFx knobs), lamps ×0.65,
+>    furniture lamps lower, GalaxyPalace neon darker, bloom 0.18 / 20 / 2.1, the 집 "!" badge beats 3 times then stays still (§12).
+> 8. **Fly while riding**: `src/client/RideFly.luau` (LinearVelocity + AlignOrientation, PlatformStand, soft bob, no camera roll).
+>    PC: hold Space 0.35 s or F to take off, Space up, Q / LeftCtrl down, F lands; phone: ✈ beside the jump button, ⬆ / ⬇ and 🛬 while
+>    flying. Height cap world Y 150, not below sea + 1, 40 studs past the outer islands. FollowService sets player attributes `Riding`
+>    and `FlySpeed` (WalkSpeed × 1.2, max 72); unride glides down. Locked islands and trails are blocked client-side (slide along) and
+>    server-side (ZoneService `trailAt` + `checkPlayer`: anyone > 3 studs past a locked gate at any height is sent back).
+>
 > **v4 changes (this round)** — v3 was less fun than v2 (few eggs, no "good egg!" moment, far-away maps). ★v4 marks v4 below.
 > 1. **Many eggs per map again**: **41 eggs** (all 16 old ids + 25 ★v4) — 6 in 숲 마을, 5 in every other zone (§11).
 >    Belt spawn-weight ladder 40 / 24 / 11 / 5 / 2 (zone 1: 40 / 24 / 12 / 6 / 3 / 1.5), price ×1 / 3 / 8 / 20 / 50.
