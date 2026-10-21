@@ -2044,9 +2044,10 @@ local function setupLighting()
 
 	local bloom = Instance.new("BloomEffect")
 	bloom.Name = "SoftBloom"
-	bloom.Intensity = 0.35
+	-- 네온·반짝이가 번지는 정도. 집 안에 빛나는 게 많이 모이면 눈부셔서 살짝 약하게 (0.35 / 1.6 → 0.28 / 1.8)
+	bloom.Intensity = 0.28
 	bloom.Size = 24
-	bloom.Threshold = 1.6
+	bloom.Threshold = 1.8
 	bloom.Parent = Lighting
 end
 

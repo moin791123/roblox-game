@@ -901,6 +901,149 @@ function UiKit.ShowBadge(badge: Frame?, on: boolean)
 	end
 end
 
+----------------------------------------------------------------------
+-- ★ 오른쪽 옆 칸: 좋은 알 배너(Toasts)와 부화 연출(HatchFx)은 화면 가운데(캐릭터·눈높이)를 비켜서 여기에 떠요.
+-- 좌표는 모두 메인 GUI 기준 (위쪽 Roblox 바 아래부터, IgnoreGuiInset = false 인 ScreenGui 와 같아요)
+----------------------------------------------------------------------
+export type Rect = { X0: number, Y0: number, X1: number, Y1: number, Tag: string? }
+
+local Players = game:GetService("Players")
+
+function UiKit.RectOf(g: GuiObject, pad: number?, tag: string?): Rect
+	local p, s = g.AbsolutePosition, g.AbsoluteSize
+	local d = pad or 0
+	return { X0 = p.X - d, Y0 = p.Y - d, X1 = p.X + s.X + d, Y1 = p.Y + s.Y + d, Tag = tag }
+end
+
+function UiKit.RectsHit(a: Rect, b: Rect): boolean
+	return a.X0 < b.X1 and b.X0 < a.X1 and a.Y0 < b.Y1 and b.Y0 < a.Y1
+end
+
+local function overlapArea(r: Rect, list: { Rect }): number
+	local total = 0
+	for _, b in list do
+		local w = math.min(r.X1, b.X1) - math.max(r.X0, b.X0)
+		local h = math.min(r.Y1, b.Y1) - math.max(r.Y0, b.Y0)
+		if w > 0 and h > 0 then
+			total += w * h
+		end
+	end
+	return total
+end
+
+-- 보이는 것들을 모두 감싸는 상자 (코인 줄 아래 "+N/초" 줄, 환생 비용 알약처럼 밖으로 삐져나온 것까지)
+local function treeRect(root: GuiObject, tag: string): Rect
+	local r = UiKit.RectOf(root, 4, tag)
+	for _, d in root:GetDescendants() do
+		if d:IsA("GuiObject") and d.Visible and d.BackgroundTransparency < 1 then
+			local q = UiKit.RectOf(d, 4)
+			r.X0, r.Y0 = math.min(r.X0, q.X0), math.min(r.Y0, q.Y0)
+			r.X1, r.Y1 = math.max(r.X1, q.X1), math.max(r.Y1, q.Y1)
+		end
+	end
+	return r
+end
+
+-- 옆 칸 상자가 피해야 하는 것: 위 코인 줄, 왼쪽 큰 버튼, 팁 줄, 꾸미기 버튼 줄·아래 판, 열린 창의 ✖ 버튼,
+-- 폰이면 점프 버튼(오른쪽 아래)과 조이스틱 칸(왼쪽 아래)
+function UiKit.SideObstacles(mainGui: Instance?): { Rect }
+	local out: { Rect } = {}
+	local main: Instance? = mainGui
+	if not main then
+		local player = Players.LocalPlayer
+		local pg = player and player:FindFirstChildOfClass("PlayerGui")
+		main = pg and pg:FindFirstChild("PetWorldGui")
+	end
+	if not main or not main:IsA("GuiBase2d") then
+		return out
+	end
+	for _, child in main:GetChildren() do
+		if child:IsA("GuiObject") and child.Visible then
+			local name = child.Name
+			if name == "TopBar" or name == "SideButtons" then
+				table.insert(out, treeRect(child, name))
+			elseif name == "Tips" then
+				table.insert(out, UiKit.RectOf(child, 4, name))
+			elseif name == "DecorateMode" then
+				for _, part in child:GetChildren() do
+					if part:IsA("GuiObject") and part.Visible then
+						table.insert(out, UiKit.RectOf(part, 6, "Decorate"))
+					end
+				end
+			else
+				local header = child:FindFirstChild("Header")
+				local close = header and header:FindFirstChild("Close")
+				if close and close:IsA("GuiObject") and close.Visible then
+					table.insert(out, UiKit.RectOf(close, 8, "Close"))
+				end
+			end
+		end
+	end
+	if UserInputService.TouchEnabled then
+		local size = (main :: GuiBase2d).AbsoluteSize
+		local gw, gh = size.X, size.Y
+		-- Roblox 기본 점프 버튼 자리 (작은 화면 70px / 큰 화면 120px)
+		if math.min(gw, gh) <= 500 then
+			table.insert(out, { X0 = gw - 105, Y0 = gh - 100, X1 = gw, Y1 = gh, Tag = "Jump" })
+		else
+			table.insert(out, { X0 = gw - 180, Y0 = gh - 220, X1 = gw - 40, Y1 = gh - 80, Tag = "Jump" })
+		end
+		table.insert(out, { X0 = 0, Y0 = gh / 3, X1 = gw * 0.4, Y1 = gh, Tag = "Stick" })
+	end
+	return out
+end
+
+-- 오른쪽 옆 칸에서 w×h 상자 자리 찾기: 오른쪽 끝에 붙여서, 피할 것과 안 겹치는 높이 중 prefY(상자 위쪽)에 가장 가까운 곳.
+-- 오른쪽 끝이 막혔으면 막은 것 왼쪽도 봐요 (화면 오른쪽 절반 안에서만).
+-- 돌려주는 값: x, y, 겹친 넓이 (0 이면 아무것도 안 가려요)
+function UiKit.SideSpot(gw: number, gh: number, w: number, h: number, prefY: number, avoid: { Rect }, margin: number?): (number, number, number)
+	local m = margin or 12
+	local edge = math.floor(gw - m - w)
+	local xs = { edge }
+	for _, r in avoid do
+		local x = math.floor(r.X0 - 8 - w)
+		if r.X1 > edge and x < edge and x >= gw * 0.5 then
+			table.insert(xs, x)
+		end
+	end
+	local minY, maxY = 8, math.floor(gh - 8 - h)
+	if maxY < minY then
+		maxY = minY
+	end
+	local bestX, bestY, bestOv, bestScore = edge, math.clamp(math.floor(prefY), minY, maxY), math.huge, math.huge
+	for _, x in xs do
+		local ys = { math.clamp(math.floor(prefY), minY, maxY) }
+		for _, r in avoid do
+			if r.X0 < x + w and x < r.X1 then
+				table.insert(ys, math.ceil(r.Y1 + 8))
+				table.insert(ys, math.floor(r.Y0 - 8 - h))
+			end
+		end
+		for _, y in ys do
+			if y >= minY and y <= maxY then
+				local ov = overlapArea({ X0 = x, Y0 = y, X1 = x + w, Y1 = y + h }, avoid)
+				local score = math.abs(y - prefY) + (edge - x) * 2
+				if ov < bestOv or (ov == bestOv and score < bestScore) then
+					bestX, bestY, bestOv, bestScore = x, y, ov, score
+				end
+			end
+		end
+	end
+	if bestOv == math.huge then
+		bestOv = overlapArea({ X0 = bestX, Y0 = bestY, X1 = bestX + w, Y1 = bestY + h }, avoid)
+	end
+	return bestX, bestY, bestOv
+end
+
+-- 옆 칸을 지금 쓰고 있는 상자 (배너 "Banner", 부화 "Hatch"): 서로 비키려고 알려 줘요
+local sideRects: { [string]: Rect } = {}
+function UiKit.SetSideRect(name: string, rect: Rect?)
+	sideRects[name] = rect
+end
+function UiKit.SideRect(name: string): Rect?
+	return sideRects[name]
+end
+
 function UiKit.Scroller(parent: Instance, props: { [string]: any }?): ScrollingFrame
 	local base: { [string]: any } = {
 		BackgroundTransparency = 1,

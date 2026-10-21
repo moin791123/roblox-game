@@ -84,6 +84,9 @@ local NEBULA_COLORS = {
 	Color3.fromRGB(255, 120, 210),
 	Color3.fromRGB(110, 220, 255),
 }
+-- 은하 궁전 벽 위 네온 띠는 층마다 방을 빙 둘러서 (눈높이) 성운 색 그대로면 눈부셔요 → 이만큼 짙은 남색 쪽으로
+local NEBULA_DEEP = Color3.fromRGB(40, 30, 80)
+local NEBULA_CAP_SOFT = 0.35
 
 type Theme = { Name: string, Price: number, Size: number, Floor: Color3, Wall: Color3, Roof: Color3, Accent: Color3, Deco: string }
 local THEMES = (Config.House.Themes :: any) :: { [string]: Theme }
@@ -307,12 +310,12 @@ local function buildGroundFloor(ctx: Ctx)
 	ctx.house.PrimaryPart = floor
 end
 
--- 벽 위 장식띠 색 (무지개: 칸마다 다른 색, 은하: 네온 성운 색)
+-- 벽 위 장식띠 색 (무지개: 칸마다 다른 색, 은하: 조금 짙은 네온 성운 색)
 local function capLook(ctx: Ctx, i: number): (Color3, Enum.Material)
 	if ctx.deco == "rainbow" then
 		return RAINBOW_COLORS[(i - 1) % #RAINBOW_COLORS + 1], Enum.Material.SmoothPlastic
 	elseif ctx.deco == "galaxy" then
-		return NEBULA_COLORS[(i - 1) % #NEBULA_COLORS + 1], Enum.Material.Neon
+		return NEBULA_COLORS[(i - 1) % #NEBULA_COLORS + 1]:Lerp(NEBULA_DEEP, NEBULA_CAP_SOFT), Enum.Material.Neon
 	end
 	return ctx.theme.Accent, Enum.Material.SmoothPlastic
 end

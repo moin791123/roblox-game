@@ -1,6 +1,8 @@
 -- 알림 말풍선 (코인 아래 가운데에 쌓여요, 최대 4개)
 -- + 큰 배너 하나 (Toasts.Banner): "✨ 정글에 점박이 알이 나타났어요!" 처럼 그림 + 버튼이 있는 알림.
---   같은 Key 가 또 오면 합치고 (×2), 다른 건 줄을 서서 차례로 보여요. 보이는 동안 말풍선은 배너 아래로 내려가요.
+--   ★ 화면 가운데(눈높이)를 가리지 않게 오른쪽 옆 칸 위쪽에 작게 미끄러져 들어와요 (UiKit.SideSpot).
+--   같은 Key 가 또 오면 합치고 (×2), 다른 건 줄을 서서 차례로 보여요.
+--   부화 연출이 옆 칸을 쓰고 있어서 자리가 없으면 잠깐 숨었다가 (시간은 멈춰요) 끝나면 다시 나와요.
 local UiKit = require(script.Parent.UiKit)
 
 local Make, C = UiKit.Make, UiKit.Colors
@@ -16,9 +18,12 @@ local KIND_COLORS: { [string]: Color3 } = {
 
 local MAX = 4
 local TOP = 124 -- 코인 줄 + 초당 수익 줄 아래
+local TOAST_GAP = 6
 local container: Frame? = nil
 local live: { Frame } = {}
 local counter = 0
+local toastX: number? = nil -- nil = 가운데 (배너를 비켜 왼쪽으로 가면 픽셀)
+local toastY = TOP
 
 ----------------------------------------------------------------------
 -- 배너 상태
@@ -40,14 +45,16 @@ export type BannerSpec = {
 	HiddenSub: string?,
 }
 
-type BannerEntry = { Spec: BannerSpec, Count: number, Shown: number, Until: number, Closed: boolean }
+type BannerEntry = { Spec: BannerSpec, Count: number, Shown: number, Until: number, Closed: boolean, Played: boolean? }
 
 local BANNER_TIME = 6
 local BANNER_MIN = 3 -- 기다리는 배너가 있으면 이만큼만 보여 주고 다음으로
 local BANNER_QUEUE_MAX = 3
+local BANNER_MAX_WAIT = 20 -- 부화 연출이 길게 이어져서 이만큼 못 나오면 버려요 (알이 벌써 없을 거예요)
+local TICK = 0.25
 
 local rootGui: Instance? = nil
-local guard: GuiObject? = nil -- 배너가 가리면 안 되는 것 (왼쪽 큰 버튼들)
+local guard: GuiObject? = nil -- 왼쪽 큰 버튼 칸 (그 부모 = 메인 GUI 에서 피할 것들을 찾아요)
 local bannerOuter: Frame? = nil
 local bannerBubble: Frame
 local bannerStroke: UIStroke
@@ -59,26 +66,69 @@ local bannerSub: TextLabel
 local bannerButton: TextButton
 local bannerButtonLabel: TextLabel
 local bannerHeight = 100
-local bannerWidth = 560
+local bannerWidth = 320
+local bannerX, bannerY = 0, TOP
+local bannerPlaced = false
+local bannerOut = false -- 보이는 중 (미끄러져 나가는 중이면 false)
 local bannerQueue: { BannerEntry } = {}
 local bannerCurrent: BannerEntry? = nil
 local bannerRunning = false
 local bannerSuppressed = false
 local bannerToken = 0
 
-local function toastTop(): number
+local function bannerRect(): UiKit.Rect?
 	local outer = bannerOuter
-	if outer and outer.Visible then
-		return TOP + bannerHeight + 8
+	if not outer or not outer.Visible or not bannerOut then
+		return nil
 	end
-	return TOP
+	return { X0 = bannerX, Y0 = bannerY, X1 = bannerX + bannerWidth, Y1 = bannerY + bannerHeight, Tag = "Banner" }
 end
 
+local function toastsHeight(): number
+	local h = 0
+	for i, t in live do
+		h += t.Size.Y.Offset + (if i > 1 then TOAST_GAP else 0)
+	end
+	return h
+end
+
+-- 말풍선 줄 자리: 보통 코인 아래 가운데. 배너와 겹치면 (좁은 화면) 왼쪽으로 비키고, 그래도 안 되면 배너 아래로
 local function moveToasts()
 	local frame = container
-	if frame then
-		UiKit.Tween(frame, 0.2, { Position = UDim2.new(0.5, 0, 0, toastTop()) })
+	local gui = rootGui
+	if not frame or not gui or not gui:IsA("GuiBase2d") then
+		return
 	end
+	local gw = (gui :: GuiBase2d).AbsoluteSize.X
+	local cw = frame.AbsoluteSize.X
+	local x: number? = nil
+	local y = TOP
+	local b = bannerRect()
+	if b and cw > 0 then
+		local colH = math.max(toastsHeight(), 58)
+		local col = { X0 = gw / 2 - cw / 2, Y0 = TOP, X1 = gw / 2 + cw / 2, Y1 = TOP + colH }
+		if UiKit.RectsHit(col, b) then
+			local left = 12
+			local g = guard
+			if g and g.Parent and g.Visible then
+				local side = UiKit.RectOf(g, 0)
+				if side.Y0 < col.Y1 and col.Y0 < side.Y1 then
+					left = math.max(left, side.X1 + 8)
+				end
+			end
+			local right = b.X0 - 8
+			if right - left >= cw then
+				x = math.floor(math.min(gw / 2, right - cw / 2))
+			else
+				y = math.floor(b.Y1 + 8)
+			end
+		end
+	end
+	if x == toastX and y == toastY then
+		return
+	end
+	toastX, toastY = x, y
+	UiKit.Tween(frame, 0.2, { Position = if x then UDim2.fromOffset(x, y) else UDim2.new(0.5, 0, 0, y) })
 end
 
 function Toasts.Init(gui: Instance)
@@ -94,7 +144,7 @@ function Toasts.Init(gui: Instance)
 	})
 	Make("UISizeConstraint", { MinSize = Vector2.new(290, 0), MaxSize = Vector2.new(560, 400), Parent = frame })
 	Make("UIListLayout", {
-		Padding = UDim.new(0, 6),
+		Padding = UDim.new(0, TOAST_GAP),
 		HorizontalAlignment = Enum.HorizontalAlignment.Center,
 		SortOrder = Enum.SortOrder.LayoutOrder,
 		Parent = frame,
@@ -108,6 +158,7 @@ local function remove(outer: Frame)
 		return
 	end
 	table.remove(live, idx)
+	moveToasts()
 	local bubble = outer:FindFirstChild("Bubble")
 	if bubble then
 		UiKit.Tween(UiKit.Scale(bubble), 0.18, { Scale = 0 }, Enum.EasingStyle.Back, Enum.EasingDirection.In)
@@ -164,6 +215,7 @@ function Toasts.Show(text: any, kind: any)
 			old:Destroy()
 		end
 	end
+	moveToasts()
 
 	UiKit.Pop(bubble, 0.4)
 	if k == "alert" then
@@ -177,384 +229,3 @@ function Toasts.Show(text: any, kind: any)
 	end)
 end
 
-----------------------------------------------------------------------
--- 큰 배너
-----------------------------------------------------------------------
-
--- 배너 버튼이 지금 보여야 하나
-local function buttonShown(entry: BannerEntry): boolean
-	local spec = entry.Spec
-	if not spec.ButtonText or not spec.OnButton then
-		return false
-	end
-	local check = spec.ButtonVisible
-	if check then
-		local ok, result = pcall(check)
-		return ok and result == true
-	end
-	return true
-end
-
--- 크기·자리: 화면 위쪽 가운데, 왼쪽 큰 버튼과 겹치면 그 오른쪽으로 비켜요
-local function layoutBanner()
-	local outer = bannerOuter
-	local gui = rootGui
-	if not outer or not gui or not gui:IsA("GuiBase2d") then
-		return
-	end
-	local size = (gui :: GuiBase2d).AbsoluteSize
-	local w, h = size.X, size.Y
-	if w <= 0 or h <= 0 then
-		return
-	end
-	bannerHeight = if h < 500 then 80 else 100
-	local left, right = 16, w - 16
-	local g = guard
-	if g and g.Parent and g.Visible then
-		local gp, gs = g.AbsolutePosition, g.AbsoluteSize
-		if gp.Y < TOP + bannerHeight and gp.Y + gs.Y > TOP and gp.X < w / 2 then
-			left = math.max(left, gp.X + gs.X + 10)
-		end
-	end
-	if right - left < 300 then
-		left = 16 -- 너무 좁으면 (세로 폰) 그냥 가운데
-	end
-	local width = math.min(math.clamp(math.floor(w * 0.6), 320, 620), right - left)
-	local x = math.clamp(math.floor(w / 2 - width / 2), left, math.max(left, right - width))
-	bannerWidth = width
-	outer.Position = UDim2.fromOffset(x, TOP)
-	outer.Size = UDim2.fromOffset(width, bannerHeight)
-
-	-- 안쪽: [그림] [글자 두 줄] [버튼]
-	local pad = 8
-	local icon = bannerHeight - 2 * pad
-	bannerIcon.Size = UDim2.fromOffset(icon, icon)
-	bannerIcon.Position = UDim2.new(0, pad + 2, 0.5, 0)
-	bannerCount.Position = UDim2.new(0, pad + 2 + icon - 6, 0.5, math.floor(icon / 2) - 6)
-	local current = bannerCurrent
-	local showButton = current ~= nil and buttonShown(current)
-	local buttonW = math.clamp(math.floor(width * 0.27), 112, 160)
-	bannerButton.Size = UDim2.fromOffset(buttonW, math.max(44, bannerHeight - 30))
-	bannerButton.Visible = showButton
-	local textLeft = pad + 2 + icon + 10
-	local textRight = if showButton then buttonW + 2 * pad + 6 else 2 * pad
-	bannerTitle.Position = UDim2.new(0, textLeft, 0, 6)
-	bannerTitle.Size = UDim2.new(1, -(textLeft + textRight), 0.58, -6)
-	bannerSub.Position = UDim2.new(0, textLeft, 0.6, 0)
-	bannerSub.Size = UDim2.new(1, -(textLeft + textRight), 0.32, -2)
-end
-
--- 화면 크기가 바뀌면 배너 자리 + 말풍선 높이 다시
-local function relayoutAll()
-	layoutBanner()
-	moveToasts()
-end
-
-local function hideBanner()
-	local outer = bannerOuter
-	bannerCurrent = nil
-	if not outer or not outer.Visible then
-		return
-	end
-	bannerToken += 1
-	local my = bannerToken
-	UiKit.Tween(UiKit.Scale(bannerBubble), 0.2, { Scale = 0 }, Enum.EasingStyle.Back, Enum.EasingDirection.In)
-	task.delay(0.22, function()
-		if bannerToken == my then
-			outer.Visible = false
-			moveToasts()
-		end
-	end)
-end
-
-local function ensureBanner()
-	if bannerOuter then
-		return
-	end
-	local gui = rootGui
-	if not gui then
-		return
-	end
-	local outer: Frame = Make("Frame", {
-		Name = "Banner",
-		BackgroundTransparency = 1,
-		Size = UDim2.fromOffset(bannerWidth, bannerHeight),
-		Visible = false,
-		ZIndex = 44,
-		Parent = gui,
-	})
-	local bubble: Frame = Make("Frame", {
-		Name = "Bubble",
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = C.Cream,
-		ZIndex = 45,
-		Parent = outer,
-	})
-	UiKit.Corner(bubble, UDim.new(0, 24))
-	UiKit.Gradient(bubble)
-	local stroke = UiKit.Stroke(bubble, C.Gold, 5, true)
-	local icon: Frame = Make("Frame", {
-		Name = "Icon",
-		AnchorPoint = Vector2.new(0, 0.5),
-		BackgroundColor3 = UiKit.Lighten(C.Gold, 0.6),
-		ClipsDescendants = true,
-		ZIndex = 46,
-		Parent = bubble,
-	})
-	UiKit.Corner(icon, UDim.new(0.3, 0))
-	UiKit.Stroke(icon, C.White, 3, true)
-	-- ×2 (같은 알림이 또 왔어요). 그림 칸은 잘라내니까 bubble 에 두고 그림 오른쪽 아래에 맞춰요
-	local count: Frame = Make("Frame", {
-		Name = "Count",
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Size = UDim2.fromOffset(38, 24),
-		BackgroundColor3 = C.Red,
-		Visible = false,
-		ZIndex = 49,
-		Parent = bubble,
-	})
-	UiKit.Corner(count, UDim.new(0.5, 0))
-	UiKit.Stroke(count, C.White, 2, true)
-	local countLabel = UiKit.Label({
-		Text = "×2",
-		Size = UDim2.fromScale(0.84, 0.8),
-		Position = UDim2.fromScale(0.08, 0.1),
-		ZIndex = 50,
-		Parent = count,
-	}, { Stroke = UiKit.Darken(C.Red, 0.4), MaxText = 18 })
-	local title = UiKit.Label({
-		Name = "Title",
-		Text = "",
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 46,
-		Parent = bubble,
-	}, { MaxText = 30, StrokeThickness = 3 })
-	local sub = UiKit.Label({
-		Name = "Sub",
-		Text = "",
-		TextXAlignment = Enum.TextXAlignment.Left,
-		TextColor3 = C.Ink,
-		ZIndex = 46,
-		Parent = bubble,
-	}, { Stroke = C.White, MaxText = 20 })
-	local button, buttonLabel = UiKit.Button({
-		Name = "Go",
-		Text = "🗺 바로 가기",
-		Color = C.Mint,
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -8, 0.5, 0),
-		Radius = UDim.new(0.4, 0),
-		TextSize = 24,
-		ZIndex = 47,
-		Parent = bubble,
-		OnClick = function()
-			local entry = bannerCurrent
-			if not entry or entry.Closed then
-				return
-			end
-			local fn = entry.Spec.OnButton
-			if not fn then
-				return
-			end
-			local ok, close = pcall(fn)
-			if not ok then
-				warn("[Toasts] 배너 버튼 오류:", close)
-			elseif close == true then
-				entry.Closed = true
-				hideBanner()
-			end
-		end,
-	})
-
-	bannerOuter = outer
-	bannerBubble = bubble
-	bannerStroke = stroke
-	bannerIcon = icon
-	bannerCount = count
-	bannerCountLabel = countLabel
-	bannerTitle = title
-	bannerSub = sub
-	bannerButton = button
-	bannerButtonLabel = buttonLabel
-
-	if gui:IsA("GuiBase2d") then
-		gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayoutAll)
-	end
-end
-
--- 글자·버튼·×N 다시 (보이는 동안 0.25초마다)
-local function refreshBanner(entry: BannerEntry)
-	local spec = entry.Spec
-	local showButton = buttonShown(entry)
-	bannerTitle.Text = spec.Title
-	local sub = if not showButton and spec.HiddenSub then spec.HiddenSub else (spec.Sub or "")
-	bannerSub.Text = sub
-	bannerSub.Visible = sub ~= ""
-	bannerCount.Visible = entry.Count >= 2
-	bannerCountLabel.Text = "×" .. tostring(entry.Count)
-	if bannerButton.Visible ~= showButton then
-		layoutBanner()
-	end
-end
-
-local function showBanner(entry: BannerEntry)
-	ensureBanner()
-	local outer = bannerOuter
-	if not outer then
-		return
-	end
-	local spec = entry.Spec
-	local color = spec.Color or C.Gold
-	bannerToken += 1
-	bannerStroke.Color = color
-	bannerIcon.BackgroundColor3 = UiKit.Lighten(color, 0.65)
-	local titleStroke = bannerTitle:FindFirstChildOfClass("UIStroke")
-	if titleStroke then
-		titleStroke.Color = UiKit.Darken(color, 0.4)
-	end
-	for _, child in bannerIcon:GetChildren() do
-		if child:IsA("GuiObject") then
-			child:Destroy()
-		end
-	end
-	if spec.IconKind and spec.IconId then
-		UiKit.Viewport(spec.IconKind, spec.IconId, bannerIcon)
-	else
-		UiKit.Label({ Text = spec.IconText or "✨", ZIndex = 47, Parent = bannerIcon }, { MaxText = 60 })
-	end
-	local buttonColor = spec.ButtonColor or C.Mint
-	bannerButton.BackgroundColor3 = buttonColor
-	bannerButtonLabel.Text = spec.ButtonText or ""
-	local labelStroke = bannerButtonLabel:FindFirstChildOfClass("UIStroke")
-	if labelStroke then
-		labelStroke.Color = UiKit.Darken(buttonColor, 0.45)
-	end
-	bannerCurrent = entry
-	outer.Visible = true
-	layoutBanner()
-	refreshBanner(entry)
-	UiKit.Pop(bannerBubble, 0.45)
-	UiKit.PlaySound(spec.Sound or "Alert")
-	task.delay(0.45, function()
-		if bannerCurrent == entry and not entry.Closed then
-			UiKit.Shake(bannerIcon, 8, 8)
-		end
-	end)
-	moveToasts()
-end
-
-local function runBanners()
-	if bannerRunning then
-		return
-	end
-	bannerRunning = true
-	task.spawn(function()
-		while #bannerQueue > 0 and not bannerSuppressed do
-			local entry = table.remove(bannerQueue, 1) :: BannerEntry
-			entry.Shown = os.clock()
-			entry.Until = entry.Shown + (entry.Spec.Duration or BANNER_TIME)
-			showBanner(entry)
-			while not entry.Closed and not bannerSuppressed do
-				task.wait(0.25)
-				local now = os.clock()
-				if now >= entry.Until or (#bannerQueue > 0 and now >= entry.Shown + BANNER_MIN) then
-					break
-				end
-				if bannerCurrent == entry then
-					refreshBanner(entry)
-				end
-			end
-			entry.Closed = true
-			hideBanner()
-			task.wait(0.35)
-		end
-		bannerRunning = false
-	end)
-end
-
--- 큰 배너 띄우기 (줄 서기 · 같은 Key 는 합치기)
-function Toasts.Banner(spec: BannerSpec)
-	if bannerSuppressed or not rootGui or type(spec) ~= "table" or type(spec.Title) ~= "string" then
-		return
-	end
-	local key = spec.Key
-	local current = bannerCurrent
-	if key and current and not current.Closed and current.Spec.Key == key then
-		current.Count += 1
-		current.Until = math.max(current.Until, os.clock() + (spec.Duration or BANNER_TIME))
-		refreshBanner(current)
-		UiKit.Bump(bannerBubble, 0.1)
-		UiKit.PlaySound(spec.Sound or "Alert")
-		return
-	end
-	if key then
-		for _, waiting in bannerQueue do
-			if waiting.Spec.Key == key then
-				waiting.Count += 1
-				return
-			end
-		end
-	end
-	table.insert(bannerQueue, { Spec = spec, Count = 1, Shown = 0, Until = 0, Closed = false })
-	while #bannerQueue > BANNER_QUEUE_MAX do
-		table.remove(bannerQueue, 1) -- 너무 많이 밀리면 오래된 것부터 버려요
-	end
-	runBanners()
-end
-
--- 배너 쉬기 (꾸미기 모드 동안): 켜면 지금 배너를 닫고 기다리던 것도 버려요
-function Toasts.SetBannerSuppressed(on: boolean)
-	bannerSuppressed = on
-	if on then
-		table.clear(bannerQueue)
-		local current = bannerCurrent
-		if current then
-			current.Closed = true
-		end
-		hideBanner()
-	end
-end
-
--- 배너가 비켜야 하는 화면 요소 (왼쪽 큰 버튼 칸)
-function Toasts.SetBannerGuard(obj: GuiObject?)
-	guard = obj
-	if obj then
-		obj:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayoutAll)
-		obj:GetPropertyChangedSignal("AbsolutePosition"):Connect(relayoutAll)
-	end
-	relayoutAll()
-end
-
--- 위쪽 가운데 줄(큰 배너 + 말풍선)이 차지한 세로 범위 (화면 픽셀: 위, 아래). 아무것도 없으면 nil
--- ZoneClient 의 "○○에 왔어요!" 배너가 큰 화면에서 이 줄과 겹치지 않게 비킬 때 써요
-function Toasts.TopColumn(): (number?, number?)
-	local bottom: number? = nil
-	local outer = bannerOuter
-	if outer and outer.Visible then
-		bottom = TOP + bannerHeight
-	end
-	if #live > 0 then
-		local h = 0
-		for i, t in live do
-			h += t.Size.Y.Offset + (if i > 1 then 6 else 0)
-		end
-		bottom = math.max(bottom or 0, toastTop() + h)
-	end
-	if not bottom then
-		return nil, nil
-	end
-	return TOP, bottom
-end
-
--- (검사용) 지금 보이는 배너: (Frame?, 제목, 버튼 보임?)
-function Toasts.BannerState(): (Frame?, string?, boolean)
-	local outer = bannerOuter
-	if not outer or not outer.Visible or not bannerCurrent then
-		return nil, nil, false
-	end
-	return outer, bannerTitle.Text, bannerButton.Visible
-end
-
-return Toasts

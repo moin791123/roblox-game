@@ -537,14 +537,17 @@ RainbowCat 6 · 요정 Cat 14, Owl 34, Fox 34, RainbowCat 17.5, **SpiritDeer 0.5
 ## 12. Tier visuals (`Config.Tiers[t].Visual`, implemented in `PetModels.applyTier`)
 
 Parts named `Eye`, `EyeWhite`, `Pupil`, `Shine`, `Blush` keep their colour. Particle rate and light grow with the tier.
+Sparkles use LightEmission 0.8 (`TIER_SPARKLE_EMISSION`). Calm pass (house glare): the client (`WorldFx`) multiplies every
+PointLight brightness and sparkle rate of pedestal pets (`Bob` models, tier + rarity effects) by 0.6 (`PED_LIGHT_MULT` /
+`PED_SPARKLE_MULT`); followed/ridden/held pets keep the full values below. Rainbow hue cycle: 0.1 turns/s (`CYCLE_SPEED`).
 | tier | look |
 |---|---|
 | 1 기본 | unchanged |
-| 2 🥉 브론즈 | lerp colours 60 % toward copper (205,127,50), Reflectance 0.1, 2 copper sparkles/s, faint warm light |
-| 3 🥈 실버 | lerp 70 % toward (200,205,215), Material Metal, Reflectance 0.25, 3 white sparkles/s |
-| 4 🥇 골드 | lerp 70 % toward gold (255,200,60), Reflectance 0.15, 6 gold sparkles/s, gold PointLight 0.6 |
+| 2 🥉 브론즈 | lerp colours 60 % toward copper (205,127,50), Reflectance 0.06, 2 copper sparkles/s, faint warm light |
+| 3 🥈 실버 | lerp 70 % toward (200,205,215), Material Metal, Reflectance 0.15, 3 white sparkles/s |
+| 4 🥇 골드 | lerp 70 % toward gold (255,200,60), Reflectance 0.1, 6 gold sparkles/s, gold PointLight 0.6 |
 | 5 🌈 레인보우 | vertical hue gradient bottom→top (v2 rainbow), 9 rainbow sparkles/s, light 1, model attribute `TierCycle = true` (client may slowly cycle the hue of nearby models) |
-| 6 💎 다이아 | lerp 80 % toward light blue (170,230,255), Material Glass, Transparency 0.2 (body parts only, never eyes), Reflectance 0.3, 12 white-cyan sparkles/s, light 1.2 |
+| 6 💎 다이아 | lerp 80 % toward light blue (170,230,255), Material Glass, Transparency 0.2 (body parts only, never eyes), Reflectance 0.2, 12 white-cyan sparkles/s, light 1.2 |
 | 7 🌌 갤럭시 | deep navy → purple gradient (45,30,110 → 110,60,200) bottom→top, ~10 tiny **Neon** star specks (white/yellow balls 0.15–0.25) welded on the surface, 16 purple/blue/white star particles/s, light 1.5 |
 
 ---

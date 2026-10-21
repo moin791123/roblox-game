@@ -1461,6 +1461,8 @@ local function addSpecks(model: Model, count: number)
 end
 
 -- 합성 등급 색/재질/반짝이 (1 기본 ~ 7 갤럭시). 레인보우는 파트마다 TierHue 속성을 남겨요.
+-- 반짝이 LightEmission: 1 이면 겹칠수록 하얗게 번쩍여요 (받침대에 여러 마리 모이면 눈부셔서 살짝 낮춰요)
+local TIER_SPARKLE_EMISSION = 0.8
 local function applyTier(model: Model, tier: number)
 	local t = math.clamp(math.floor(tier), 1, Config.MaxTier)
 	model:SetAttribute("Tier", t)
@@ -1524,7 +1526,7 @@ local function applyTier(model: Model, tier: number)
 		pe.Name = "TierFx"
 		pe.Texture = SPARKLE_TEX
 		pe.Color = colorSeq(vis.ParticleColors, glow)
-		pe.LightEmission = 1
+		pe.LightEmission = TIER_SPARKLE_EMISSION
 		pe.Size = NumberSequence.new({
 			NumberSequenceKeypoint.new(0, 0.12 + 0.03 * t),
 			NumberSequenceKeypoint.new(1, 0),

@@ -2,7 +2,7 @@
 --  · 내 것 아닌 프롬프트 숨기기 (PromptKind "Owner")
 --  · 엘리베이터 프롬프트 (PromptAction "Elevator") → init.client 가 넣은 함수 (층 고르기 창)
 --  · 집 받침대 펫 살랑살랑 (Bob = true 모델, 가까운 것만, 루프 하나로 Body CFrame 만 움직여요)
---  · 멀리 있는 받침대 펫의 반짝이/빛 끄기 (LOD)
+--  · 받침대 펫 빛·반짝이 살짝 줄이기 (한 방에 많이 모여 눈부시지 않게) + 멀리 있는 펫의 반짝이/빛 끄기 (LOD)
 --  · 레인보우 등급(TierCycle) 색 돌리기: 가까운 받침대 펫 + 내가 데리고 다니는/탄/든 펫
 --  · +코인 떠오르는 숫자
 -- (들판 코인 그리기는 CoinField 모듈이 해요)
@@ -25,6 +25,11 @@ local LOD_DISTANCE = 70 -- 이보다 먼 펫은 반짝이·빛을 꺼요
 local BOB_STEP = 1 / 30 -- 살랑살랑 갱신 간격 (초당 30번)
 local SCAN_STEP = 0.25 -- 거리 다시 재는 간격
 local CYCLE_STEP = 0.1 -- 레인보우 등급 색 돌리는 간격 (초당 10번)
+local CYCLE_SPEED = 0.1 -- 레인보우 색이 한 바퀴 도는 속도 (바퀴/초 → 10초에 한 바퀴. 빠르면 정신없어요)
+-- 받침대 펫은 한 층에 12마리씩 모여 있어서 빛·반짝이가 겹쳐 눈부셔요 → 조금만 줄여요 (등급·희귀도 효과 모두).
+-- 데리고 다니는/탄/든 펫 (FollowPets) 과 부화 화면은 그대로라서 그쪽이 조금 더 반짝여요
+local PED_LIGHT_MULT = 0.6 -- PointLight 밝기 배율
+local PED_SPARKLE_MULT = 0.6 -- 반짝이 초당 개수 배율
 
 ----------------------------------------------------------------------
 -- 프롬프트 필터: PromptKind "Owner" 는 주인한테만 보여요
@@ -144,11 +149,30 @@ type BobInfo = {
 	Effects: { Instance }?, -- 반짝이/빛 (처음 필요할 때 모아요)
 	LodOff: { [Instance]: boolean }, -- 내가 끈 효과
 	Far: boolean,
+	CalmConn: RBXScriptConnection?, -- 나중에 붙는 효과도 줄이기
 }
 
 local tracked: { [Model]: BobInfo } = {}
 local active: { BobInfo } = {}
 local rng = Random.new()
+
+-- 받침대 펫 빛·반짝이 한 번만 줄이기 (다시 track 돼도 두 번 줄지 않게)
+local calmed: { [Instance]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+
+local function calmFx(d: Instance)
+	if calmed[d] then
+		return
+	end
+	if d:IsA("Light") then
+		calmed[d] = true
+		local l = d :: Light
+		l.Brightness *= PED_LIGHT_MULT
+	elseif d:IsA("ParticleEmitter") then
+		calmed[d] = true
+		local pe = d :: ParticleEmitter
+		pe.Rate *= PED_SPARKLE_MULT
+	end
+end
 
 local function findBody(model: Model): BasePart?
 	local body = model.PrimaryPart or model:FindFirstChild("Body")
@@ -210,6 +234,10 @@ local function untrack(model: Instance)
 		return
 	end
 	tracked[model :: Model] = nil
+	if info.CalmConn then
+		info.CalmConn:Disconnect()
+		info.CalmConn = nil
+	end
 	stopBob(info)
 	setFar(info, false)
 end
@@ -235,7 +263,11 @@ local function track(model: Model)
 		Effects = nil,
 		LodOff = {},
 		Far = false,
+		CalmConn = model.DescendantAdded:Connect(calmFx),
 	}
+	for _, d in model:GetDescendants() do
+		calmFx(d)
+	end
 end
 
 local function consider(child: Instance)
@@ -395,7 +427,7 @@ local function setupBob()
 			cycleAcc = 0
 			local pm = UiKit.PetModels
 			if pm and pm.CycleTierColors then
-				local phase = (os.clock() * 0.25) % 1
+				local phase = (os.clock() * CYCLE_SPEED) % 1
 				for _, info in active do
 					if info.Active and not info.Far and info.Model:GetAttribute("TierCycle") == true then
 						pcall(pm.CycleTierColors, info.Model, phase)

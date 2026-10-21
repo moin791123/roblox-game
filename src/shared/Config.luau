@@ -632,6 +632,8 @@ Config.Hold = {
 --   Material/Reflectance/Transparency: 몸 파트 재질, Specks: 몸에 붙이는 작은 Neon 별 개수,
 --   Particles: 반짝이 초당 개수, ParticleColors: 반짝이 색, Light: PointLight 밝기 (0 이면 없음),
 --   Cycle: true 면 클라이언트가 가까운 펫 색을 천천히 돌려요 (레인보우)
+--   (집 받침대 위 펫은 한 방에 많이 모여 있어서 클라이언트 WorldFx 가 빛·반짝이를 조금 줄여요: PED_LIGHT_MULT / PED_SPARKLE_MULT.
+--    Reflectance 는 눈부시지 않게 살짝만)
 -- BoostMult 는 들판 코인만 바꾸고 FieldCoins.MaxBoost 로 잘려서 IncomeMult 보다 천천히 커져요.
 ----------------------------------------------------------------------
 Config.Tiers = {
@@ -641,27 +643,27 @@ Config.Tiers = {
 	},
 	{
 		Name = "브론즈", Label = "🥉 브론즈", IncomeMult = 3, BoostMult = 1.5, Color = RGB(215, 135, 70),
-		Visual = { Tint = RGB(205, 127, 50), TintAlpha = 0.6, Material = Enum.Material.SmoothPlastic, Reflectance = 0.1, Particles = 2, ParticleColors = { RGB(230, 150, 80), RGB(255, 220, 180) }, Light = 0.3 },
+		Visual = { Tint = RGB(205, 127, 50), TintAlpha = 0.6, Material = Enum.Material.SmoothPlastic, Reflectance = 0.06, Particles = 2, ParticleColors = { RGB(230, 150, 80), RGB(255, 220, 180) }, Light = 0.3 },
 	},
 	{
 		Name = "실버", Label = "🥈 실버", IncomeMult = 8, BoostMult = 2.2, Color = RGB(200, 210, 225),
-		Visual = { Tint = RGB(200, 205, 215), TintAlpha = 0.7, Material = Enum.Material.Metal, Reflectance = 0.25, Particles = 3, ParticleColors = { RGB(230, 235, 245), RGB(255, 255, 255) }, Light = 0.4 },
+		Visual = { Tint = RGB(200, 205, 215), TintAlpha = 0.7, Material = Enum.Material.Metal, Reflectance = 0.15, Particles = 3, ParticleColors = { RGB(230, 235, 245), RGB(255, 255, 255) }, Light = 0.4 },
 	},
 	{
 		Name = "골드", Label = "🥇 골드", IncomeMult = 20, BoostMult = 3, Color = RGB(255, 200, 60),
-		Visual = { Tint = RGB(255, 200, 60), TintAlpha = 0.7, Material = Enum.Material.SmoothPlastic, Reflectance = 0.15, Particles = 6, ParticleColors = { RGB(255, 200, 60), RGB(255, 255, 255) }, Light = 0.6 },
+		Visual = { Tint = RGB(255, 200, 60), TintAlpha = 0.7, Material = Enum.Material.SmoothPlastic, Reflectance = 0.1, Particles = 6, ParticleColors = { RGB(255, 200, 60), RGB(255, 255, 255) }, Light = 0.6 },
 	},
 	{
 		Name = "레인보우", Label = "🌈 레인보우", IncomeMult = 50, BoostMult = 4, Color = RGB(255, 120, 220),
-		Visual = { Gradient = "Rainbow", Reflectance = 0.08, Particles = 9, ParticleColors = { RGB(255, 95, 110), RGB(255, 225, 80), RGB(110, 215, 120), RGB(90, 170, 255), RGB(175, 120, 255) }, Light = 1, Cycle = true },
+		Visual = { Gradient = "Rainbow", Reflectance = 0.05, Particles = 9, ParticleColors = { RGB(255, 95, 110), RGB(255, 225, 80), RGB(110, 215, 120), RGB(90, 170, 255), RGB(175, 120, 255) }, Light = 1, Cycle = true },
 	},
 	{
 		Name = "다이아", Label = "💎 다이아", IncomeMult = 120, BoostMult = 5.5, Color = RGB(120, 220, 255),
-		Visual = { Tint = RGB(170, 230, 255), TintAlpha = 0.8, Material = Enum.Material.Glass, Reflectance = 0.3, Transparency = 0.2, Particles = 12, ParticleColors = { RGB(200, 245, 255), RGB(255, 255, 255) }, Light = 1.2 },
+		Visual = { Tint = RGB(170, 230, 255), TintAlpha = 0.8, Material = Enum.Material.Glass, Reflectance = 0.2, Transparency = 0.2, Particles = 12, ParticleColors = { RGB(200, 245, 255), RGB(255, 255, 255) }, Light = 1.2 },
 	},
 	{
 		Name = "갤럭시", Label = "🌌 갤럭시", IncomeMult = 300, BoostMult = 7.5, Color = RGB(140, 90, 255),
-		Visual = { Gradient = "Galaxy", Tint = RGB(45, 30, 110), TintAlpha = 0.85, Material = Enum.Material.SmoothPlastic, Reflectance = 0.1, Specks = 10, Particles = 16, ParticleColors = { RGB(180, 140, 255), RGB(120, 200, 255), RGB(255, 255, 255) }, Light = 1.5 },
+		Visual = { Gradient = "Galaxy", Tint = RGB(45, 30, 110), TintAlpha = 0.85, Material = Enum.Material.SmoothPlastic, Reflectance = 0.06, Specks = 10, Particles = 16, ParticleColors = { RGB(180, 140, 255), RGB(120, 200, 255), RGB(255, 255, 255) }, Light = 1.5 },
 	},
 }
 Config.MaxTier = #Config.Tiers
