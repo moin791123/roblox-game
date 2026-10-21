@@ -8,11 +8,15 @@
 -- 🙈 부화 숨기기 버튼(설정 "HideHatch")이 켜져 있으면 큰 연출 없이 서버 알림 말풍선만 떠요
 --   (말풍선에 "🆕 NEW!" 가 붙어요). 새 친구·합성·실버 이상만 소리로 살짝 알려요.
 --   보는 중에 켜면 지금 연출은 바로 닫히고 기다리던 것도 건너뛰어요.
+-- ★v6 아주 희귀한 펫 (시크릿 / 천상 / 이터널): 같은 옆 칸에서 조금 더 특별하게, 그래도 차분하게
+--   (번쩍임은 옅은 단계 색, 천천히 도는 단계 무지개 고리, 🌟 배지, 단계 색종이, 단계마다 다른 짧은 소리, 조금 더 오래).
+--   부화 숨기기 중이어도 단계 소리 + 서버 말풍선을 단계 색으로 (Toasts.ExpectRare, 말풍선이 안 오면 대신 띄워요).
 local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
 
 local UiKit = require(script.Parent.UiKit)
 local State = require(script.Parent.State)
+local Toasts = require(script.Parent.Toasts)
 
 local Config = UiKit.Config
 local Make, C = UiKit.Make, UiKit.Colors
@@ -31,6 +35,7 @@ local usedEggUids: { [string]: boolean } = {}
 
 local CONFETTI_COLORS = { C.Pink, C.Lemon, C.Mint, C.Sky, C.Lavender, C.Peach, C.White }
 local CARD_GAP = 6
+local RARE_HOLD = 4.5 -- ★v6 희귀 펫은 조금 더 오래 보여 줘요 (누르면 바로 닫혀요)
 
 -- 🙈 부화 화면 숨기기 (버튼을 누르면 바로 바뀌어요)
 local function hidden(): boolean
@@ -352,6 +357,7 @@ local function showOne(job: Job)
 	local tc = if tier >= 2 then UiKit.TierColor(tier) else rc -- 브론즈 이상이면 등급색으로 꾸며요
 	local displayName = Config.PetDisplayName(job.PetId, tier)
 	local manyQueued = #queue > 0 -- 뒤에 기다리는 연출이 있으면 짧게
+	local special = UiKit.PetSpecial(job.PetId) -- ★v6 시크릿 / 천상 / 이터널
 
 	local L = findLayout()
 	local S = L.S
@@ -450,6 +456,11 @@ local function showOne(job: Job)
 	glowStroke.Transparency = 1
 	UiKit.Tween(glow, 0.3, { BackgroundTransparency = 0.35 })
 	UiKit.Tween(glowStroke, 0.3, { Transparency = 0.3 })
+	if special then
+		-- ★v6 단계 무지개 고리 (천천히 돌아요)
+		glowStroke.Thickness = if L.Small then 4 else 6
+		UiKit.SpecialGradient(glowStroke, special, 6)
+	end
 
 	-- 빛줄기 (펫 나오면 보임)
 	local rays: Frame = Make("Frame", {
@@ -468,7 +479,7 @@ local function showOne(job: Job)
 			Size = UDim2.fromScale(0.09, 1),
 			Rotation = i * 22.5,
 			BackgroundColor3 = UiKit.Lighten(tc, 0.4),
-			BackgroundTransparency = 0.6,
+			BackgroundTransparency = if special then 0.7 else 0.6,
 			ZIndex = 2,
 			Parent = rays,
 		})
@@ -510,8 +521,8 @@ local function showOne(job: Job)
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
 		Size = UDim2.fromScale(1.25, 1.25),
-		BackgroundColor3 = if isFuse then UiKit.Lighten(tc, 0.6) else Color3.new(1, 1, 1),
-		BackgroundTransparency = 0.15,
+		BackgroundColor3 = if special then UiKit.Lighten(tc, 0.55) elseif isFuse then UiKit.Lighten(tc, 0.6) else Color3.new(1, 1, 1),
+		BackgroundTransparency = if special then 0.45 else 0.15, -- 희귀 펫은 옅은 단계 색으로 (번쩍이지 않게)
 		ZIndex = 50,
 		Parent = stage,
 	})
@@ -521,7 +532,11 @@ local function showOne(job: Job)
 	UiKit.Tween(flashScale, 0.5, { Scale = 1.2 }, Enum.EasingStyle.Quad)
 	UiKit.Tween(flash, 0.5, { BackgroundTransparency = 1 })
 	Debris:AddItem(flash, 0.6)
-	UiKit.PlaySound(if isFuse then "Buy" else "Hatch")
+	if special and not isFuse then
+		UiKit.PlayRareSound(special)
+	else
+		UiKit.PlaySound(if isFuse then "Buy" else "Hatch")
+	end
 
 	-- 3) 펫 등장 (등급 반영)
 	rays.Visible = true
@@ -540,15 +555,18 @@ local function showOne(job: Job)
 	local t0 = os.clock()
 	local spin = RunService.RenderStepped:Connect(function()
 		local t = os.clock() - t0
-		rays.Rotation = t * 25
+		rays.Rotation = t * (if special then 12 else 25)
 		if model and baseCf and model.Parent then
 			model:PivotTo(baseCf * CFrame.Angles(0, t * 1.6, 0))
 		end
 	end)
 	activeSpin = spin
 
+	local rname = if special then UiKit.RarityName(special) else ""
 	title.Text = if isFuse
 		then (if tinfo.Label ~= "" then "✨ 합성 성공! " .. tinfo.Label else "✨ 합성 성공!")
+		elseif special and job.IsNew then "🌟 " .. rname .. " 친구를 찾았어요!"
+		elseif special then "🌟 " .. rname .. " 펫이 태어났어요!"
 		elseif tier >= 2 then tinfo.Label .. " 펫이 태어났어요!" -- 운 좋게 상위 등급으로 부화
 		elseif job.IsNew then "새 친구가 태어났어요!"
 		else "짜잔! 부화했어요!"
@@ -566,7 +584,10 @@ local function showOne(job: Job)
 	})
 	UiKit.Corner(card, UDim.new(0.3, 0))
 	UiKit.Gradient(card)
-	UiKit.Stroke(card, C.White, if L.Small then 3 else 4, true)
+	local cardStroke = UiKit.Stroke(card, C.White, if L.Small then 3 else 4, true)
+	if special then
+		UiKit.SpecialGradient(cardStroke, special, 6)
+	end
 	UiKit.Label({
 		Name = "PetName",
 		Text = displayName,
@@ -576,9 +597,12 @@ local function showOne(job: Job)
 		Parent = card,
 	}, { Stroke = UiKit.Darken(tc, 0.5), StrokeThickness = if L.Small then 2 else 3, MaxText = 44 })
 	local tierText = if tinfo.Label ~= "" then tinfo.Label .. " · " else ""
+	local rarityText = if special
+		then "🌟 " .. UiKit.SpecialStars(special) .. " " .. rname
+		else "⭐ " .. (if rarity then rarity.Name else "")
 	UiKit.Label({
 		Name = "Info",
-		Text = tierText .. "⭐ " .. (if rarity then rarity.Name else "") .. "   💰 " .. Config.FormatNumber(Config.PetIncome(job.PetId, tier)) .. "/초",
+		Text = tierText .. rarityText .. "   💰 " .. Config.FormatNumber(Config.PetIncome(job.PetId, tier)) .. "/초",
 		Position = UDim2.fromScale(0.05, 0.6),
 		Size = UDim2.fromScale(0.9, 0.32),
 		ZIndex = 10,
@@ -615,10 +639,46 @@ local function showOne(job: Job)
 		end)
 	end
 
-	-- 레인보우 이상은 등급 반짝이 색으로 색종이 (흰색 섞어서)
+	if special then
+		-- ★v6 왼쪽 위 🌟 단계 배지 (NEW! 는 오른쪽)
+		local star: Frame = Make("Frame", {
+			Name = "RareBadge",
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.12, 0.12),
+			Size = UDim2.fromScale(0.36, 0.16),
+			Rotation = 12,
+			BackgroundColor3 = tc,
+			ZIndex = 12,
+			Parent = stage,
+		})
+		UiKit.Corner(star, UDim.new(0.4, 0))
+		UiKit.Gradient(star)
+		local starStroke = UiKit.Stroke(star, C.White, if L.Small then 3 else 4, true)
+		UiKit.SpecialGradient(starStroke, special)
+		UiKit.Label({
+			Text = "🌟 " .. rname,
+			Size = UDim2.fromScale(0.86, 0.76),
+			Position = UDim2.fromScale(0.07, 0.12),
+			ZIndex = 13,
+			Parent = star,
+		}, { Stroke = UiKit.Darken(tc, 0.5), StrokeThickness = if L.Small then 2 else 3, MaxText = 32 })
+		task.delay(0.35, function()
+			if star.Parent then
+				UiKit.Pop(star, 0.45)
+			end
+		end)
+	end
+
+	-- 레인보우 이상은 등급 반짝이 색으로 색종이 (흰색 섞어서). ★v6 희귀 펫은 단계 색
 	local confettiColors: { Color3 }? = nil
 	local visual = Config.TierVisual(tier)
-	if tier >= 5 and visual and type(visual.ParticleColors) == "table" then
+	if special then
+		local list: { Color3 } = { C.White }
+		for _, color in UiKit.SpecialPalette(special) do
+			table.insert(list, color)
+		end
+		confettiColors = list
+	elseif tier >= 5 and visual and type(visual.ParticleColors) == "table" then
 		local list: { Color3 } = { C.White }
 		for _, color in visual.ParticleColors do
 			if typeof(color) == "Color3" then
@@ -659,7 +719,7 @@ local function showOne(job: Job)
 			closed = true
 		end
 	end)
-	local hold = if #queue > 0 then 1.0 else 3
+	local hold = if #queue > 0 then (if special then 1.5 else 1.0) elseif special then RARE_HOLD else 3
 	while not closed and os.clock() - revealAt < hold and not hidden() do
 		task.wait()
 	end
@@ -702,9 +762,16 @@ function HatchFx.Play(petId: any, position: any, isNew: any, tier: any, mode: an
 	if typeof(position) == "Vector3" then
 		worldBurst(position, color) -- 받침대(합성은 머리 위)의 작은 반짝이는 숨기기여도 그대로
 	end
+	local special = UiKit.PetSpecial(petId)
+	if special and m == "Hatch" then
+		-- ★v6 희귀 펫: 서버 말풍선을 단계 색으로 (숨기기여도 꼭 보여요)
+		Toasts.ExpectRare(petId, isNew == true)
+	end
 	if hidden() then
 		-- 🙈 큰 연출 없이: 알림은 서버 말풍선이 해요. 특별한 것만 소리로 살짝
-		if isNew == true or m == "Fuse" or t >= 3 then
+		if special and m == "Hatch" then
+			UiKit.PlayRareSound(special)
+		elseif isNew == true or m == "Fuse" or t >= 3 then
 			UiKit.PlaySound(if m == "Fuse" then "Buy" else "Hatch")
 		end
 		return

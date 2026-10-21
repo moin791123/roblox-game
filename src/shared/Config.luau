@@ -32,8 +32,12 @@ Config.Rarities = {
 	Legendary = { Name = "전설", Color = RGB(255, 180, 30), Order = 5, Boost = 0.18 },
 	Mythic = { Name = "신화", Color = RGB(255, 80, 160), Order = 6, Boost = 0.25 },
 	Secret = { Name = "비밀", Color = RGB(120, 240, 255), Order = 7, Boost = 0.4 }, -- 지역마다 1마리
+	-- ★v6 아주 희귀한 알(시크릿/천상/이터널 알)에서만 나오는 3단계. 지역마다 1마리씩, Special = 단계 키
+	Hidden = { Name = "시크릿", Color = RGB(60, 230, 170), Order = 8, Boost = 0.5, Special = true },
+	Celestial = { Name = "천상", Color = RGB(255, 214, 60), Order = 9, Boost = 0.6, Special = true },
+	Eternal = { Name = "이터널", Color = RGB(215, 105, 255), Order = 10, Boost = 0.8, Special = true, Rainbow = true },
 }
-Config.RarityOrder = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret" }
+Config.RarityOrder = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret", "Hidden", "Celestial", "Eternal" }
 
 ----------------------------------------------------------------------
 -- 지역 (맵). v4: 숲 마을(집 6채 + 로비 + 컨베이어)이 가운데 있고, 지역 2~8 은 그 둘레의 섬이에요.
@@ -243,6 +247,7 @@ Config.MaxZone = #Config.Zones
 -- 펫. Zone = 지역 번호. Income = 집 받침대 위에서 1초마다 버는 코인 (지역마다 ×5 정도라서
 -- 다음 지역의 보통 펫이 이전 지역의 전설 펫보다 세요). Boost 는 아래에서 희귀도·지역으로 채워요.
 -- Color 는 UI 강조색 (모델 색은 PetModels 가 정함). ★ = v3 새 펫
+-- ★v6 = 아주 희귀한 알에서만 나오는 펫 (시크릿 / 천상 / 이터널, 지역마다 3마리, 수익 ≈ 그 지역 비밀 펫 × 2.5 / 6 / 15)
 ----------------------------------------------------------------------
 Config.Pets = {
 	-- 1. 숲 마을
@@ -256,6 +261,9 @@ Config.Pets = {
 	Fox = { Name = "여우", Rarity = "Legendary", Zone = 1, Income = 9, Color = RGB(245, 120, 45) },
 	RainbowCat = { Name = "무지개 냥이", Rarity = "Mythic", Zone = 1, Income = 14, Color = RGB(255, 120, 220) },
 	SpiritDeer = { Name = "정령 사슴", Rarity = "Secret", Zone = 1, Income = 25, Color = RGB(170, 255, 210) }, -- ★
+	CloverFox = { Name = "네잎클로버 여우", Rarity = "Hidden", Zone = 1, Income = 62, Color = RGB(255, 150, 70) }, -- ★v6
+	BlossomFawn = { Name = "꽃사슴 요정", Rarity = "Celestial", Zone = 1, Income = 150, Color = RGB(255, 190, 215) }, -- ★v6
+	WorldTreeDragon = { Name = "세계수 용", Rarity = "Eternal", Zone = 1, Income = 375, Color = RGB(120, 210, 110) }, -- ★v6
 
 	-- 2. 호수
 	Duck = { Name = "오리", Rarity = "Common", Zone = 2, Income = 10, Color = RGB(255, 240, 150) },
@@ -266,6 +274,9 @@ Config.Pets = {
 	Turtle = { Name = "거북이", Rarity = "Legendary", Zone = 2, Income = 45, Color = RGB(110, 190, 120) },
 	Axolotl = { Name = "우파루파", Rarity = "Mythic", Zone = 2, Income = 70, Color = RGB(255, 160, 200) },
 	MoonKoi = { Name = "달빛 잉어", Rarity = "Secret", Zone = 2, Income = 120, Color = RGB(255, 245, 200) }, -- ★
+	PearlOtter = { Name = "진주 수달", Rarity = "Hidden", Zone = 2, Income = 300, Color = RGB(175, 125, 90) }, -- ★v6
+	MoonSwan = { Name = "달빛 백조", Rarity = "Celestial", Zone = 2, Income = 720, Color = RGB(235, 240, 255) }, -- ★v6
+	RainbowKoiDragon = { Name = "무지개 잉어 용", Rarity = "Eternal", Zone = 2, Income = 1800, Color = RGB(255, 140, 110) }, -- ★v6
 
 	-- 3. 정글
 	Monkey = { Name = "원숭이", Rarity = "Common", Zone = 3, Income = 50, Color = RGB(170, 120, 80) },
@@ -276,6 +287,9 @@ Config.Pets = {
 	Panda = { Name = "판다", Rarity = "Legendary", Zone = 3, Income = 225, Color = RGB(245, 245, 245) },
 	Peacock = { Name = "공작새", Rarity = "Mythic", Zone = 3, Income = 350, Color = RGB(60, 170, 220) }, -- ★
 	WhiteTiger = { Name = "백호", Rarity = "Secret", Zone = 3, Income = 600, Color = RGB(235, 245, 255) }, -- ★
+	RainbowChameleon = { Name = "무지개 카멜레온", Rarity = "Hidden", Zone = 3, Income = 1500, Color = RGB(130, 225, 110) }, -- ★v6
+	GoldenJaguar = { Name = "황금 재규어", Rarity = "Celestial", Zone = 3, Income = 3600, Color = RGB(255, 200, 70) }, -- ★v6
+	EmeraldDragon = { Name = "에메랄드 용", Rarity = "Eternal", Zone = 3, Income = 9000, Color = RGB(40, 200, 120) }, -- ★v6
 
 	-- 4. 겨울 산
 	Penguin = { Name = "펭귄", Rarity = "Common", Zone = 4, Income = 240, Color = RGB(70, 90, 130) },
@@ -286,6 +300,9 @@ Config.Pets = {
 	Reindeer = { Name = "순록", Rarity = "Legendary", Zone = 4, Income = 1080, Color = RGB(180, 130, 90) },
 	FrostFox = { Name = "눈꽃 여우", Rarity = "Mythic", Zone = 4, Income = 1700, Color = RGB(170, 220, 255) }, -- ★
 	Yeti = { Name = "예티", Rarity = "Secret", Zone = 4, Income = 2900, Color = RGB(200, 230, 255) }, -- ★
+	CrystalPenguin = { Name = "수정 펭귄", Rarity = "Hidden", Zone = 4, Income = 7200, Color = RGB(150, 215, 255) }, -- ★v6
+	AuroraWolf = { Name = "오로라 늑대", Rarity = "Celestial", Zone = 4, Income = 17500, Color = RGB(140, 240, 210) }, -- ★v6
+	IcePhoenix = { Name = "얼음 불사조", Rarity = "Eternal", Zone = 4, Income = 43500, Color = RGB(130, 210, 255) }, -- ★v6
 
 	-- 5. 바다
 	Crab = { Name = "게", Rarity = "Common", Zone = 5, Income = 1200, Color = RGB(255, 120, 90) },
@@ -296,6 +313,9 @@ Config.Pets = {
 	Narwhal = { Name = "일각고래", Rarity = "Legendary", Zone = 5, Income = 5400, Color = RGB(150, 200, 240) }, -- ★
 	MermaidCat = { Name = "인어 냥이", Rarity = "Mythic", Zone = 5, Income = 8400, Color = RGB(100, 220, 210) }, -- ★
 	DragonKing = { Name = "용왕", Rarity = "Secret", Zone = 5, Income = 14500, Color = RGB(60, 200, 170) }, -- ★
+	RainbowJelly = { Name = "무지개 해파리", Rarity = "Hidden", Zone = 5, Income = 36000, Color = RGB(255, 170, 230) }, -- ★v6
+	PearlSeahorse = { Name = "진주 해마", Rarity = "Celestial", Zone = 5, Income = 87000, Color = RGB(255, 200, 225) }, -- ★v6
+	BabyKraken = { Name = "아기 크라켄", Rarity = "Eternal", Zone = 5, Income = 218000, Color = RGB(150, 90, 210) }, -- ★v6
 
 	-- 6. 캔디 랜드
 	CottonSheep = { Name = "솜사탕 양", Rarity = "Common", Zone = 6, Income = 6000, Color = RGB(255, 190, 230) },
@@ -306,6 +326,9 @@ Config.Pets = {
 	GummyDragon = { Name = "젤리 용", Rarity = "Legendary", Zone = 6, Income = 27000, Color = RGB(255, 120, 80) }, -- ★
 	CandyUnicorn = { Name = "사탕 유니콘", Rarity = "Mythic", Zone = 6, Income = 42000, Color = RGB(255, 175, 215) }, -- ★
 	CookieKing = { Name = "쿠키 왕", Rarity = "Secret", Zone = 6, Income = 72000, Color = RGB(205, 140, 80) }, -- ★
+	LollipopPanda = { Name = "막대사탕 판다", Rarity = "Hidden", Zone = 6, Income = 180000, Color = RGB(255, 150, 200) }, -- ★v6
+	MarshmallowBear = { Name = "마시멜로 곰", Rarity = "Celestial", Zone = 6, Income = 432000, Color = RGB(255, 240, 225) }, -- ★v6
+	SweetQueenCat = { Name = "사탕 여왕 냥이", Rarity = "Eternal", Zone = 6, Income = 1080000, Color = RGB(255, 120, 190) }, -- ★v6
 
 	-- 7. 구름 왕국
 	Sheep = { Name = "양", Rarity = "Common", Zone = 7, Income = 30000, Color = RGB(250, 245, 235) },
@@ -316,6 +339,9 @@ Config.Pets = {
 	Pegasus = { Name = "페가수스", Rarity = "Legendary", Zone = 7, Income = 135000, Color = RGB(240, 248, 255) }, -- ★
 	Phoenix = { Name = "불사조", Rarity = "Mythic", Zone = 7, Income = 210000, Color = RGB(255, 110, 50) },
 	AngelBunny = { Name = "천사 토끼", Rarity = "Secret", Zone = 7, Income = 360000, Color = RGB(255, 240, 170) }, -- ★
+	ThunderPup = { Name = "번개 강아지", Rarity = "Hidden", Zone = 7, Income = 900000, Color = RGB(150, 175, 215) }, -- ★v6
+	SunGriffin = { Name = "해님 그리핀", Rarity = "Celestial", Zone = 7, Income = 2160000, Color = RGB(255, 205, 80) }, -- ★v6
+	NineTailFox = { Name = "구미호", Rarity = "Eternal", Zone = 7, Income = 5400000, Color = RGB(250, 245, 255) }, -- ★v6
 
 	-- 8. 우주
 	Alien = { Name = "외계인", Rarity = "Common", Zone = 8, Income = 150000, Color = RGB(140, 240, 150) },
@@ -327,6 +353,9 @@ Config.Pets = {
 	StarSlime = { Name = "별 슬라임", Rarity = "Mythic", Zone = 8, Income = 1050000, Color = RGB(150, 230, 255) },
 	-- 마지막 비밀 펫: 우주의 별빛 알에서만 0.1%
 	CosmicWhale = { Name = "우주 고래", Rarity = "Secret", Zone = 8, Income = 2000000, Color = RGB(120, 200, 255) },
+	MeteorHamster = { Name = "운석 햄스터", Rarity = "Hidden", Zone = 8, Income = 5000000, Color = RGB(255, 160, 80) }, -- ★v6
+	GalaxyUnicorn = { Name = "은하 유니콘", Rarity = "Celestial", Zone = 8, Income = 12000000, Color = RGB(80, 90, 200) }, -- ★v6
+	CosmoDragon = { Name = "은하 용", Rarity = "Eternal", Zone = 8, Income = 30000000, Color = RGB(40, 50, 130) }, -- ★v6
 }
 
 -- Boost (데리고 다닐 때 들판 코인 보너스, 0.1 = +10%) = 희귀도 Boost × (1 + 0.15 × (지역 - 1))
@@ -339,14 +368,14 @@ end
 
 -- 도감/UI 표시 순서 (지역 순, 지역 안에서는 희귀도 순)
 Config.PetOrder = {
-	"Chick", "Bunny", "Hamster", "Piglet", "Puppy", "Cat", "Owl", "Fox", "RainbowCat", "SpiritDeer",
-	"Duck", "Frog", "Hedgehog", "Squirrel", "Raccoon", "Turtle", "Axolotl", "MoonKoi",
-	"Monkey", "Parrot", "Koala", "Bear", "Lion", "Panda", "Peacock", "WhiteTiger",
-	"Penguin", "Seal", "SnowBunny", "Snowman", "PolarBear", "Reindeer", "FrostFox", "Yeti",
-	"Crab", "Jellyfish", "Octopus", "BabyShark", "Dolphin", "Narwhal", "MermaidCat", "DragonKing",
-	"CottonSheep", "DonutPuppy", "JellyBear", "CupcakeCat", "MacaronBunny", "GummyDragon", "CandyUnicorn", "CookieKing",
-	"Sheep", "CloudPuppy", "BabyCloud", "Dragon", "Unicorn", "Pegasus", "Phoenix", "AngelBunny",
-	"Alien", "RobotPuppy", "MoonBunny", "SpaceCat", "AstroBear", "CometFox", "StarSlime", "CosmicWhale",
+	"Chick", "Bunny", "Hamster", "Piglet", "Puppy", "Cat", "Owl", "Fox", "RainbowCat", "SpiritDeer", "CloverFox", "BlossomFawn", "WorldTreeDragon",
+	"Duck", "Frog", "Hedgehog", "Squirrel", "Raccoon", "Turtle", "Axolotl", "MoonKoi", "PearlOtter", "MoonSwan", "RainbowKoiDragon",
+	"Monkey", "Parrot", "Koala", "Bear", "Lion", "Panda", "Peacock", "WhiteTiger", "RainbowChameleon", "GoldenJaguar", "EmeraldDragon",
+	"Penguin", "Seal", "SnowBunny", "Snowman", "PolarBear", "Reindeer", "FrostFox", "Yeti", "CrystalPenguin", "AuroraWolf", "IcePhoenix",
+	"Crab", "Jellyfish", "Octopus", "BabyShark", "Dolphin", "Narwhal", "MermaidCat", "DragonKing", "RainbowJelly", "PearlSeahorse", "BabyKraken",
+	"CottonSheep", "DonutPuppy", "JellyBear", "CupcakeCat", "MacaronBunny", "GummyDragon", "CandyUnicorn", "CookieKing", "LollipopPanda", "MarshmallowBear", "SweetQueenCat",
+	"Sheep", "CloudPuppy", "BabyCloud", "Dragon", "Unicorn", "Pegasus", "Phoenix", "AngelBunny", "ThunderPup", "SunGriffin", "NineTailFox",
+	"Alien", "RobotPuppy", "MoonBunny", "SpaceCat", "AstroBear", "CometFox", "StarSlime", "CosmicWhale", "MeteorHamster", "GalaxyUnicorn", "CosmoDragon",
 }
 
 ----------------------------------------------------------------------
@@ -360,6 +389,8 @@ Config.PetOrder = {
 -- 아래에서 자동으로 채워요: MinRebirth (= 지역 MinRebirth), Rung (지역 안 사다리 칸, 1 = 제일 싼 알),
 -- Rungs (그 지역 알 수), Premium (위 2칸 = 좋은 알: 큰 간판·반짝임·알림·빛기둥). ★ v4 = 새 알
 -- 가격·확률은 scratchpad 의 v4/sim4.py (eggs4.py) 로 맞췄어요.
+-- ★v6 맨 아래 24개 = 아주 희귀한 알 (Special = "Hidden" | "Celestial" | "Eternal", 지역마다 3개). 사다리 밖이라
+-- SpawnWeight = 0, Rung = 0, Premium = false. 벨트에 따로 굴려서 나와요 (Config.SpecialEggs, v6/sim6.py 로 맞춤).
 ----------------------------------------------------------------------
 Config.Eggs = {
 	-- 1. 숲 마을
@@ -559,6 +590,136 @@ Config.Eggs = {
 		Name = "별빛 알", Rarity = "Mythic", Zone = 8, Price = 1.5e11, HatchTime = 105, SpawnWeight = 2,
 		Pets = { AstroBear = 24, CometFox = 42, StarSlime = 33.75, CosmicWhale = 0.25 },
 	},
+	-- ★v6 아주 희귀한 알 (지역마다 3개: 시크릿 → 천상 → 이터널). 사다리(ZoneEggOrder)에 없어요.
+	-- 보통 알이 나올 때마다 따로 굴려서 아주 가끔 나와요 (Config.SpecialEggs). 까면 Pet 이 꼭 나와요 (Pets = { Pet = 100 }).
+	-- 1. 숲
+	ForestHidden = {
+		Name = "숲 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 1, Price = 5000, HatchTime = 45, SpawnWeight = 0,
+		Pet = "CloverFox", Pets = { CloverFox = 100 },
+		Look = { Base = RGB(30, 75, 50), Accent = RGB(120, 255, 170), Accent2 = RGB(255, 210, 80), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	ForestCelestial = {
+		Name = "숲 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 1, Price = 60000, HatchTime = 60, SpawnWeight = 0,
+		Pet = "BlossomFawn", Pets = { BlossomFawn = 100 },
+		Look = { Base = RGB(255, 230, 240), Accent = RGB(255, 210, 80), Accent2 = RGB(120, 220, 150), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	ForestEternal = {
+		Name = "숲 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 1, Price = 300000, HatchTime = 80, SpawnWeight = 0,
+		Pet = "WorldTreeDragon", Pets = { WorldTreeDragon = 100 },
+		Look = { Base = RGB(40, 120, 60), Accent = RGB(255, 215, 80), Accent2 = RGB(170, 255, 140), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 2. 호수
+	LakeHidden = {
+		Name = "호수 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 2, Price = 150000, HatchTime = 45, SpawnWeight = 0,
+		Pet = "PearlOtter", Pets = { PearlOtter = 100 },
+		Look = { Base = RGB(25, 50, 95), Accent = RGB(130, 220, 255), Accent2 = RGB(235, 240, 255), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	LakeCelestial = {
+		Name = "호수 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 2, Price = 1500000, HatchTime = 60, SpawnWeight = 0,
+		Pet = "MoonSwan", Pets = { MoonSwan = 100 },
+		Look = { Base = RGB(240, 245, 255), Accent = RGB(215, 225, 245), Accent2 = RGB(140, 200, 255), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	LakeEternal = {
+		Name = "호수 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 2, Price = 5000000, HatchTime = 80, SpawnWeight = 0,
+		Pet = "RainbowKoiDragon", Pets = { RainbowKoiDragon = 100 },
+		Look = { Base = RGB(30, 90, 170), Accent = RGB(255, 140, 60), Accent2 = RGB(120, 230, 255), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 3. 정글
+	JungleHidden = {
+		Name = "정글 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 3, Price = 2500000, HatchTime = 55, SpawnWeight = 0,
+		Pet = "RainbowChameleon", Pets = { RainbowChameleon = 100 },
+		Look = { Base = RGB(45, 70, 30), Accent = RGB(255, 170, 60), Accent2 = RGB(60, 200, 110), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	JungleCelestial = {
+		Name = "정글 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 3, Price = 25000000, HatchTime = 70, SpawnWeight = 0,
+		Pet = "GoldenJaguar", Pets = { GoldenJaguar = 100 },
+		Look = { Base = RGB(255, 240, 200), Accent = RGB(255, 200, 50), Accent2 = RGB(40, 180, 110), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	JungleEternal = {
+		Name = "정글 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 3, Price = 100000000, HatchTime = 100, SpawnWeight = 0,
+		Pet = "EmeraldDragon", Pets = { EmeraldDragon = 100 },
+		Look = { Base = RGB(20, 110, 70), Accent = RGB(60, 255, 150), Accent2 = RGB(255, 230, 100), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 4. 겨울
+	SnowHidden = {
+		Name = "겨울 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 4, Price = 40000000, HatchTime = 70, SpawnWeight = 0,
+		Pet = "CrystalPenguin", Pets = { CrystalPenguin = 100 },
+		Look = { Base = RGB(35, 55, 100), Accent = RGB(170, 235, 255), Accent2 = RGB(235, 245, 255), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	SnowCelestial = {
+		Name = "겨울 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 4, Price = 400000000, HatchTime = 85, SpawnWeight = 0,
+		Pet = "AuroraWolf", Pets = { AuroraWolf = 100 },
+		Look = { Base = RGB(230, 245, 255), Accent = RGB(220, 230, 250), Accent2 = RGB(120, 255, 200), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	SnowEternal = {
+		Name = "겨울 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 4, Price = 1.5e9, HatchTime = 120, SpawnWeight = 0,
+		Pet = "IcePhoenix", Pets = { IcePhoenix = 100 },
+		Look = { Base = RGB(40, 90, 160), Accent = RGB(140, 230, 255), Accent2 = RGB(255, 255, 255), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 5. 바다
+	OceanHidden = {
+		Name = "바다 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 5, Price = 750000000, HatchTime = 80, SpawnWeight = 0,
+		Pet = "RainbowJelly", Pets = { RainbowJelly = 100 },
+		Look = { Base = RGB(15, 70, 95), Accent = RGB(255, 240, 250), Accent2 = RGB(255, 200, 90), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	OceanCelestial = {
+		Name = "바다 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 5, Price = 7.5e9, HatchTime = 105, SpawnWeight = 0,
+		Pet = "PearlSeahorse", Pets = { PearlSeahorse = 100 },
+		Look = { Base = RGB(220, 250, 245), Accent = RGB(255, 215, 90), Accent2 = RGB(255, 170, 200), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	OceanEternal = {
+		Name = "바다 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 5, Price = 3e10, HatchTime = 145, SpawnWeight = 0,
+		Pet = "BabyKraken", Pets = { BabyKraken = 100 },
+		Look = { Base = RGB(70, 40, 120), Accent = RGB(110, 220, 255), Accent2 = RGB(255, 210, 90), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 6. 캔디
+	CandyHidden = {
+		Name = "캔디 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 6, Price = 1.5e10, HatchTime = 100, SpawnWeight = 0,
+		Pet = "LollipopPanda", Pets = { LollipopPanda = 100 },
+		Look = { Base = RGB(120, 40, 90), Accent = RGB(255, 150, 220), Accent2 = RGB(150, 240, 210), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	CandyCelestial = {
+		Name = "캔디 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 6, Price = 1.5e11, HatchTime = 125, SpawnWeight = 0,
+		Pet = "MarshmallowBear", Pets = { MarshmallowBear = 100 },
+		Look = { Base = RGB(255, 250, 240), Accent = RGB(255, 200, 100), Accent2 = RGB(255, 120, 180), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	CandyEternal = {
+		Name = "캔디 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 6, Price = 6e11, HatchTime = 170, SpawnWeight = 0,
+		Pet = "SweetQueenCat", Pets = { SweetQueenCat = 100 },
+		Look = { Base = RGB(200, 60, 140), Accent = RGB(255, 220, 90), Accent2 = RGB(255, 180, 230), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 7. 구름
+	CloudHidden = {
+		Name = "구름 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 7, Price = 3e11, HatchTime = 110, SpawnWeight = 0,
+		Pet = "ThunderPup", Pets = { ThunderPup = 100 },
+		Look = { Base = RGB(70, 75, 120), Accent = RGB(255, 235, 90), Accent2 = RGB(230, 235, 255), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	CloudCelestial = {
+		Name = "구름 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 7, Price = 3e12, HatchTime = 145, SpawnWeight = 0,
+		Pet = "SunGriffin", Pets = { SunGriffin = 100 },
+		Look = { Base = RGB(255, 248, 220), Accent = RGB(255, 200, 60), Accent2 = RGB(255, 150, 60), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	CloudEternal = {
+		Name = "구름 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 7, Price = 1.2e13, HatchTime = 200, SpawnWeight = 0,
+		Pet = "NineTailFox", Pets = { NineTailFox = 100 },
+		Look = { Base = RGB(40, 35, 90), Accent = RGB(245, 240, 255), Accent2 = RGB(170, 130, 255), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 8. 우주
+	SpaceHidden = {
+		Name = "우주 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 8, Price = 5e12, HatchTime = 130, SpawnWeight = 0,
+		Pet = "MeteorHamster", Pets = { MeteorHamster = 100 },
+		Look = { Base = RGB(25, 20, 55), Accent = RGB(255, 150, 70), Accent2 = RGB(170, 180, 210), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	SpaceCelestial = {
+		Name = "우주 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 8, Price = 4e13, HatchTime = 170, SpawnWeight = 0,
+		Pet = "GalaxyUnicorn", Pets = { GalaxyUnicorn = 100 },
+		Look = { Base = RGB(215, 210, 255), Accent = RGB(255, 210, 80), Accent2 = RGB(120, 240, 255), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	SpaceEternal = {
+		Name = "우주 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 8, Price = 1.5e14, HatchTime = 230, SpawnWeight = 0,
+		Pet = "CosmoDragon", Pets = { CosmoDragon = 100 },
+		Look = { Base = RGB(15, 15, 45), Accent = RGB(180, 110, 255), Accent2 = RGB(120, 240, 255), Pattern = "Flames", Shine = true, Glow = true },
+	},
 }
 
 -- 지역 순, 지역 안에서는 사다리 순 (싼 알 → 비싼 알)
@@ -588,12 +749,40 @@ end
 for _, egg in Config.Eggs do
 	local rungs = #Config.ZoneEggOrder[egg.Zone]
 	egg.Rungs = rungs
-	egg.Premium = egg.Rung >= rungs - 1 -- 위 2칸 = 좋은 알
+	if egg.Special then
+		egg.Rung = 0 -- ★v6 희귀 알은 사다리 밖 (좋은 알 Premium 도 아니에요, 대신 egg.Special)
+		egg.Premium = false
+	else
+		egg.Premium = egg.Rung >= rungs - 1 -- 위 2칸 = 좋은 알
+	end
 	-- 알의 MinRebirth = 지역 MinRebirth (예전 코드가 egg.MinRebirth 를 읽어도 맞게)
 	egg.MinRebirth = Config.Zones[egg.Zone].MinRebirth
 end
+
+-- ★v6 아주 희귀한 알 순서 (지역 순, 지역 안에서는 시크릿 → 천상 → 이터널). EggOrder / ZoneEggOrder (사다리) 에는 없어요
+Config.SpecialEggOrder = {
+	"ForestHidden", "ForestCelestial", "ForestEternal",
+	"LakeHidden", "LakeCelestial", "LakeEternal",
+	"JungleHidden", "JungleCelestial", "JungleEternal",
+	"SnowHidden", "SnowCelestial", "SnowEternal",
+	"OceanHidden", "OceanCelestial", "OceanEternal",
+	"CandyHidden", "CandyCelestial", "CandyEternal",
+	"CloudHidden", "CloudCelestial", "CloudEternal",
+	"SpaceHidden", "SpaceCelestial", "SpaceEternal",
+}
+Config.ZoneSpecialEggOrder = {} :: { [number]: { string } } -- [지역] = { 시크릿 알, 천상 알, 이터널 알 }
+for _, id in Config.SpecialEggOrder do
+	local egg = Config.Eggs[id]
+	local list = Config.ZoneSpecialEggOrder[egg.Zone]
+	if not list then
+		list = {}
+		Config.ZoneSpecialEggOrder[egg.Zone] = list
+	end
+	table.insert(list, id)
+end
 for k, zone in Config.Zones do
 	zone.Eggs = Config.ZoneEggOrder[k] or {}
+	zone.SpecialEggs = Config.ZoneSpecialEggOrder[k] or {} -- ★v6
 end
 
 ----------------------------------------------------------------------
@@ -694,7 +883,7 @@ Config.Ride = {
 Config.Conveyor = {
 	SpawnInterval = 2.6, -- 몇 초마다 새 알 (한 사람의 벨트 하나 기준)
 	TravelTime = 26, -- 끝까지 가는 데 걸리는 초 (끝에 닿으면 사라짐)
-	MaxEggs = 12,
+	MaxEggs = 12, -- 보통 알 (★v6 희귀 알은 따로 Config.SpecialEggs.MaxPerBelt)
 	FlyMaxDistance = 400, -- 이보다 먼 집으로는 날아가지 않고 "뿅" 하고 바로 받침대에 나타나요
 	BeaconHeight = 70, -- 좋은 알(위 2칸) 위로 솟는 빛기둥 높이 (숲 마을에서도 보여요)
 	-- ★v5 알 자리는 나온 시각으로 계산해요 (Config.BeltEggSpot, 서버·클라이언트가 같은 공식)
@@ -705,11 +894,39 @@ Config.Conveyor = {
 	BuyDistance = 20, -- 서버: 계산한 알 자리에서 이 거리 안에 있어야 살 수 있어요
 	BuyGrace = 0.5, -- 벨트 끝에 닿은 뒤에도 이만큼은 사기를 받아 줘요 (지연 대비)
 	RenderDistance = 200, -- 클라이언트: 이 거리 안 알만 모델로 그려요 (좋은 알 빛기둥은 어디서나 보여요)
+	-- ★v6 아주 희귀한 알: 벨트 끝 SpecialStop 스터드 앞에서 코인 들판 쪽으로 SpecialSide 만큼 비켜서 (SpecialSlide 초)
+	-- SpecialWait 초 기다렸다가 통으로 가요 → 알림 보고 달려와도 있어요. 뒤에 오는 보통 알은 옆으로 지나가요
+	SpecialWait = 60,
+	SpecialStop = 3,
+	SpecialSide = 2.5,
+	SpecialSlide = 0.8,
 }
+
+-- ★v6 아주 희귀한 알 (시크릿 → 천상 → 이터널). 벨트에 보통 알이 하나 나올 때마다 단계마다 따로 굴려요
+-- (보통 알 사다리는 그대로, 희귀 알은 그 사이 반 칸 뒤에 하나 더 나와요). 둘 이상 맞으면 더 희귀한 것 하나만.
+-- 한 번 굴릴 때 확률 = Chance ÷ (열린 벨트 수 ^ BeltPower): 지역이 많이 열려도 알림이 쏟아지지 않게.
+-- 보통 알 2.6초마다 → 벨트 1개: 시간당 시크릿 ~4.6 / 천상 ~1.2 / 이터널 ~0.28 개, 벨트 8개 다 합쳐 ~13 / ~3.3 / ~0.8 개.
+-- 나오면 그 사람에게 늘 알림 (EggAlertKind "Rare", 간격·지역 창 규칙 없이). 처음 채우는 벨트에는 안 나와요.
+Config.SpecialEggs = {
+	Tiers = { "Hidden", "Celestial", "Eternal" },
+	Chance = { Hidden = 1 / 300, Celestial = 1 / 1200, Eternal = 1 / 5000 },
+	BeltPower = 0.5,
+	MaxPerBelt = 3, -- 한 사람의 벨트 하나에 동시에 있을 수 있는 희귀 알 수
+}
+
+-- ★v6 희귀 알이 벨트 끝에서 더 머무는 시간 (비키기 + 기다리기, 보통 알은 0)
+function Config.BeltEggWait(eggId: string?): number
+	local egg = if type(eggId) == "string" then Config.Eggs[eggId] else nil
+	if egg and egg.Special then
+		return Config.Conveyor.SpecialSlide + Config.Conveyor.SpecialWait
+	end
+	return 0
+end
 
 -- ★v5 벨트 위 알 자리: 나온 지 age 초 된 알의 피벗 위치 (흔들기 전) 와 단계
 -- (1 = 슈트에서 떨어지는 중, 2 = 벨트 위, 3 = 통으로 떨어지는 중, 4 = 끝). 1~2 단계일 때 살 수 있어요
-function Config.BeltEggSpot(zone: number, age: number): (Vector3, number)
+-- ★v6 eggId 를 주면 희귀 알은 끝 앞에서 옆으로 비켜 기다려요 (그동안도 2 단계). 서버·클라이언트 모두 eggId 를 넘겨요
+function Config.BeltEggSpot(zone: number, age: number, eggId: string?): (Vector3, number)
 	local def = Config.Zones[zone] or Config.Zones[1]
 	local cv = Config.Conveyor
 	local start, finish = def.ConveyorStart, def.ConveyorEnd
@@ -717,6 +934,22 @@ function Config.BeltEggSpot(zone: number, age: number): (Vector3, number)
 	local dir = (finish - start).Unit
 	local speed = length / cv.TravelTime
 	local t = math.max(0, age)
+	local off = 0 -- 옆으로 비킨 거리
+	local hold = Config.BeltEggWait(eggId)
+	if hold > 0 then
+		local stop = math.min(cv.SpecialStop, length)
+		local arrive = cv.DropTime + (length - stop) / speed -- 끝 앞 stop 에 닿는 때
+		if t >= arrive then
+			off = cv.SpecialSide
+			if t < arrive + hold then
+				local a = math.min((t - arrive) / math.max(cv.SpecialSlide, 0.01), 1)
+				off = cv.SpecialSide * a * a * (3 - 2 * a) -- 부드럽게 비켜요
+				t = arrive
+			else
+				t -= hold -- 기다린 만큼 빼면 그다음은 보통 알과 같아요
+			end
+		end
+	end
 	local s, y, phase
 	if t < cv.DropTime then
 		local a = t / cv.DropTime
@@ -729,18 +962,34 @@ function Config.BeltEggSpot(zone: number, age: number): (Vector3, number)
 	else
 		s, y, phase = length + cv.FallTime * speed, cv.BeltTop - 1.4, 4
 	end
-	return start + dir * s + Vector3.new(0, y, 0), phase
+	local pos = start + dir * s + Vector3.new(0, y, 0)
+	if off > 0 then
+		-- 코인 들판 쪽 (벨트와 수직). 숲 마을처럼 가운데면 +Z 쪽
+		local side = Vector3.new(-dir.Z, 0, dir.X)
+		if ((def.FieldMin + def.FieldMax) / 2 - start):Dot(side) < 0 then
+			side = -side
+		end
+		pos += side * off
+	end
+	return pos, phase
 end
 
--- ★v5 알이 벨트에 머무는 전체 시간 (이 뒤에는 서버·클라이언트 모두 목록에서 지워요)
-function Config.BeltEggLife(): number
+-- ★v5 알이 벨트에 머무는 전체 시간 (이 뒤에는 서버·클라이언트 모두 목록에서 지워요). ★v6 eggId 를 주면 희귀 알은 더 길어요
+function Config.BeltEggLife(eggId: string?): number
 	local cv = Config.Conveyor
-	return cv.DropTime + cv.TravelTime + cv.FallTime
+	return cv.DropTime + cv.TravelTime + cv.FallTime + Config.BeltEggWait(eggId)
+end
+
+-- ★v6 살 수 있는 마지막 나이 (통으로 떨어지기 시작할 때). 서버는 여기에 BuyGrace 를 더 봐줘요
+function Config.BeltEggBuyEnd(eggId: string?): number
+	local cv = Config.Conveyor
+	return cv.DropTime + cv.TravelTime + Config.BeltEggWait(eggId)
 end
 
 -- 좋은 알 알림 (Remotes.EggAlert). 지역의 맨 위 알 2칸이 벨트에 나오면 그 지역이 열린 사람에게 보내요.
 -- 맨 위 칸은 언제나, 둘째 칸은 벨트마다 Gap 초에 한 번만. 받는 사람: 그 지역이 열렸고,
 -- (그 지역이 내 열린 지역 중 위에서 ZoneWindow 개 안에 있거나, 지금 그 지역 섬에 서 있을 때) → 다 큰 아이에게 숲 마을 알림이 쏟아지지 않게
+-- ★v6 아주 희귀한 알 ("Rare") 은 이 규칙 없이 언제나 보내요 (Gap 시계도 건드리지 않아요)
 Config.EggAlert = {
 	Gap = 15,
 	ZoneWindow = 2,
@@ -916,9 +1165,17 @@ Config.FieldCoins = {
 	MagnetPerFollower = 2, -- 따라오는 펫 1마리당 자석 반경 추가
 	-- ★v5 자석 버튼 (Settings.Magnet 켜짐): 기본 자석 밖 BigMagnetRadius 안 코인도 하나씩 빨아들여요.
 	-- 서 있기만 해도 너무 빨리 부자가 되지 않게 초당 BigMagnetRate 개까지만 (켜자마자는 BigMagnetBurst 개 한꺼번에)
-	BigMagnetRadius = 45,
-	BigMagnetRate = 1.2,
-	BigMagnetBurst = 6,
+	-- ★v6 더 넓고 조금 더 빠르게: 반경 45 → 80, 초당 1.2 → 1.6, 한꺼번에 6 → 8
+	BigMagnetRadius = 80,
+	BigMagnetRate = 1.6,
+	BigMagnetBurst = 8,
+	-- ★v6 슈퍼 자석 (Settings.SuperMagnet, 환생 SuperMagnetMinRebirth 번부터): 지금 서 있는 지역 코인만
+	-- SuperMagnetRadius 안에서 초당 SuperMagnetRate 개씩 (다른 지역 코인은 절대 안 와요).
+	-- 둘 다 켜면 슈퍼 자석이 이겨요 (길 위처럼 지역 밖이면 🧲 자석만). 시뮬: 지역 8 까지 ~10 시간 (v6_magnet/sim4.py)
+	SuperMagnetMinRebirth = 1,
+	SuperMagnetRadius = 150,
+	SuperMagnetRate = 2,
+	SuperMagnetBurst = 12,
 	RenderDistance = 160, -- 클라이언트는 이 거리 안 코인만 그려요
 	Kinds = {
 		{ Name = "Bronze", Value = 3, Weight = 80, Color = RGB(230, 150, 70), Size = 1.8 },
@@ -1044,11 +1301,14 @@ function Config.EggRung(eggId: string): (number, number)
 	return egg.Rung, egg.Rungs
 end
 
--- 좋은 알 알림 대상 알인가 ("Top" = 맨 위 칸, "Second" = 둘째 칸, nil = 아님)
+-- 좋은 알 알림 대상 알인가 ("Top" = 맨 위 칸, "Second" = 둘째 칸, ★v6 "Rare" = 아주 희귀한 알, nil = 아님)
 function Config.EggAlertKind(eggId: string): string?
 	local egg = Config.Eggs[eggId]
 	if not egg then
 		return nil
+	end
+	if egg.Special then
+		return "Rare"
 	end
 	if egg.Rung == egg.Rungs then
 		return "Top"
@@ -1056,6 +1316,59 @@ function Config.EggAlertKind(eggId: string): string?
 		return "Second"
 	end
 	return nil
+end
+
+-- ★v6 아주 희귀한 알 도우미 ---------------------------------------------
+
+-- 알의 희귀 단계 ("Hidden" | "Celestial" | "Eternal", 보통 알이면 nil)
+function Config.EggSpecial(eggId: any): string?
+	local egg = if type(eggId) == "string" then Config.Eggs[eggId] else nil
+	return if egg then egg.Special else nil
+end
+
+function Config.IsSpecialEgg(eggId: any): boolean
+	return Config.EggSpecial(eggId) ~= nil
+end
+
+-- 지역의 희귀 알 3개 { 시크릿, 천상, 이터널 }
+function Config.ZoneSpecialEggs(zoneIndex: number): { string }
+	return Config.ZoneSpecialEggOrder[zoneIndex] or {}
+end
+
+-- 지역 zone 의 tier 단계 희귀 알 id (없으면 nil)
+function Config.SpecialEggOf(zoneIndex: number, tier: string): string?
+	for _, id in Config.ZoneSpecialEggs(zoneIndex) do
+		if Config.Eggs[id].Special == tier then
+			return id
+		end
+	end
+	return nil
+end
+
+-- 희귀 알에서 꼭 나오는 펫 (보통 알이면 nil)
+function Config.SpecialPetOf(eggId: any): string?
+	local egg = if type(eggId) == "string" then Config.Eggs[eggId] else nil
+	return if egg and egg.Special then egg.Pet else nil
+end
+
+-- 보통 알 하나가 나올 때 그 벨트에 tier 단계 희귀 알이 나올 확률 (belts = 그 사람의 열린 벨트 수)
+function Config.SpecialEggChance(tier: string, belts: number?): number
+	local cfg = Config.SpecialEggs
+	local base = cfg.Chance[tier] or 0
+	return base / math.max(1, belts or 1) ^ cfg.BeltPower
+end
+
+-- 보통 알이 나올 때 같이 굴려요: 희귀 알 id 또는 nil. 단계마다 따로 굴리고, 둘 이상 맞으면 더 희귀한 것
+function Config.RollSpecialEgg(rng: Random?, zoneIndex: number, belts: number?): string?
+	local r = rng or Random.new()
+	local tiers = Config.SpecialEggs.Tiers
+	local hit: string? = nil
+	for _, tier in tiers do
+		if r:NextNumber() < Config.SpecialEggChance(tier, belts) then
+			hit = tier -- 뒤(더 희귀한) 단계가 이겨요
+		end
+	end
+	return if hit then Config.SpecialEggOf(zoneIndex, hit) else nil
 end
 
 -- 지역 도우미 ----------------------------------------------------------

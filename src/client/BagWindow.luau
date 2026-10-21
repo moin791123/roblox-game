@@ -378,6 +378,12 @@ local function createCard(uid: string, item: State.Item): Card?
 		Parent = holder,
 	}, { MaxText = 40 })
 
+	-- ★v6 아주 희귀한 펫·알 (시크릿 / 천상 / 이터널): 왼쪽 위 🌟 배지 (단계 색)
+	local special = if item.Kind == "Pet" then UiKit.PetSpecial(item.Id) else UiKit.EggSpecial(item.Id)
+	if special then
+		smallBadge(frame, "🌟", UiKit.RarityColor(special), Vector2.new(0, 0), UDim2.fromScale(0.03, Y(0.02)), 0.27)
+	end
+
 	-- 등급 배지 (브론즈 이상, 오른쪽 위). 등급은 같은 uid 에서 안 바뀌어요 (합성하면 새 펫)
 	if item.Kind == "Pet" and tier >= 2 then
 		smallBadge(frame, UiKit.TierEmoji(tier), UiKit.TierColor(tier), Vector2.new(1, 0), UDim2.fromScale(0.97, Y(0.02)), 0.27)
@@ -881,7 +887,12 @@ local function renderPanel()
 		end
 	end
 	local _, rarity, rinfo = UiKit.ItemInfo(item.Kind, item.Id)
-	pill(panelPills, if rinfo then rinfo.Name else "?", UiKit.RarityColor(rarity), 1)
+	local rname = if rinfo then rinfo.Name else UiKit.RarityName(rarity)
+	local special = if item.Kind == "Pet" then UiKit.PetSpecial(item.Id) else UiKit.EggSpecial(item.Id)
+	if special then
+		rname = "🌟 " .. UiKit.SpecialStars(special) .. " " .. UiKit.RarityName(special) -- ★v6
+	end
+	pill(panelPills, if rname ~= "" then rname else "?", UiKit.RarityColor(special or rarity), 1)
 	local tier = tierOf(item)
 	if item.Kind == "Pet" and tier >= 2 then
 		pill(panelPills, UiKit.TierLabel(tier), UiKit.TierColor(tier), 2)
@@ -914,6 +925,12 @@ local function renderPanel()
 		local zone = if egg then Config.Zones[egg.Zone] else nil
 		if zone then
 			table.insert(lines, "🗺 " .. zone.Emoji .. " " .. zone.Name .. " 알")
+		end
+		-- ★v6 희귀 알: 꼭 나오는 펫
+		local petId = if special then UiKit.SpecialPet(item.Id) else nil
+		local pet = if petId then Config.Pets[petId] else nil
+		if pet then
+			table.insert(lines, "🎁 " .. pet.Name .. " 확정!")
 		end
 	end
 	for i, label in panelLines do

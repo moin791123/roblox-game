@@ -8,9 +8,16 @@
 -- 부화 연출(UiKit.SideRect "Hatch")이 오른쪽 끝을 쓰면 그 왼쪽 아래로 비키고 (화면 가운데는 빼고),
 -- 그래도 자리가 없으면 잠깐 숨었다가 (시간은 멈춰요) 자리가 나면 다시 나와요.
 -- 쌓인 알림 상자 전체는 UiKit.SetSideRect("Banner") 로 알려서 부화 연출이 비켜 가요.
+-- ★v6 아주 희귀한 알 배너 (시크릿 / 천상 / 이터널 알, egg.Special): "🌟 호수에 천상 알이 나타났어요!"
+--   단계 색 테두리(천천히 도는 옅은 무지개) + 그림 아래 단계 알약 + "🎁 <펫> 확정!" + 💰·⏳ 남은 시간 + 🗺 바로 가기.
+--   단계마다 다른 짧은 소리. 보통 배너보다 오래 (20초, 알이 벨트에 남아 있고 기다리는 배너가 없으면 40초까지),
+--   알이 없어지면 (샀거나 지나갔으면) 일찍 닫혀요. 줄 맨 앞에 서고, 보통 배너·말풍선 때문에 버려지거나 숨지 않아요
+--   (자리가 모자라면 보통 말풍선이 기다려요. "🆕 NEW!" 같은 중요한 말풍선만 잠깐 먼저).
+--   희귀 펫이 태어났다는 말풍선 ("[천상] … 태어났어요!") 은 단계 색으로 조금 더 오래 보여요 (부화 숨기기 중 유일한 알림).
 local UiKit = require(script.Parent.UiKit)
 
 local Make, C = UiKit.Make, UiKit.Colors
+local Config = UiKit.Config
 
 local Toasts = {}
 
@@ -22,6 +29,7 @@ local KIND_COLORS: { [string]: Color3 } = {
 }
 
 local MAX = 4 -- 말풍선 최대 (기다리는 것 포함)
+local RARE_TOAST_TIME = 6 -- 희귀 펫 말풍선은 조금 더 오래
 local TOAST_WAIT_MAX = 8 -- 자리가 없어서 이만큼 못 나온 말풍선은 버려요
 local TALL_CHARS = 15 -- 이보다 긴 글은 두 줄 높이
 local TICK = 0.25
@@ -36,6 +44,7 @@ type Toast = {
 	Kind: string,
 	Tall: boolean,
 	Important: boolean, -- "alert" 이나 "🆕 NEW!" (부화 숨기기 중에는 이게 유일한 새 친구 알림): 넘치거나 줄이 밀려도 먼저 버리지 않아요
+	Rare: string?, -- ★v6 희귀 펫 말풍선 (단계 키)
 	Seq: number,
 	Left: number, -- 보이는 동안 줄어드는 남은 시간
 	Waited: number, -- 자리가 없어서 숨어 있던 시간
@@ -72,14 +81,36 @@ export type BannerSpec = {
 	OnButton: (() -> boolean?)?, -- true 를 돌려주면 배너를 닫아요
 	ButtonVisible: (() -> boolean)?, -- false 면 버튼을 숨기고 HiddenSub 를 보여 줘요 (0.25초마다 확인)
 	HiddenSub: string?,
+	Rare: string?, -- ★v6 희귀 알 배너 단계 ("Hidden" | "Celestial" | "Eternal"). 알 그림(IconKind "Egg")이면 저절로 알아내요
+	ShortTitle: string?, -- 희귀 배너가 한 줄로 줄었을 때 ("🌟 호수 천상 알!")
+	Zone: number?, -- 희귀 알 배너: 그 알이 있는 지역 (없으면 알의 Zone)
+	EggId: string?,
 }
 
-type BannerEntry = { Spec: BannerSpec, Count: number, Shown: number, Until: number, Closed: boolean, Played: boolean? }
+type BannerEntry = {
+	Spec: BannerSpec,
+	Count: number,
+	Shown: number,
+	Until: number,
+	Closed: boolean,
+	Played: boolean?,
+	Rare: string?, -- ★v6 희귀 알 배너
+	Uid: number?, -- 따라가는 내 벨트 알 (EggBelt)
+	Start: number?, -- 처음 보인 시각 (os.clock)
+	Seen: number?, -- 보인 시간 합 (숨어 있던 시간 빼고)
+	Shrink: number?, -- 희귀 배너가 자리가 안 나면 1 = 작게, 2 = 한 줄 (제목 + 버튼)
+}
 
 local BANNER_TIME = 6
 local BANNER_MIN = 3 -- 기다리는 배너가 있으면 이만큼만 보여 주고 다음으로
 local BANNER_QUEUE_MAX = 3
 local BANNER_MAX_WAIT = 20 -- 자리가 없어서 이만큼 못 나오면 버려요 (알이 벌써 없을 거예요)
+local RARE_TIME = 20 -- ★v6 희귀 알 배너 기본 시간
+local RARE_MAX = 40 -- 알이 아직 있고 기다리는 배너가 없으면 이만큼까지
+local RARE_MIN = 2.5 -- 알이 없어져도 이만큼은 보여 줘요 (번쩍 사라지지 않게)
+local RARE_MAX_WAIT = 60 -- 자리가 없어서 기다리는 희귀 배너 (알이 없어지면 그 전에 버려요)
+local RARE_YIELD = 1.2 -- 희귀 배너가 기다리면 보통 배너는 이만큼만 보이고 비켜요
+local RARE_SHARE = 8 -- 희귀 배너가 또 기다리면 지금 희귀 배너는 이만큼 보이고 다음으로
 
 local rootGui: Instance? = nil
 local guard: GuiObject? = nil -- 왼쪽 큰 버튼 칸 (그 부모 = 메인 GUI 에서 피할 것들을 찾아요)
@@ -99,6 +130,11 @@ local bannerTitle: TextLabel
 local bannerSub: TextLabel
 local bannerButton: TextButton
 local bannerButtonLabel: TextLabel
+local bannerIconStroke: UIStroke
+local bannerChip: Frame -- ★v6 희귀 배너: 그림 아래 단계 알약 ("천상")
+local bannerChipLabel: TextLabel
+local bannerInfo: TextLabel -- ★v6 희귀 배너: "💰 1.2억 · ⏳ 58초"
+local bannerHint: TextLabel -- ★v6 희귀 배너: 버튼 대신 (그 지역에 있을 때)
 local bannerHeight = 100
 local bannerWidth = 320
 local bannerX, bannerY = 0, 0
@@ -177,7 +213,109 @@ end
 
 -- 크기·안쪽 배치: [그림] [제목 두 줄 / 작은 글 / 🗺 버튼]
 -- 큰 화면 300~360 × 139 (버튼 없으면 110), 낮은 화면(폰, 높이 < 500) 224~270 × 114 (버튼 없으면 86)
-local function sizeBanner(gw: number, gh: number, showButton: boolean): (number, number)
+-- ★v6 희귀 배너: [그림 + 단계 알약] [제목 두 줄 / 🎁 펫 / 💰·⏳ / 🗺 버튼(또는 안내)]
+-- 큰 화면 300~360 × 159, 폰 224~270 × 124 (버튼이 숨어도 높이는 그대로: 안내 글이 그 자리에).
+-- 아주 낮은 화면(GUI 높이 < 320)이나 자리가 안 나면 작게 (shrink 1: × 109, 보통 배너보다 낮게),
+-- 그래도 안 나면 (shrink 2) 그림 + 짧은 제목 한 줄 + 버튼만 (× 66)
+local function sizeMiniRareBanner(gw: number, gh: number, showButton: boolean): (number, number)
+	local small = isSmall(gh)
+	local pad = if small then 6 else 8
+	local icon = if small then 52 else 60
+	local titleH = if small then 24 else 28
+	local buttonH = if small then 28 else 32
+	local width = stackWidth(gw, gh)
+	local height = math.max(pad + titleH + 3 + buttonH + pad, icon + 2 * pad)
+	bannerIcon.AnchorPoint = Vector2.zero
+	bannerIcon.Size = UDim2.fromOffset(icon, icon)
+	bannerIcon.Position = UDim2.fromOffset(pad, math.floor((height - icon) / 2))
+	bannerChip.Visible = false
+	bannerInfo.Visible = false
+	bannerSub.Visible = false
+	bannerCount.Size = UDim2.fromOffset(28, 18)
+	bannerCount.Position = UDim2.fromOffset(pad + icon - 6, pad + 4)
+	local textLeft = pad + icon + 8
+	local textW = width - textLeft - pad
+	bannerTitle.Position = UDim2.fromOffset(textLeft, pad)
+	bannerTitle.Size = UDim2.fromOffset(textW, titleH)
+	local y = pad + titleH + 3
+	bannerButton.Visible = showButton
+	bannerButton.AnchorPoint = Vector2.zero
+	bannerButton.Position = UDim2.fromOffset(textLeft, y)
+	bannerButton.Size = UDim2.fromOffset(textW, buttonH)
+	bannerHint.Visible = not showButton
+	bannerHint.Position = UDim2.fromOffset(textLeft, y)
+	bannerHint.Size = UDim2.fromOffset(textW, buttonH)
+	setMaxText(bannerTitle, if small then 16 else 20, 2)
+	setMaxText(bannerButtonLabel, if small then 16 else 20)
+	setMaxText(bannerHint, if small then 12 else 15)
+	bannerStroke.Thickness = if small then 3 else 4
+	return width, height
+end
+
+local function sizeRareBanner(gw: number, gh: number, showButton: boolean, shrink: number?): (number, number)
+	if (shrink or 0) >= 2 then
+		return sizeMiniRareBanner(gw, gh, showButton)
+	end
+	local small = isSmall(gh)
+	local tight = small and ((shrink or 0) >= 1 or gh < 320)
+	local pad = if tight then 6 elseif small then 7 else 10
+	local icon = if tight then 54 elseif small then 60 else 86
+	local chipH = if tight then 16 elseif small then 18 else 24
+	local titleH = if tight then 32 elseif small then 36 else 50
+	local subH = if tight then 16 elseif small then 18 else 24
+	local infoH = if tight then 14 elseif small then 16 else 20
+	local buttonH = if tight then 30 elseif small then 34 else 40
+	local gap = if tight then 3 elseif small then 4 else 5
+	local width = stackWidth(gw, gh)
+	local height = math.max(pad + titleH + 2 + subH + infoH + gap + buttonH + pad, pad + icon + 4 + chipH + pad)
+	local colH = icon + 4 + chipH
+	local top = math.floor((height - colH) / 2)
+	bannerIcon.AnchorPoint = Vector2.zero
+	bannerIcon.Size = UDim2.fromOffset(icon, icon)
+	bannerIcon.Position = UDim2.fromOffset(pad, top)
+	bannerChip.Visible = true
+	bannerChip.Size = UDim2.fromOffset(icon + 6, chipH)
+	bannerChip.Position = UDim2.fromOffset(pad - 3, top + icon + 4)
+	bannerCount.Size = if small then UDim2.fromOffset(30, 20) else UDim2.fromOffset(36, 22)
+	bannerCount.Position = UDim2.fromOffset(pad + icon - 6, top + 6)
+	local textLeft = pad + icon + 10
+	local textW = width - textLeft - pad
+	local y = pad
+	bannerTitle.Position = UDim2.fromOffset(textLeft, y)
+	bannerTitle.Size = UDim2.fromOffset(textW, titleH)
+	y += titleH + 2
+	bannerSub.Position = UDim2.fromOffset(textLeft, y)
+	bannerSub.Size = UDim2.fromOffset(textW, subH)
+	y += subH
+	bannerInfo.Visible = true
+	bannerInfo.Position = UDim2.fromOffset(textLeft, y)
+	bannerInfo.Size = UDim2.fromOffset(textW, infoH)
+	y += infoH + gap
+	bannerButton.Visible = showButton
+	bannerButton.AnchorPoint = Vector2.zero
+	bannerButton.Position = UDim2.fromOffset(textLeft, y)
+	bannerButton.Size = UDim2.fromOffset(textW, buttonH)
+	bannerHint.Visible = not showButton
+	bannerHint.Position = UDim2.fromOffset(textLeft, y)
+	bannerHint.Size = UDim2.fromOffset(textW, buttonH)
+	setMaxText(bannerTitle, if small then 17 else 24, if small then 2 else 3)
+	setMaxText(bannerSub, if small then 14 else 18)
+	setMaxText(bannerInfo, if small then 12 else 16)
+	setMaxText(bannerChipLabel, if small then 13 else 17)
+	setMaxText(bannerButtonLabel, if small then 18 else 22)
+	setMaxText(bannerHint, if small then 13 else 16)
+	bannerStroke.Thickness = if small then 4 else 5
+	return width, height
+end
+
+local function sizeBanner(gw: number, gh: number, showButton: boolean, rare: boolean?, shrink: number?): (number, number)
+	if rare then
+		return sizeRareBanner(gw, gh, showButton, shrink)
+	end
+	bannerChip.Visible = false
+	bannerInfo.Visible = false
+	bannerHint.Visible = false
+	bannerIcon.AnchorPoint = Vector2.new(0, 0.5)
 	local small = isSmall(gh)
 	local pad = if small then 6 else 9
 	local icon = if small then 58 else 80
@@ -303,7 +441,7 @@ local function layoutStack()
 	local items: { Item } = {}
 	local current = bannerCurrent
 	if current and not current.Closed and bannerOuter then
-		local w, h = sizeBanner(gw, gh, buttonShown(current))
+		local w, h = sizeBanner(gw, gh, buttonShown(current), current.Rare ~= nil, current.Shrink)
 		table.insert(items, { Kind = "Banner", W = w, H = h })
 	end
 	local rest: { Item } = {}
@@ -386,7 +524,21 @@ local function layoutStack()
 	local best = place(false, false)
 	if best > 0 then
 		local pick = { false, false }
-		for _, opt in { { true, false }, { false, true }, { true, true } } do
+		local options = { { true, false }, { false, true }, { true, true } }
+		-- ★v6 희귀 알 배너는 보통 말풍선 때문에 숨지 않아요 (못 놓인 말풍선 중 중요한 것이 있을 때만 잠깐)
+		if current and current.Rare and not current.Closed then
+			local importantWaiting = false
+			for _, it in items do
+				if it.Toast and it.X == nil and it.Toast.Important then
+					importantWaiting = true
+					break
+				end
+			end
+			if not importantWaiting then
+				options = { { true, false } }
+			end
+		end
+		for _, opt in options do
 			local n = place(opt[1], opt[2])
 			if n < best then
 				best, pick = n, opt
@@ -561,6 +713,36 @@ local function ensureTicker()
 	end)
 end
 
+----------------------------------------------------------------------
+-- ★v6 희귀 펫 말풍선: 서버의 "[천상] 달빛 백조가 태어났어요!" 같은 글 (부화 숨기기여도 와요)
+----------------------------------------------------------------------
+local expectRare: { Name: string, Tier: string, At: number, Used: boolean }? = nil
+local EXPECT_TIME = 1.6 -- 부화 연출이 알려 준 뒤 서버 말풍선을 기다리는 시간
+
+local function rareOfText(str: string): string?
+	local e = expectRare
+	if e and not e.Used and os.clock() - e.At <= EXPECT_TIME + 1 and string.find(str, e.Name, 1, true) then
+		e.Used = true
+		return e.Tier
+	end
+	for _, key in UiKit.SpecialOrder do
+		local name = UiKit.RarityName(key)
+		if name ~= "" and string.find(str, "[" .. name .. "]", 1, true) then
+			return key
+		end
+	end
+	-- 이름만 있는 말풍선 (합성 등): 새 친구·부화·합성 글일 때만
+	if string.find(str, "NEW!", 1, true) or string.find(str, "태어났", 1, true) or string.find(str, "합성", 1, true) then
+		for petId, def in Config.Pets do
+			local tier = UiKit.PetSpecial(petId)
+			if tier and string.find(str, def.Name, 1, true) then
+				return tier
+			end
+		end
+	end
+	return nil
+end
+
 function Toasts.Show(text: any, kind: any)
 	local parent = container
 	if not parent then
@@ -570,10 +752,15 @@ function Toasts.Show(text: any, kind: any)
 	local str = tostring(text)
 	-- 🆕 새 친구 (서버 말풍선 "🆕 NEW! ..."): 금색으로 눈에 띄게
 	local isNew = string.find(str, "NEW!", 1, true) ~= nil
-	local color = if isNew then C.Gold else KIND_COLORS[k]
+	-- ★v6 희귀 펫: 단계 색 + 🌟 + 조금 더 오래 (중요한 말풍선)
+	local rare = if k == "good" or isNew then rareOfText(str) else nil
+	if rare and not string.find(str, "🌟", 1, true) then
+		str = "🌟 " .. str
+	end
+	local color = if rare then UiKit.RarityColor(rare) elseif isNew then C.Gold else KIND_COLORS[k]
 	seq += 1
 	local len = utf8.len(str)
-	local tall = len ~= nil and (len :: number) > TALL_CHARS
+	local tall = rare ~= nil or (len ~= nil and (len :: number) > TALL_CHARS)
 	local _, gh = guiSize()
 	local small = isSmall(gh)
 
@@ -596,7 +783,11 @@ function Toasts.Show(text: any, kind: any)
 	})
 	UiKit.Corner(bubble, UDim.new(0, if small then 16 else 20))
 	UiKit.Gradient(bubble)
-	UiKit.Stroke(bubble, C.White, 3, true)
+	local bubbleStroke = UiKit.Stroke(bubble, C.White, 3, true)
+	if rare then
+		bubbleStroke.Thickness = 4
+		UiKit.SpecialGradient(bubbleStroke, rare, 7)
+	end
 	local label = UiKit.Label({
 		Text = str,
 		AnchorPoint = Vector2.new(0.5, 0.5),
@@ -612,9 +803,10 @@ function Toasts.Show(text: any, kind: any)
 		Label = label,
 		Kind = k,
 		Tall = tall,
-		Important = k == "alert" or isNew,
+		Important = k == "alert" or isNew or rare ~= nil,
+		Rare = rare,
 		Seq = seq,
-		Left = if k == "alert" or isNew then 5 elseif tall then 4 else 3.2,
+		Left = if rare then RARE_TOAST_TIME elseif k == "alert" or isNew then 5 elseif tall then 4 else 3.2,
 		Waited = 0,
 		Placed = false,
 		Played = false,
@@ -764,7 +956,26 @@ local function ensureBanner()
 		Parent = bubble,
 	})
 	UiKit.Corner(icon, UDim.new(0.3, 0))
-	UiKit.Stroke(icon, C.White, 3, true)
+	local iconStroke = UiKit.Stroke(icon, C.White, 3, true)
+	-- ★v6 희귀 배너: 그림 아래 단계 알약
+	local chip: Frame = Make("Frame", {
+		Name = "TierChip",
+		BackgroundColor3 = C.Gold,
+		Visible = false,
+		ZIndex = 48,
+		Parent = bubble,
+	})
+	UiKit.Corner(chip, UDim.new(0.5, 0))
+	UiKit.Gradient(chip)
+	UiKit.Stroke(chip, C.White, 2, true)
+	local chipLabel = UiKit.Label({
+		Name = "Label",
+		Text = "",
+		Size = UDim2.fromScale(0.9, 0.84),
+		Position = UDim2.fromScale(0.05, 0.08),
+		ZIndex = 49,
+		Parent = chip,
+	}, { MaxText = 17 })
 	-- ×2 (같은 알림이 또 왔어요). 그림 칸은 잘라내니까 bubble 에 두고 그림 오른쪽 아래에 맞춰요
 	local count: Frame = Make("Frame", {
 		Name = "Count",
@@ -799,6 +1010,22 @@ local function ensureBanner()
 		ZIndex = 46,
 		Parent = bubble,
 	}, { Stroke = C.White, MaxText = 15 })
+	local info = UiKit.Label({
+		Name = "Info",
+		Text = "",
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextColor3 = C.Ink,
+		Visible = false,
+		ZIndex = 46,
+		Parent = bubble,
+	}, { Stroke = C.White, MaxText = 16 })
+	local hint = UiKit.Label({
+		Name = "Hint",
+		Text = "",
+		Visible = false,
+		ZIndex = 46,
+		Parent = bubble,
+	}, { MaxText = 16, StrokeThickness = 2 })
 	local button, buttonLabel = UiKit.Button({
 		Name = "Go",
 		Text = "🗺 바로 가기",
@@ -836,6 +1063,113 @@ local function ensureBanner()
 	bannerSub = sub
 	bannerButton = button
 	bannerButtonLabel = buttonLabel
+	bannerIconStroke = iconStroke
+	bannerChip = chip
+	bannerChipLabel = chipLabel
+	bannerInfo = info
+	bannerHint = hint
+end
+
+----------------------------------------------------------------------
+-- ★v6 희귀 알 배너 도우미
+----------------------------------------------------------------------
+
+-- 내 벨트 알 (EggBelt) 은 없어도 돼요: 없으면 시간만으로 닫아요
+local eggBeltMod: any = nil
+local eggBeltTried = false
+local function eggBelt(): any
+	if not eggBeltTried then
+		eggBeltTried = true
+		local mod = script.Parent:FindFirstChild("EggBelt")
+		if mod and mod:IsA("ModuleScript") then
+			local ok, result = pcall(require, mod)
+			if ok and type(result) == "table" then
+				eggBeltMod = result
+			end
+		end
+	end
+	return eggBeltMod
+end
+
+-- 알이 아직 내 벨트에 있으면 남은 초 (모르면 nil, 없어졌으면 0)
+local function rareLeft(entry: BannerEntry): number?
+	local belt = eggBelt()
+	if not belt then
+		return nil
+	end
+	local spec = entry.Spec
+	if not entry.Uid and spec.Zone and spec.EggId and type(belt.Find) == "function" then
+		local ok, uid = pcall(belt.Find, spec.Zone, spec.EggId)
+		if ok and type(uid) == "number" then
+			entry.Uid = uid
+		end
+	end
+	local uid = entry.Uid
+	if not uid or type(belt.TimeLeft) ~= "function" then
+		return nil
+	end
+	local ok, left = pcall(belt.TimeLeft, uid)
+	if not ok then
+		return nil
+	end
+	return if type(left) == "number" then left else 0
+end
+
+local function leftText(sec: number): string
+	local s = math.max(0, math.floor(sec + 0.5))
+	if s >= 60 then
+		return string.format("⏳ %d분 %02d초", s // 60, s % 60)
+	end
+	return "⏳ " .. s .. "초"
+end
+
+-- 보통 배너 모양(알 그림)을 희귀 배너 글로 바꿔요 (init.client 의 EggAlert 배너를 그대로 받아요)
+local function rareSpec(spec: BannerSpec): (BannerSpec, string?)
+	local tier = spec.Rare
+	local eggId = spec.EggId or (if spec.IconKind == "Egg" then spec.IconId else nil)
+	if not tier and eggId then
+		tier = UiKit.EggSpecial(eggId)
+	end
+	if not tier then
+		return spec, nil
+	end
+	local out: BannerSpec = table.clone(spec)
+	local egg: any = if eggId then Config.Eggs[eggId] else nil
+	local zone = spec.Zone or (if egg then tonumber(egg.Zone) else nil)
+	out.Rare = tier
+	out.EggId = eggId
+	out.Zone = zone
+	local zoneDef: any = if zone then Config.Zones[zone] else nil
+	local rname = UiKit.RarityName(tier)
+	if not spec.Rare then
+		-- 호출한 쪽이 보통 글을 줬으면 희귀 글로
+		local where = if zoneDef then zoneDef.Name .. "에 " else ""
+		out.Title = "🌟 " .. where .. UiKit.Josa(rname .. " 알", "이", "가") .. " 나타났어요!"
+		out.ShortTitle = "🌟 " .. (if zoneDef then zoneDef.Name .. " " else "") .. rname .. " 알!"
+		local petId = UiKit.SpecialPet(eggId)
+		local pet: any = if petId then Config.Pets[petId] else nil
+		out.Sub = if pet then "🎁 " .. pet.Name .. " 확정!" else "🎁 아주 희귀한 펫 확정!"
+		out.HiddenSub = "🌟 빛기둥을 따라가요! 👀"
+		out.Key = spec.Key or ("Rare:" .. tostring(zone) .. ":" .. tostring(eggId))
+	end
+	out.Color = UiKit.RarityColor(tier)
+	return out, tier
+end
+
+-- 희귀 배너 "💰 1.2억 · ⏳ 58초"
+local function rareInfoText(entry: BannerEntry, left: number?): string
+	local spec = entry.Spec
+	local egg: any = if spec.EggId then Config.Eggs[spec.EggId] else nil
+	local parts: { string } = {}
+	if egg and egg.Price then
+		table.insert(parts, "💰 " .. Config.FormatNumber(egg.Price))
+	end
+	if left and left > 0 then
+		table.insert(parts, leftText(left))
+	else
+		table.insert(parts, UiKit.SpecialStars(entry.Rare) .. " 아주 희귀!")
+	end
+	return table.concat(parts, " · ")
 end
 
 -- 글자·×N 다시 (0.25초마다)
@@ -848,16 +1182,60 @@ local function refreshBanner(entry: BannerEntry)
 	bannerSub.Visible = sub ~= ""
 	bannerCount.Visible = entry.Count >= 2
 	bannerCountLabel.Text = "×" .. tostring(entry.Count)
+	if entry.Rare then
+		-- 희귀 배너: 버튼이 숨으면 그 자리에 안내 글 (높이는 그대로). 한 줄 모양이면 짧은 제목
+		local mini = (entry.Shrink or 0) >= 2
+		bannerTitle.Text = if mini and spec.ShortTitle then spec.ShortTitle else spec.Title
+		bannerSub.Text = spec.Sub or ""
+		bannerSub.Visible = bannerSub.Text ~= "" and not mini
+		bannerInfo.Text = rareInfoText(entry, rareLeft(entry))
+		bannerHint.Text = spec.HiddenSub or ""
+		if bannerButton.Visible ~= showButton or bannerHint.Visible == showButton then
+			layoutStack()
+		end
+		return
+	end
 	if bannerButton.Visible ~= showButton then
 		layoutStack()
 	end
 end
 
 -- 새 배너 그림·색 채우기 (아직 숨은 채로)
+local function clearSpecial(parent: Instance)
+	for _, child in parent:GetChildren() do
+		if child.Name == "SpecialGradient" then
+			child:Destroy()
+		end
+	end
+end
+
 local function fillBanner(entry: BannerEntry)
 	local spec = entry.Spec
 	local color = spec.Color or C.Gold
-	bannerStroke.Color = color
+	local rare = entry.Rare
+	bannerStroke.Color = if rare then C.White else color
+	clearSpecial(bannerStroke)
+	clearSpecial(bannerIconStroke)
+	bannerBubble.BackgroundColor3 = if rare then UiKit.Lighten(color, 0.86) else C.Cream
+	bannerIconStroke.Color = C.White
+	bannerIconStroke.Thickness = 3
+	if rare then
+		-- 천천히 도는 옅은 단계 무지개 테두리 (번쩍이지 않게)
+		UiKit.SpecialGradient(bannerStroke, rare, 6)
+		UiKit.SpecialGradient(bannerIconStroke, rare)
+		bannerIconStroke.Thickness = 4
+		bannerChip.BackgroundColor3 = color
+		bannerChipLabel.Text = UiKit.SpecialStars(rare) .. " " .. UiKit.RarityName(rare)
+		local chipStroke = bannerChipLabel:FindFirstChildOfClass("UIStroke")
+		if chipStroke then
+			chipStroke.Color = UiKit.Darken(color, 0.5)
+		end
+		bannerHint.TextColor3 = C.White
+		local hintStroke = bannerHint:FindFirstChildOfClass("UIStroke")
+		if hintStroke then
+			hintStroke.Color = UiKit.Darken(color, 0.45)
+		end
+	end
 	bannerIcon.BackgroundColor3 = UiKit.Lighten(color, 0.65)
 	local titleStroke = bannerTitle:FindFirstChildOfClass("UIStroke")
 	if titleStroke then
@@ -888,7 +1266,11 @@ local function showBanner(entry: BannerEntry)
 	slideIn()
 	if not entry.Played then
 		entry.Played = true
-		UiKit.PlaySound(entry.Spec.Sound or "Alert")
+		if entry.Rare then
+			UiKit.PlayRareSound(entry.Rare)
+		else
+			UiKit.PlaySound(entry.Spec.Sound or "Alert")
+		end
 		task.delay(0.45, function()
 			if bannerCurrent == entry and not entry.Closed and bannerOut then
 				UiKit.Shake(bannerIcon, 8, 8)
@@ -911,7 +1293,14 @@ local function runBanners()
 			end
 			local last = os.clock()
 			entry.Shown = last
-			entry.Until = last + (entry.Spec.Duration or BANNER_TIME)
+			entry.Start = last
+			entry.Seen = 0
+			entry.Until = last + (entry.Spec.Duration or (if entry.Rare then RARE_TIME else BANNER_TIME))
+			-- 희귀 알이 벌써 없어졌으면 (기다리는 동안 샀거나 지나갔어요) 건너뛰어요
+			if entry.Rare and entry.Uid and rareLeft(entry) == 0 then
+				entry.Closed = true
+				continue
+			end
 			bannerCurrent = entry
 			fillBanner(entry)
 			local waited = 0
@@ -929,15 +1318,56 @@ local function runBanners()
 				local now = os.clock()
 				local dt = now - last
 				last = now
+				local rare = entry.Rare
+				local left: number? = nil
+				if rare then
+					left = rareLeft(entry)
+				end
+				local gone = left == 0
+				local rareWaiting = false
+				for _, q in bannerQueue do
+					if q.Rare then
+						rareWaiting = true
+						break
+					end
+				end
 				if not bannerOut then
 					-- 숨어 있는 동안은 시간이 멈춰요
 					entry.Shown += dt
 					entry.Until += dt
 					waited += dt
-					if waited >= BANNER_MAX_WAIT then
+					if waited >= (if rare then RARE_MAX_WAIT else BANNER_MAX_WAIT) or gone then
 						break
 					end
-				elseif now >= entry.Until or (#bannerQueue > 0 and now >= entry.Shown + BANNER_MIN) then
+					if rareWaiting and not rare then
+						break -- 자리를 기다리던 보통 배너는 희귀 배너에게 바로 비켜요
+					end
+					-- 희귀 배너는 자리가 안 나면 1초 뒤 작게, 2초 뒤 한 줄로 (다음 자리 계산부터)
+					if rare and waited >= 1 and (entry.Shrink or 0) < math.min(2, math.floor(waited)) then
+						entry.Shrink = math.min(2, math.floor(waited))
+						refreshBanner(entry)
+					end
+				elseif rare then
+					entry.Seen = (entry.Seen or 0) + dt
+					local seen = entry.Seen or 0
+					if gone and seen >= RARE_MIN then
+						break -- 알을 샀거나 지나갔어요
+					end
+					if rareWaiting and seen >= RARE_SHARE then
+						break
+					end
+					if now >= entry.Until then
+						-- 알이 아직 있고 기다리는 배너가 없으면 조금 더 (RARE_MAX 까지)
+						local more = left ~= nil and left > 0 and #bannerQueue == 0 and seen < RARE_MAX
+						if not more then
+							break
+						end
+					end
+				elseif now >= entry.Until then
+					break
+				elseif rareWaiting and now >= entry.Shown + RARE_YIELD then
+					break -- 희귀 배너에게 바로 비켜요
+				elseif #bannerQueue > 0 and now >= entry.Shown + BANNER_MIN then
 					break
 				end
 			end
@@ -950,19 +1380,24 @@ local function runBanners()
 end
 
 -- 큰 배너 띄우기 (줄 서기 · 같은 Key 는 합치기)
-function Toasts.Banner(spec: BannerSpec)
-	if bannerSuppressed or not rootGui or type(spec) ~= "table" or type(spec.Title) ~= "string" then
+function Toasts.Banner(rawSpec: BannerSpec)
+	if bannerSuppressed or not rootGui or type(rawSpec) ~= "table" or type(rawSpec.Title) ~= "string" then
 		return
 	end
+	local spec, rare = rareSpec(rawSpec)
 	local key = spec.Key
 	local current = bannerCurrent
 	if key and current and not current.Closed and current.Spec.Key == key then
 		current.Count += 1
-		current.Until = math.max(current.Until, os.clock() + (spec.Duration or BANNER_TIME))
+		current.Until = math.max(current.Until, os.clock() + (spec.Duration or (if rare then RARE_TIME else BANNER_TIME)))
 		refreshBanner(current)
 		if bannerOut then
 			UiKit.Bump(bannerBubble, 0.1)
-			UiKit.PlaySound(spec.Sound or "Alert")
+			if rare then
+				UiKit.PlayRareSound(rare)
+			else
+				UiKit.PlaySound(spec.Sound or "Alert")
+			end
 		end
 		return
 	end
@@ -974,11 +1409,53 @@ function Toasts.Banner(spec: BannerSpec)
 			end
 		end
 	end
-	table.insert(bannerQueue, { Spec = spec, Count = 1, Shown = 0, Until = 0, Closed = false })
+	local entry: BannerEntry = { Spec = spec, Count = 1, Shown = 0, Until = 0, Closed = false, Rare = rare }
+	if rare then
+		-- ★v6 희귀 알은 줄 맨 앞 (먼저 온 희귀 알 뒤)
+		local at = #bannerQueue + 1
+		for i, q in bannerQueue do
+			if not q.Rare then
+				at = i
+				break
+			end
+		end
+		table.insert(bannerQueue, at, entry)
+		-- 알림이 벨트 알보다 먼저 올 수도 있어요: 바로 한 번 찾아봐요
+		rareLeft(entry)
+	else
+		table.insert(bannerQueue, entry)
+	end
 	while #bannerQueue > BANNER_QUEUE_MAX do
-		table.remove(bannerQueue, 1) -- 너무 많이 밀리면 오래된 것부터 버려요
+		-- 너무 많이 밀리면 오래된 보통 배너부터 버려요 (희귀 배너는 끝까지)
+		local drop = nil
+		for i, q in bannerQueue do
+			if not q.Rare then
+				drop = i
+				break
+			end
+		end
+		table.remove(bannerQueue, drop or 1)
 	end
 	runBanners()
+end
+
+-- ★v6 부화 연출이 알려 줘요: 곧 올 서버 말풍선 (그 펫 이름이 든 것) 을 희귀 색으로.
+-- 말풍선이 EXPECT_TIME 안에 안 오면 (서버 글이 바뀌었어도) 작은 희귀 말풍선을 대신 띄워요
+function Toasts.ExpectRare(petId: string, isNew: boolean?)
+	local def: any = Config.Pets[petId]
+	local tier = UiKit.PetSpecial(petId)
+	if not def or not tier then
+		return
+	end
+	local e = { Name = def.Name, Tier = tier, At = os.clock(), Used = false }
+	expectRare = e
+	task.delay(EXPECT_TIME, function()
+		if expectRare == e and not e.Used then
+			e.Used = true
+			local rname = UiKit.RarityName(tier)
+			Toasts.Show((if isNew then "🆕 NEW! " else "🎉 ") .. "[" .. rname .. "] " .. UiKit.Josa(def.Name, "이", "가") .. " 태어났어요!", "good")
+		end
+	end)
 end
 
 -- 배너 쉬기 (꾸미기 모드 동안): 켜면 지금 배너를 닫고 기다리던 것도 버려요
@@ -1019,6 +1496,26 @@ function Toasts.AlertRects(): { UiKit.Rect }
 	return out
 end
 Toasts.TopRects = Toasts.AlertRects -- 예전 이름
+
+-- (검사용) ★v6 지금 배너의 희귀 정보: { Rare, Title, Sub, Info, Hint, Chip, Seen, Uid } (희귀 배너가 아니면 nil)
+function Toasts.RareBannerInfo(): { [string]: any }?
+	local entry = bannerCurrent
+	if not entry or entry.Closed or not entry.Rare or not bannerOuter then
+		return nil
+	end
+	return {
+		Rare = entry.Rare,
+		Title = bannerTitle.Text,
+		Sub = bannerSub.Text,
+		Info = bannerInfo.Text,
+		Hint = if bannerHint.Visible then bannerHint.Text else nil,
+		Chip = bannerChipLabel.Text,
+		Seen = entry.Seen,
+		Uid = entry.Uid,
+		Out = bannerOut,
+		Queue = #bannerQueue,
+	}
+end
 
 -- (검사용) 지금 보이는 배너: (Frame?, 제목, 버튼 보임?)
 function Toasts.BannerState(): (Frame?, string?, boolean)

@@ -1,6 +1,8 @@
 -- 🗺️ 지도 창: 지역 카드 (이모지, 이름, 그 지역 알들 작은 그림, 지역 색, 🔒 환생 N회 / "이동"), 지금 있는 지역 표시,
 -- "🏠 우리 집" 버튼. 이동은 Teleport("Zone", i) / Teleport("Home") (서버가 환생 수를 다시 확인해요)
 -- 지역 수·알 수·위치는 모두 Config.Zones / Config.Eggs 에서 읽어요 (알 그림은 창을 처음 열 때 만들어요)
+-- ★v6 아주 희귀한 알 (시크릿 / 천상 / 이터널) 은 알 그림 줄에서 빼고, 지금 내 벨트에 있으면 카드 오른쪽 위에
+--   "🌟 천상 알!" 표시 (EggBelt 가 알려 줘요)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -23,6 +25,8 @@ type EggIcon = { Holder: Frame, EggId: string, Made: string? } -- Made: nil 아�
 type Card = {
 	Frame: Frame,
 	Stroke: UIStroke,
+	Star: Frame, -- ★v6 희귀 알 표시
+	StarLabel: TextLabel,
 	Badge: Frame,
 	Status: TextLabel,
 	Button: TextButton,
@@ -41,6 +45,23 @@ local cards: { [number]: Card } = {}
 local dirty = true
 local lastTeleport = 0
 local eggGen = 0
+
+-- 내 벨트 알 (없어도 돼요)
+local eggBeltMod: any = nil
+local eggBeltTried = false
+local function eggBelt(): any
+	if not eggBeltTried then
+		eggBeltTried = true
+		local mod = script.Parent:FindFirstChild("EggBelt")
+		if mod and mod:IsA("ModuleScript") then
+			local ok, result = pcall(require, mod)
+			if ok and type(result) == "table" then
+				eggBeltMod = result
+			end
+		end
+	end
+	return eggBeltMod
+end
 
 -- 그 지역 알 목록: Zone.Eggs 순서 + (빠진 것이 있으면) EggOrder 에서 Zone 이 같은 알
 local function zoneEggs(i: number): { string }
@@ -62,7 +83,14 @@ local function zoneEggs(i: number): { string }
 			table.insert(list, id)
 		end
 	end
-	return list
+	-- ★v6 희귀 알은 사다리 알이 아니라서 빼요
+	local out: { string } = {}
+	for _, id in list do
+		if not UiKit.EggSpecial(id) then
+			table.insert(out, id)
+		end
+	end
+	return out
 end
 
 local function rebirths(): number
@@ -250,9 +278,34 @@ local function createCard(parent: Instance, i: number): Card
 		Parent = here,
 	}, { Stroke = UiKit.Darken(C.Gold, 0.45), MaxText = 16 })
 
+	-- ★v6 "🌟 천상 알!" (내 벨트에 희귀 알이 있을 때)
+	local star: Frame = Make("Frame", {
+		Name = "RareEgg",
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.fromScale(0.96, 0.04),
+		Size = UDim2.fromScale(0.46, 0.13),
+		BackgroundColor3 = C.Gold,
+		Visible = false,
+		ZIndex = 27,
+		Parent = frame,
+	})
+	UiKit.Corner(star, UDim.new(0.5, 0))
+	UiKit.Gradient(star)
+	UiKit.Stroke(star, C.White, 2, true)
+	local starLabel = UiKit.Label({
+		Text = "🌟 희귀 알!",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.88, 0.76),
+		ZIndex = 28,
+		Parent = star,
+	}, { Stroke = UiKit.Darken(C.Gold, 0.45), MaxText = 16 })
+
 	return {
 		Frame = frame,
 		Stroke = stroke,
+		Star = star,
+		StarLabel = starLabel,
 		Badge = badge,
 		Status = status,
 		Button = button,
@@ -297,6 +350,38 @@ local function ensureEggIcons()
 	end)
 end
 
+-- ★v6 희귀 알 표시 (열린 지역만)
+local function refreshStars()
+	local belt = eggBelt()
+	local zones: { [number]: string } = {}
+	if belt and type(belt.SpecialZones) == "function" then
+		local ok, result = pcall(belt.SpecialZones)
+		if ok and type(result) == "table" then
+			zones = result
+		end
+	end
+	local r = rebirths()
+	for i, card in cards do
+		local tier = zones[i]
+		local show = tier ~= nil and Config.ZoneUnlocked(i, r)
+		if show and tier then
+			local color = UiKit.RarityColor(tier)
+			card.Star.BackgroundColor3 = color
+			card.StarLabel.Text = "🌟 " .. UiKit.RarityName(tier) .. " 알!"
+			local st = card.StarLabel:FindFirstChildOfClass("UIStroke")
+			if st then
+				st.Color = UiKit.Darken(color, 0.45)
+			end
+			if not card.Star.Visible then
+				card.Star.Visible = true
+				UiKit.Pop(card.Star, 0.35)
+			end
+		else
+			card.Star.Visible = false
+		end
+	end
+end
+
 local function refresh()
 	dirty = false
 	local r = rebirths()
@@ -337,6 +422,7 @@ local function refresh()
 	if infoLabel then
 		infoLabel.Text = string.format("🔄 환생 %d회 · 열린 지역 %d/%d", r, opened, Config.MaxZone)
 	end
+	refreshStars()
 	if window and window.IsOpen() then
 		ensureEggIcons()
 	end
@@ -405,6 +491,15 @@ function MapWindow.Init(gui: Instance)
 	end
 
 	window.OnOpen = refresh
+	-- ★v6 희귀 알이 생기거나 없어지면 (창이 열려 있을 때) 표시만 다시
+	local belt = eggBelt()
+	if belt and type(belt.OnSpecialChanged) == "function" then
+		pcall(belt.OnSpecialChanged, function()
+			if window.IsOpen() then
+				refreshStars()
+			end
+		end)
+	end
 	player:GetAttributeChangedSignal("Zone"):Connect(function()
 		if window.IsOpen() then
 			refresh()

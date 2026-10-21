@@ -31,6 +31,30 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 > | 7 구름 왕국 | CloudHidden "구름 시크릿 알" → ThunderPup 번개 강아지: grey-blue puppy with a cloud tuft and a lightning-bolt tail | CloudCelestial "구름 천상 알" → SunGriffin 해님 그리핀: golden griffin chick with sun-ray feathers | CloudEternal "구름 이터널 알" → NineTailFox 구미호: white fox with nine fluffy glowing tails |
 > | 8 우주 | SpaceHidden "우주 시크릿 알" → MeteorHamster 운석 햄스터: hamster in a bubble space helmet riding a small meteor | SpaceCelestial "우주 천상 알" → GalaxyUnicorn 은하 유니콘: dark-blue unicorn with star speckles and a glowing horn | SpaceEternal "우주 이터널 알" → CosmoDragon 은하 용: deep-navy dragon with star speckles and a tiny ringed planet orbiting it |
 >
+> **v6 numbers (CONFIG, scratchpad `v6/sim6.py`)** — egg `Price` / `HatchTime` → pet `Income` (base, per s), per zone 시크릿 · 천상 · 이터널:
+>
+> | zone | 시크릿 (Hidden) | 천상 (Celestial) | 이터널 (Eternal) |
+> |---|---|---|---|
+> | 1 | 5K / 45 s → 62 | 60K / 60 s → 150 | 300K / 80 s → 375 |
+> | 2 | 150K / 45 s → 300 | 1.5M / 60 s → 720 | 5M / 80 s → 1.8K |
+> | 3 | 2.5M / 55 s → 1.5K | 25M / 70 s → 3.6K | 100M / 100 s → 9K |
+> | 4 | 40M / 70 s → 7.2K | 400M / 85 s → 17.5K | 1.5B / 120 s → 43.5K |
+> | 5 | 750M / 80 s → 36K | 7.5B / 105 s → 87K | 30B / 145 s → 218K |
+> | 6 | 15B / 100 s → 180K | 150B / 125 s → 432K | 600B / 170 s → 1.08M |
+> | 7 | 300B / 110 s → 900K | 3T / 145 s → 2.16M | 12T / 200 s → 5.4M |
+> | 8 | 5T / 130 s → 5M | 40T / 170 s → 12M | 150T / 230 s → 30M |
+>
+> Rarities: Hidden 시크릿 (60,230,170) Boost 0.5 · Celestial 천상 (255,214,60) 0.6 · Eternal 이터널 (215,105,255) 0.8 (`Special = true`, Eternal `Rainbow = true`).
+> Eggs: `Special` = tier key, `Pet` = the guaranteed pet, `Pets = { Pet = 100 }`, `SpawnWeight 0`, `Rung 0`, `Premium false`, Look Gems / Crown / Flames
+> (all Shine + Glow). Lists: `Config.SpecialEggOrder` (24), `Config.ZoneSpecialEggOrder[zone]`, `zone.SpecialEggs`; `EggOrder` / `ZoneEggs` / `zone.Eggs` stay the 41-egg ladder.
+> Odds: every normal belt spawn rolls each tier once with `Config.SpecialEggChance(tier, belts)` = `SpecialEggs.Chance` (1/300, 1/1200, 1/5000) ÷ √(open belts)
+> (rarest hit wins, own `Random`, so the ladder sequence is unchanged); the egg comes half a spawn gap later; ≤ 3 per belt (`MaxPerBelt`); never in a pre-filled belt.
+> Per hour, 1 belt: 4.6 / 1.15 / 0.28 · all 8 belts: 13 / 3.3 / 0.8. Life: rides like a normal egg to 3 studs before the end, slides 2.5 studs toward the
+> coin field (0.8 s), waits `Conveyor.SpecialWait` 60 s (still phase 2 = buyable), then falls → `Config.BeltEggSpot(zone, age, eggId)`, `BeltEggLife(eggId)`
+> (88.2 s vs 27.4), `BeltEggBuyEnd(eggId)`, `BeltEggWait(eggId)`. Alert: `EggAlertKind` "Rare" → always sent to the owner (zone unlocked), no Gap / ZoneWindow,
+> does not touch the Gap clock. Sim (10 seeds, active kid): zone 8 19.3 h → 19.6 h (magnet-ish FIELD_PICK 0.7: 15.2 → 15.3 h); in the top zone a 시크릿 is
+> affordable at the alert 94 %, 천상 70 %, 이터널 41 %; lower-zone ones ~100 %.
+>
 > **v5 changes (this round)** — parent's feedback after playing with the kids. ★v5 marks v5 below.
 > 1. **Settings toggles** (saved per player): `Config.Settings` { HideHatch, AutoCollect, Magnet } (defaults false), client→server
 >    `Remotes.SetSetting(key, value: boolean)` (unknown keys / non-booleans ignored), `DataService.GetSetting(player, key)`,

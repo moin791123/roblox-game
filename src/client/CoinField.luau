@@ -3,6 +3,9 @@
 -- 파트는 workspace.ClientCoins 아래에 (나한테만 보임). 먹기는 PickupCoin 으로 서버에 요청해요.
 -- ★v5 자석 버튼 (State.OnSetting → 누르자마자, 스냅샷 Settings.Magnet, 또는 CoinField.SetMagnet): 기본 자석 밖 BigMagnetRadius 안 코인을
 -- 가까운 것부터 초당 BigMagnetRate 개씩 빨아들여요 (서버도 같은 규칙으로 검사해요).
+-- ★v6 ⚡ 슈퍼 자석 (State.OnSetting "SuperMagnet", 환생 SuperMagnetMinRebirth 번부터): 지금 서 있는 지역 코인만
+-- SuperMagnetRadius 안에서 초당 SuperMagnetRate 개씩, 꼬리 달고 포물선으로 날아와요. 둘 다 켜면 슈퍼가 이겨요
+-- (길 위처럼 지역 밖이면 🧲 자석만). 멀리서 날아오는 코인은 MAX_FAR_FLYING 개까지만 한꺼번에 그려요.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -20,8 +23,13 @@ local CoinField = {}
 local MAGNET_INTERVAL = 0.1
 local CULL_INTERVAL = 0.3 -- 보이기/숨기기 다시 계산
 local FLY_TIME = 0.25 -- 플레이어에게 날아가는 시간
-local FAR_FLY_PER_STUD = 1 / 110 -- 큰 자석으로 멀리서 올 때 1 스터드마다 더 걸리는 시간
+local FAR_FLY_PER_STUD = 1 / 100 -- 큰 자석으로 멀리서 올 때 1 스터드마다 더 걸리는 시간
 local FAR_MAX_HEIGHT = 10 -- 큰 자석은 높이 차이가 이보다 크면 안 끌어와요 (서버는 14)
+local SUPER_FLY_PER_STUD = 1 / 80 -- ★v6 슈퍼 자석: 멀리서 줄지어 날아오는 게 보이게 조금 천천히
+local SUPER_MAX_HEIGHT = 24 -- ★v6 슈퍼 자석 높이 차 허용치 (서버는 30)
+local MAX_FAR_FLYING = 14 -- ★v6 멀리서 날아오는 코인 그림은 이만큼까지만 (성능)
+local ARC_PER_STUD = 0.08 -- 멀리서 오면 포물선 높이 = 거리 × 이 값 (최대 ARC_MAX)
+local ARC_MAX = 12
 local MAGNET_HOLD = 2 -- SetMagnet 뒤 이 초 동안은 예전 스냅샷 값이 덮어쓰지 않아요
 local CONFIRM_TIMEOUT = 3 -- 서버가 Remove 를 안 보내면 코인을 되살리는 시간
 local SPIN_SPEED = 2.4
@@ -44,6 +52,8 @@ type Entry = {
 	flyTime: number,
 	flyFrom: CFrame,
 	flySize: Vector3,
+	flyArc: number, -- 멀리서 올 때 포물선 높이 (0 = 바로)
+	far: boolean, -- 큰 자석/슈퍼 자석으로 멀리서 날아오는 중
 	goneAt: number,
 	confirmed: boolean, -- 서버가 Remove 를 보냈는지
 }
@@ -60,6 +70,9 @@ local magnetOn = Config.Settings.Magnet == true -- ★v5 자석 버튼
 local magnetHoldUntil = 0
 local magnetTokens = FC.BigMagnetBurst
 local magnetAt = os.clock()
+local superOn = Config.Settings.SuperMagnet == true -- ★v6 슈퍼 자석 버튼 (환생 조건은 따로)
+local superHoldUntil = 0
+local superTokens = FC.SuperMagnetBurst
 local farList: { Entry } = {}
 local farDist: { [Entry]: number } = {}
 
@@ -265,6 +278,8 @@ local function addCoin(raw: any)
 		flyTime = FLY_TIME,
 		flyFrom = CFrame.identity,
 		flySize = Vector3.one,
+		flyArc = 0,
+		far = false,
 		goneAt = 0,
 		confirmed = false,
 	}
@@ -337,7 +352,30 @@ end
 -- 자석: 반경 안 코인을 빨아들여요
 ----------------------------------------------------------------------
 
-local function startFly(entry: Entry, flyTime: number?)
+-- 슈퍼 자석 코인 꼬리 (반짝이는 줄)
+local function addTrail(part: BasePart, kind: CoinKind)
+	local half = kind.Size * 0.35
+	local a0 = Instance.new("Attachment")
+	a0.Position = Vector3.new(0, half, 0)
+	a0.Parent = part
+	local a1 = Instance.new("Attachment")
+	a1.Position = Vector3.new(0, -half, 0)
+	a1.Parent = part
+	local trail = Instance.new("Trail")
+	trail.Attachment0 = a0
+	trail.Attachment1 = a1
+	trail.Lifetime = 0.3
+	trail.MinLength = 0.2
+	trail.FaceCamera = true
+	trail.LightEmission = 0.3
+	trail.Color = ColorSequence.new(kind.Color, Color3.new(1, 1, 1))
+	trail.Transparency = NumberSequence.new(0.25, 1)
+	trail.WidthScale = NumberSequence.new(1, 0.1)
+	trail.Parent = part
+end
+
+-- flyTime 이 있으면 멀리서 (큰 자석/슈퍼 자석): 포물선으로, super 면 꼬리도
+local function startFly(entry: Entry, flyTime: number?, super: boolean?)
 	ensurePart(entry)
 	local part = entry.part
 	if not part then
@@ -349,6 +387,16 @@ local function startFly(entry: Entry, flyTime: number?)
 	entry.flyTime = flyTime or FLY_TIME
 	entry.flyFrom = part.CFrame
 	entry.flySize = part.Size
+	entry.far = flyTime ~= nil
+	entry.flyArc = 0
+	if flyTime then
+		local hrp = getHRP()
+		local dist = if hrp then (hrp.Position - part.Position).Magnitude else 0
+		entry.flyArc = math.min(ARC_MAX, dist * ARC_PER_STUD)
+		if super then
+			addTrail(part, entry.kind)
+		end
+	end
 	Remotes.PickupCoin:FireServer(entry.id)
 	if os.clock() - lastSound > SOUND_GAP and type(UiKit.PlaySound) == "function" then
 		lastSound = os.clock()
@@ -356,28 +404,46 @@ local function startFly(entry: Entry, flyTime: number?)
 	end
 end
 
+-- ★v6 슈퍼 자석이 정말 켜져 있나 (버튼 + 환생 조건, 서버도 똑같이 봐요)
+local function superActive(): boolean
+	return superOn and State.Rebirths() >= (FC.SuperMagnetMinRebirth or 1)
+end
+
 local function magnetCheck()
 	local now = os.clock()
 	local hrp = getHRP()
 	local radius = FC.MagnetRadius + FC.MagnetPerFollower * followerCount()
 	local r2 = radius * radius
-	local big = FC.BigMagnetRadius
-	local big2 = big * big
-	-- 큰 자석: 초당 BigMagnetRate 개씩 채워지는 표 (켜자마자는 BigMagnetBurst 개)
-	magnetTokens = math.min(FC.BigMagnetBurst, magnetTokens + (now - magnetAt) * FC.BigMagnetRate)
+	-- 표: 큰 자석 초당 BigMagnetRate 개, 슈퍼 자석 초당 SuperMagnetRate 개 (켜자마자는 Burst 개)
+	local dt = now - magnetAt
 	magnetAt = now
+	magnetTokens = math.min(FC.BigMagnetBurst, magnetTokens + dt * FC.BigMagnetRate)
+	superTokens = math.min(FC.SuperMagnetBurst, superTokens + dt * FC.SuperMagnetRate)
+	-- 어떤 자석? 지역 안 + 슈퍼 → 슈퍼 (내 지역 코인만), 아니면 🧲 자석
+	local here = if hrp then Config.ZoneAt(hrp.Position) else nil
+	local super = here ~= nil and superActive()
+	local pull = super or magnetOn
+	local far = if super then FC.SuperMagnetRadius else FC.BigMagnetRadius
+	local far2 = far * far
+	local maxH = if super then SUPER_MAX_HEIGHT else FAR_MAX_HEIGHT
+	local flying = 0
 	table.clear(farList)
 	for _, entry in entries do
 		if entry.state == "Live" then
 			if hrp then
 				local d = entry.base - hrp.Position
 				local d2 = d:Dot(d)
+				local flat2 = d.X * d.X + d.Z * d.Z
 				if d2 <= r2 then
 					startFly(entry)
-				elseif magnetOn and d2 <= big2 and math.abs(d.Y) <= FAR_MAX_HEIGHT then
+				elseif pull and flat2 <= far2 and math.abs(d.Y) <= maxH and (not super or entry.zone == here) then
 					table.insert(farList, entry)
-					farDist[entry] = d2
+					farDist[entry] = flat2
 				end
+			end
+		elseif entry.state == "Pending" then
+			if entry.far then
+				flying += 1
 			end
 		elseif entry.state == "Gone" and not entry.confirmed and now - entry.goneAt > CONFIRM_TIMEOUT then
 			-- 서버가 안 받아줬어요 (너무 멀었거나 지연): 제자리에 다시 놓아요
@@ -389,23 +455,30 @@ local function magnetCheck()
 		table.sort(farList, function(a, b)
 			return (farDist[a] or 0) < (farDist[b] or 0)
 		end)
+		local perStud = if super then SUPER_FLY_PER_STUD else FAR_FLY_PER_STUD
 		for _, entry in farList do
-			if magnetTokens < 1 then
+			local tokens = if super then superTokens else magnetTokens
+			if tokens < 1 or flying >= MAX_FAR_FLYING then
 				break
 			end
-			magnetTokens -= 1
-			startFly(entry, FLY_TIME + math.sqrt(farDist[entry] or 0) * FAR_FLY_PER_STUD)
+			if super then
+				superTokens -= 1
+			else
+				magnetTokens -= 1
+			end
+			flying += 1
+			startFly(entry, FLY_TIME + math.sqrt(farDist[entry] or 0) * perStud, super)
 		end
 		table.clear(farDist)
 	end
 end
 
--- 스냅샷의 자석 버튼 값 (없으면 Config.Settings 기본값)
-local function snapshotMagnet(snap: any): boolean
+-- 스냅샷의 버튼 값 (없으면 Config.Settings 기본값)
+local function snapshotSetting(snap: any, key: string): boolean
 	local settings = if type(snap) == "table" then snap.Settings else nil
-	local v = if type(settings) == "table" then settings.Magnet else nil
+	local v = if type(settings) == "table" then settings[key] else nil
 	if type(v) ~= "boolean" then
-		v = Config.Settings.Magnet == true
+		v = (Config.Settings :: any)[key] == true
 	end
 	return v == true
 end
@@ -447,6 +520,9 @@ local function render()
 			local target = if hrp then hrp.Position else entry.flyFrom.Position + Vector3.new(0, 3, 0)
 			local eased = a * a
 			local pos = entry.flyFrom.Position:Lerp(target, eased)
+			if entry.flyArc > 0 then
+				pos += Vector3.new(0, math.sin(eased * math.pi) * entry.flyArc, 0)
+			end
 			part.Size = entry.flySize * (1 - eased * 0.8)
 			table.insert(moveParts, part)
 			table.insert(moveCFrames, CFrame.new(pos) * CFrame.Angles(0, t * SPIN_SPEED * 3 + entry.phase, 0))
@@ -483,6 +559,32 @@ function CoinField.IsMagnetOn(): boolean
 	return magnetOn
 end
 
+-- ★v6 슈퍼 자석 버튼 (켜도 환생 SuperMagnetMinRebirth 번 전에는 안 끌어와요)
+function CoinField.SetSuperMagnet(on: boolean)
+	superOn = on == true
+	superHoldUntil = os.clock() + MAGNET_HOLD
+end
+
+-- 버튼이 켜져 있나 / 정말 끌어오는 중인가 (환생 조건까지)
+function CoinField.IsSuperMagnetOn(): boolean
+	return superOn
+end
+
+function CoinField.IsSuperMagnetActive(): boolean
+	return superActive()
+end
+
+-- 지금 멀리서 날아오는 코인 수 (검사용)
+function CoinField.FlyingCount(): number
+	local n = 0
+	for _, entry in entries do
+		if entry.state == "Pending" and entry.far then
+			n += 1
+		end
+	end
+	return n
+end
+
 function CoinField.Init()
 	if initialized then
 		return
@@ -492,19 +594,27 @@ function CoinField.Init()
 
 	State.OnSync(function()
 		-- 방금 누른 값(서버 답 전)이 있으면 그 값, 아니면 스냅샷 값 (State.GetSetting)
+		local now = os.clock()
 		local v = State.GetSetting("Magnet")
-		if v ~= magnetOn and os.clock() >= magnetHoldUntil then
+		if v ~= magnetOn and now >= magnetHoldUntil then
 			magnetOn = v
+		end
+		local sv = State.GetSetting("SuperMagnet")
+		if sv ~= superOn and now >= superHoldUntil then
+			superOn = sv
 		end
 	end)
 	if State.Snapshot then
-		magnetOn = snapshotMagnet(State.Snapshot)
+		magnetOn = snapshotSetting(State.Snapshot, "Magnet")
+		superOn = snapshotSetting(State.Snapshot, "SuperMagnet")
 	end
-	-- 🧲 버튼을 누르면 (State.SetSettingLocal) 서버 답을 기다리지 않고 바로 켜고 꺼요.
-	-- Remotes.SetSetting 이 다음 PickupCoin 보다 먼저 가서 서버도 큰 자석으로 받아 줘요
+	-- 🧲 / ⚡ 버튼을 누르면 (State.SetSettingLocal) 서버 답을 기다리지 않고 바로 켜고 꺼요.
+	-- Remotes.SetSetting 이 다음 PickupCoin 보다 먼저 가서 서버도 같은 자석으로 받아 줘요
 	State.OnSetting(function(key: string, value: boolean)
 		if key == "Magnet" then
 			CoinField.SetMagnet(value)
+		elseif key == "SuperMagnet" then
+			CoinField.SetSuperMagnet(value)
 		end
 	end)
 

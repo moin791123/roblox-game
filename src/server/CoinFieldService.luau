@@ -3,6 +3,9 @@
 -- 남이 먹어도 내 코인은 그대로예요 (코인 목록·번호가 사람마다 따로).
 -- ★v5 자석 버튼 (DataService.GetSetting(player, "Magnet")): BigMagnetRadius 안 코인도 먹을 수 있어요.
 -- 기본 자석 밖 코인은 초당 BigMagnetRate 개까지만 받아 줘요 (클라이언트도 같은 속도로 끌어와요, 서버는 여유를 둬요).
+-- ★v6 슈퍼 자석 (GetSetting "SuperMagnet" + 환생 SuperMagnetMinRebirth 번 이상): 거리 대신 "같은 지역" 으로 검사해요.
+-- 내가 서 있는 지역 코인만 (SuperMagnetRadius 안, 높이 SUPER_MAX_HEIGHT 안), 따로 된 표로 초당 SuperMagnetRate 개까지.
+-- 둘 다 켜져 있으면 슈퍼 자석이 이겨요: 지역 안에 있으면 다른 지역 코인은 🧲 자석으로도 안 돼요 (길 위에서만 🧲).
 -- 코인 값 = 기본값 × 지역 CoinMult × (1 + 집 초당 수익 / IncomeScale) × (1 + min(펫 보너스, MaxBoost)) × 환생 코인 배율
 -- (집 초당 수익은 DataService.GetIncome 이라 환생·테마 수익 배율이 이미 들어 있어요)
 local Players = game:GetService("Players")
@@ -31,6 +34,10 @@ local LOAD_TIMEOUT = 20 -- 데이터 로딩 기다리는 최대 초
 local MAX_PICKUPS_PER_SEC = 20
 local MAGNET_RATE_SLACK = 1.5 -- 큰 자석 속도 여유 (지연으로 몰려 와도 괜찮게)
 local MAGNET_BURST_SLACK = 4
+local SUPER_RATE_SLACK = 1.25 -- 슈퍼 자석 속도 여유 (범위가 넓어서 여유는 조금만)
+local SUPER_BURST_SLACK = 4
+local SUPER_MAX_HEIGHT = 30 -- 슈퍼 자석 높이 차 허용치 (펫 타고 조금 날아도 돼요, 클라이언트는 24)
+local ZONE_SLACK = 10 -- 지역 경계 여유 (지연 대비)
 local ZONE_POLL = 5 -- 새로 열린 지역 확인 간격
 
 type CoinKind = { Name: string, Value: number, Weight: number, Color: Color3, Size: number }
@@ -44,6 +51,8 @@ type Field = {
 	windowCount: number,
 	magnetTokens: number, -- 큰 자석으로 먹을 수 있는 남은 개수
 	magnetAt: number, -- 마지막으로 채운 시각
+	superTokens: number, -- ★v6 슈퍼 자석 표
+	superAt: number,
 }
 -- 지역마다 코인 놓는 곳 (들판 상자 + 컨베이어 선분)
 type ZoneGeo = { Min: Vector3, Max: Vector3, SegA: Vector3, SegB: Vector3, Fallback: Vector3 }
@@ -173,6 +182,44 @@ local function getHRP(player: Player): BasePart?
 	return nil
 end
 
+-- 위치가 그 지역 땅 위인지 (경계 여유 slack)
+local function inZone(zone: number, pos: Vector3, slack: number): boolean
+	local def = Config.Zones[zone]
+	if not def then
+		return false
+	end
+	local d = pos - def.Center
+	return math.abs(d.X) <= def.Size.X / 2 + slack and math.abs(d.Z) <= def.Size.Z / 2 + slack
+end
+
+-- ★v6 슈퍼 자석이 정말 켜져 있나 (버튼 + 환생 조건)
+local function superActive(player: Player): boolean
+	return DataService.GetSetting(player, "SuperMagnet") == true
+		and DataService.GetRebirths(player) >= (FC.SuperMagnetMinRebirth or 1)
+end
+
+-- 표 하나 꺼내 쓰기 (초당 rate 개씩 cap 개까지 채워져요). 없으면 false
+local function takeToken(field: Field, super: boolean, now: number): boolean
+	if super then
+		local cap = FC.SuperMagnetBurst + SUPER_BURST_SLACK
+		field.superTokens = math.min(cap, field.superTokens + (now - field.superAt) * FC.SuperMagnetRate * SUPER_RATE_SLACK)
+		field.superAt = now
+		if field.superTokens < 1 then
+			return false
+		end
+		field.superTokens -= 1
+		return true
+	end
+	local cap = FC.BigMagnetBurst + MAGNET_BURST_SLACK
+	field.magnetTokens = math.min(cap, field.magnetTokens + (now - field.magnetAt) * FC.BigMagnetRate * MAGNET_RATE_SLACK)
+	field.magnetAt = now
+	if field.magnetTokens < 1 then
+		return false
+	end
+	field.magnetTokens -= 1
+	return true
+end
+
 local function payload(coin: Coin)
 	return { Id = coin.Id, Kind = coin.Kind, Position = coin.Position, Zone = coin.Zone }
 end
@@ -224,6 +271,8 @@ local function buildField(player: Player): Field
 		windowCount = 0,
 		magnetTokens = FC.BigMagnetBurst + MAGNET_BURST_SLACK,
 		magnetAt = os.clock(),
+		superTokens = FC.SuperMagnetBurst + SUPER_BURST_SLACK,
+		superAt = os.clock(),
 	}
 	for zone = 1, DataService.GetMaxZone(player) do
 		addZone(field, zone)
@@ -347,24 +396,34 @@ local function onPickup(player: Player, coinId: any)
 		return
 	end
 
-	-- 거리 검증: 자석 반경 + 여유 (자석 버튼이 켜져 있으면 큰 자석 반경까지, 대신 초당 개수 제한)
+	-- 거리 검증: 자석 반경 + 여유. 밖이면 슈퍼 자석(같은 지역) → 자석 버튼(큰 반경), 둘 다 초당 개수 제한
 	local radius = FC.MagnetRadius + FC.MagnetPerFollower * FollowService.GetFollowerCount(player) + PICKUP_SLACK
-	local d = hrp.Position - coin.Position
+	local pos = hrp.Position
+	local d = pos - coin.Position
 	local flat = Vector3.new(d.X, 0, d.Z).Magnitude
-	if math.abs(d.Y) > MAX_HEIGHT_DIFF then
-		return
-	end
-	if flat > radius then
-		if flat > FC.BigMagnetRadius + PICKUP_SLACK or not DataService.GetSetting(player, "Magnet") then
-			return
+	local dy = math.abs(d.Y)
+	if flat > radius or dy > MAX_HEIGHT_DIFF then
+		local super = superActive(player)
+		if super and inZone(coin.Zone, pos, ZONE_SLACK) then
+			-- ⚡ 슈퍼 자석: 내가 있는 지역 코인 (거리는 넉넉히, 높이는 확인)
+			if flat > FC.SuperMagnetRadius + PICKUP_SLACK or dy > SUPER_MAX_HEIGHT then
+				return
+			end
+			if not takeToken(field, true, now) then
+				return
+			end
+		else
+			-- 🧲 자석: 슈퍼 자석이 켜져 있고 어느 지역 안이면 다른 지역 코인은 안 돼요 (슈퍼가 이겨요)
+			if not DataService.GetSetting(player, "Magnet") or (super and Config.ZoneAt(pos) ~= nil) then
+				return
+			end
+			if flat > FC.BigMagnetRadius + PICKUP_SLACK or dy > MAX_HEIGHT_DIFF then
+				return
+			end
+			if not takeToken(field, false, now) then
+				return
+			end
 		end
-		local cap = FC.BigMagnetBurst + MAGNET_BURST_SLACK
-		field.magnetTokens = math.min(cap, field.magnetTokens + (now - field.magnetAt) * FC.BigMagnetRate * MAGNET_RATE_SLACK)
-		field.magnetAt = now
-		if field.magnetTokens < 1 then
-			return
-		end
-		field.magnetTokens -= 1
 	end
 
 	local value = CoinFieldService.CoinValue(player, coin.Kind, coin.Zone)

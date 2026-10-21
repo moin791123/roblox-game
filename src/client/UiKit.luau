@@ -276,19 +276,24 @@ end
 
 -- 소리
 local soundCache: { [string]: Sound } = {}
-function UiKit.PlaySound(key: string)
+-- speed = 음 높이 (기본 1), volume 기본 0.6. ★v6 희귀 알 소리는 같은 소리를 높이만 바꿔 짧은 가락으로 써요
+function UiKit.PlaySound(key: string, speed: number?, volume: number?)
 	local id = (Config.Sounds :: any)[key]
 	if type(id) ~= "string" then
 		return
 	end
-	local sound = soundCache[key]
+	local sp = speed or 1
+	local vol = volume or 0.6
+	local cacheKey = if sp == 1 and vol == 0.6 then key else string.format("%s@%.2f@%.2f", key, sp, vol)
+	local sound = soundCache[cacheKey]
 	if not sound then
 		sound = Instance.new("Sound")
 		sound.Name = "Ui_" .. key
 		sound.SoundId = id
-		sound.Volume = 0.6
+		sound.Volume = vol
+		sound.PlaybackSpeed = sp
 		sound.Parent = SoundService
-		soundCache[key] = sound
+		soundCache[cacheKey] = sound
 	end
 	pcall(function()
 		SoundService:PlayLocalSound(sound)
@@ -304,9 +309,21 @@ function UiKit.ItemInfo(kind: string, id: string): (string?, string?, any)
 	return def.Name, def.Rarity, Config.Rarities[def.Rarity]
 end
 
+-- ★v6 새 희귀도 3단계 기본 이름·색 (Config.Rarities 에 없을 때만 써요)
+local SPECIAL_RANK: { [string]: number } = { Hidden = 1, Celestial = 2, Eternal = 3 }
+local SPECIAL_DEFAULT: { [string]: { Name: string, Color: Color3 } } = {
+	Hidden = { Name = "시크릿", Color = Color3.fromRGB(90, 225, 175) },
+	Celestial = { Name = "천상", Color = Color3.fromRGB(255, 200, 80) },
+	Eternal = { Name = "이터널", Color = Color3.fromRGB(205, 120, 255) },
+}
+
 function UiKit.RarityColor(rarity: string?): Color3
 	local r = rarity and (Config.Rarities :: any)[rarity]
-	return if r then r.Color else C.Grey
+	if r and typeof(r.Color) == "Color3" then
+		return r.Color
+	end
+	local d = if rarity then SPECIAL_DEFAULT[rarity] else nil
+	return if d then d.Color else C.Grey
 end
 
 -- 등급(1 기본 / 2 브론즈 / 3 실버 / 4 골드 / 5 레인보우 / 6 다이아 / 7 갤럭시) 강조색
@@ -333,6 +350,175 @@ end
 function UiKit.TierLabel(tier: any): string
 	local label = Config.TierInfo(UiKit.TierOf(tier)).Label
 	return if type(label) == "string" then label else ""
+end
+
+----------------------------------------------------------------------
+-- ★v6 아주 희귀한 3단계: 시크릿(Hidden) → 천상(Celestial) → 이터널(Eternal).
+-- 지역마다 알 3개 (egg.Special = 단계) 가 있고, 까면 그 단계 펫 1마리가 꼭 나와요.
+-- Config 에 값이 없어도 (아직 안 들어왔어도) 화면이 깨지지 않게 여기 기본 이름·색을 둬요.
+----------------------------------------------------------------------
+UiKit.SpecialOrder = { "Hidden", "Celestial", "Eternal" }
+-- 테두리·빛 고리에 쓰는 부드러운 색 (너무 번쩍이지 않게 옅게)
+local SPECIAL_PALETTE: { [string]: { Color3 } } = {
+	Hidden = { Color3.fromRGB(90, 225, 175), Color3.fromRGB(200, 255, 235), Color3.fromRGB(110, 200, 255) },
+	Celestial = { Color3.fromRGB(255, 200, 80), Color3.fromRGB(255, 250, 225), Color3.fromRGB(255, 165, 205) },
+	Eternal = {
+		Color3.fromRGB(255, 150, 200),
+		Color3.fromRGB(255, 225, 120),
+		Color3.fromRGB(130, 230, 170),
+		Color3.fromRGB(120, 190, 255),
+		Color3.fromRGB(200, 140, 255),
+	},
+}
+
+-- 희귀도 키가 3단계 중 몇 번째인가 (0 = 아님)
+function UiKit.SpecialRank(rarity: any): number
+	return if type(rarity) == "string" then SPECIAL_RANK[rarity] or 0 else 0
+end
+
+-- 알의 단계 ("Hidden" | "Celestial" | "Eternal" | nil). egg.Special 이 먼저, 없으면 희귀도·알림 종류로
+function UiKit.EggSpecial(eggId: any): string?
+	local egg: any = if type(eggId) == "string" then Config.Eggs[eggId] else nil
+	if not egg then
+		return nil
+	end
+	if type(egg.Special) == "string" and SPECIAL_RANK[egg.Special] then
+		return egg.Special
+	end
+	if SPECIAL_RANK[egg.Rarity] then
+		return egg.Rarity
+	end
+	return nil
+end
+
+-- 펫의 단계 (희귀도가 3단계 중 하나면 그 키)
+function UiKit.PetSpecial(petId: any): string?
+	local def: any = if type(petId) == "string" then Config.Pets[petId] else nil
+	if def and SPECIAL_RANK[def.Rarity] then
+		return def.Rarity
+	end
+	return nil
+end
+
+-- 희귀도 이름 ("천상"). Config 에 없으면 기본 이름
+function UiKit.RarityName(rarity: any): string
+	local r = if type(rarity) == "string" then (Config.Rarities :: any)[rarity] else nil
+	if r and type(r.Name) == "string" then
+		return r.Name
+	end
+	local d = if type(rarity) == "string" then SPECIAL_DEFAULT[rarity] else nil
+	return if d then d.Name else ""
+end
+
+-- 단계 별 (★ / ★★ / ★★★)
+function UiKit.SpecialStars(tier: any): string
+	return string.rep("★", UiKit.SpecialRank(tier))
+end
+
+function UiKit.SpecialPalette(tier: any): { Color3 }
+	local list = if type(tier) == "string" then SPECIAL_PALETTE[tier] else nil
+	return list or { UiKit.RarityColor(tier), Color3.new(1, 1, 1) }
+end
+
+-- 알에서 꼭 나오는 펫 (가중치가 하나뿐이면 그것, 아니면 그 단계 펫 중 가장 큰 가중치)
+function UiKit.SpecialPet(eggId: any): string?
+	local egg: any = if type(eggId) == "string" then Config.Eggs[eggId] else nil
+	if not egg then
+		return nil
+	end
+	for _, key in { "Pet", "GuaranteedPet", "SpecialPet" } do
+		local v = egg[key]
+		if type(v) == "string" and Config.Pets[v] then
+			return v
+		end
+	end
+	if type(egg.Pets) ~= "table" then
+		return nil
+	end
+	local tier = UiKit.EggSpecial(eggId)
+	local best, bestW = nil, -1
+	for petId, w in egg.Pets do
+		local def: any = Config.Pets[petId]
+		local weight = tonumber(w) or 0
+		local fit = def and (tier == nil or def.Rarity == tier)
+		if fit and weight > bestW then
+			best, bestW = petId, weight
+		end
+	end
+	return best
+end
+
+-- 그 펫이 나오는 희귀 알 (도감 힌트용). 없으면 nil
+local specialEggByPet: { [string]: string }? = nil
+function UiKit.SpecialEggOfPet(petId: any): string?
+	if type(petId) ~= "string" then
+		return nil
+	end
+	local map = specialEggByPet
+	if not map then
+		local built: { [string]: string } = {}
+		local ids: { string } = {}
+		for eggId in Config.Eggs do
+			table.insert(ids, eggId)
+		end
+		table.sort(ids)
+		for _, eggId in ids do
+			if UiKit.EggSpecial(eggId) then
+				local pet = UiKit.SpecialPet(eggId)
+				if pet and not built[pet] then
+					built[pet] = eggId
+				end
+			end
+		end
+		specialEggByPet = built
+		map = built
+	end
+	return map[petId]
+end
+
+-- 희귀 알 소리: 단계마다 다른 짧은 가락 (Config.Sounds 에 "Rare<단계>" 가 있으면 그걸 써요)
+local RARE_TUNES: { [string]: { { number } } } = {
+	-- { 시각, 음 높이, 소리 (1 = Alert, 2 = Coin) }
+	Hidden = { { 0, 1.15, 1 }, { 0.16, 1.5, 2 } },
+	Celestial = { { 0, 1.2, 2 }, { 0.14, 1.5, 2 }, { 0.3, 1.05, 1 } },
+	Eternal = { { 0, 1.0, 2 }, { 0.12, 1.26, 2 }, { 0.24, 1.5, 2 }, { 0.38, 2.0, 2 }, { 0.5, 0.85, 1 } },
+}
+function UiKit.PlayRareSound(tier: any)
+	local key = if type(tier) == "string" then tier else "Hidden"
+	if type((Config.Sounds :: any)["Rare" .. key]) == "string" then
+		UiKit.PlaySound("Rare" .. key)
+		return
+	end
+	local tune = RARE_TUNES[key] or RARE_TUNES.Hidden
+	for _, note in tune do
+		local name = if note[3] == 1 then "Alert" else "Coin"
+		if note[1] <= 0 then
+			UiKit.PlaySound(name, note[2], 0.55)
+		else
+			task.delay(note[1], UiKit.PlaySound, name, note[2], 0.55)
+		end
+	end
+end
+
+-- 단계 색 무지개 그라데이션 (UIStroke 나 Frame 아래에). spin 초에 한 바퀴 천천히 돌아요 (nil = 안 돌아요)
+function UiKit.SpecialGradient(parent: Instance, tier: any, spin: number?): UIGradient
+	local colors = UiKit.SpecialPalette(tier)
+	local keys = {}
+	local n = #colors
+	for i, c in colors do
+		table.insert(keys, ColorSequenceKeypoint.new((i - 1) / n, c))
+	end
+	table.insert(keys, ColorSequenceKeypoint.new(1, colors[1]))
+	local grad: UIGradient = Make("UIGradient", {
+		Name = "SpecialGradient",
+		Color = ColorSequence.new(keys),
+		Rotation = 0,
+		Parent = parent,
+	})
+	if spin and spin > 0 then
+		TweenService:Create(grad, TweenInfo.new(spin, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1), { Rotation = 360 }):Play()
+	end
+	return grad
 end
 
 -- 옷이 붙는 자리 아이콘 (Head 🎩 / Face 👓 / Neck 🎀 / Back 🎒)

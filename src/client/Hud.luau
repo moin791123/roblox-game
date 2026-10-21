@@ -1,10 +1,11 @@
 -- 화면 고정 UI: 코인(CoinSync 로 바로바로), 초당 수익, 집 금고, 펫 수, 왼쪽 큰 버튼 7개
 -- (가방 B / 도감 N / 집 H / 상점 P / 지도 M / 순위 L / 환생 R). 화면이 낮으면 2~3열로 접혀요.
 -- Hud.SetBadge("집", true): 버튼 오른쪽 위에 빨간 "!" (새 집을 살 수 있을 때 init.client 가 켜요)
--- 켜고 끄는 버튼 3개 (🙈 부화 숨기기 / 🏦 자동 수금 / 🧲 자석): 한 번 누르면 바로 켜짐/꺼짐 (색 + ON/OFF 스위치),
---   서버로 Remotes.SetSetting, 스냅샷 Settings 를 따라가요 (State.GetSetting). PC·태블릿은 이름이 보이는 가로 버튼,
---   폰은 작은 네모. 자리: 큰 버튼 칸 바로 오른쪽 (위 → 아래 맞춤) → 왼쪽 위 가로 줄 → 오른쪽 위 (코인 줄·점프·조이스틱은 피해요).
---   꾸미기 모드 동안은 큰 버튼과 같이 숨어요.
+-- 켜고 끄는 버튼 4개 (🙈 부화 숨기기 / 🏦 자동 수금 / 🧲 자석 / ★v6 ⚡ 슈퍼 자석): 한 번 누르면 바로 켜짐/꺼짐
+--   (색 + ON/OFF 스위치), 서버로 Remotes.SetSetting, 스냅샷 Settings 를 따라가요 (State.GetSetting). PC·태블릿은 이름이 보이는
+--   가로 버튼, 폰은 작은 네모. 자리: 큰 버튼 칸 바로 오른쪽 세로 (위 → 아래 맞춤) → 왼쪽 위 가로 줄 → 왼쪽 위 2×2
+--   → 큰 버튼 칸 오른쪽 2×2 → 오른쪽 위 (세로 / 2×2). 코인 줄·점프·조이스틱은 피해요. 꾸미기 모드 동안은 큰 버튼과 같이 숨어요.
+--   ⚡ 슈퍼 자석은 환생 FieldCoins.SuperMagnetMinRebirth 번 전에는 잠겨 있어요 ("🔒 환생 1회", 누르면 설명만).
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 
@@ -42,7 +43,17 @@ local targetCoins = -1
 local lastPets = -1
 
 -- 켜고 끄는 버튼 (Config.Settings 키)
-type ToggleDef = { Key: string, Emoji: string, Caption: string, Color: Color3, OnText: string, OffText: string }
+type ToggleDef = {
+	Key: string,
+	Emoji: string,
+	Caption: string,
+	Color: Color3,
+	OnText: string,
+	OffText: string,
+	MinRebirth: number?, -- 이 환생 수 전에는 잠겨 있어요
+	LockText: string?, -- 잠겼을 때 누르면 나오는 말
+}
+local SUPER_MIN = Config.FieldCoins.SuperMagnetMinRebirth or 1
 local TOGGLES: { ToggleDef } = {
 	{
 		Key = "HideHatch",
@@ -68,6 +79,16 @@ local TOGGLES: { ToggleDef } = {
 		OnText = "🧲 자석 켜짐! 주변 코인이 저절로 끌려와요",
 		OffText = "🧲 자석 꺼짐!",
 	},
+	{
+		Key = "SuperMagnet",
+		Emoji = "⚡",
+		Caption = "슈퍼 자석",
+		Color = C.Pink,
+		OnText = "⚡ 슈퍼 자석 켜짐! 이 지역 코인이 몽땅 날아와요",
+		OffText = "⚡ 슈퍼 자석 꺼짐!",
+		MinRebirth = SUPER_MIN,
+		LockText = "🔒 환생을 " .. SUPER_MIN .. "번 하면 ⚡ 슈퍼 자석이 열려요! 지금 있는 지역 코인을 몽땅 모아 줘요",
+	},
 }
 local OFF_FACE = Color3.fromRGB(190, 190, 206)
 local OFF_TRACK = Color3.fromRGB(125, 125, 145)
@@ -85,8 +106,13 @@ type Toggle = {
 	KnobOn: number,
 	Shown: boolean?,
 	LastTap: number,
+	Lock: TextLabel, -- ★v6 잠겼을 때 스위치 자리에 "🔒 환생 1회" (네모 버튼은 "환생 1회")
+	LockIcon: TextLabel, -- 네모 버튼 오른쪽 위 🔒
+	Locked: boolean,
+	Chip: boolean,
 }
 local toggleFrame: Frame? = nil
+local lockSeen = false -- 스냅샷을 한 번이라도 봤나 (잠금 풀림 말풍선은 그 뒤에만)
 local toggles: { Toggle } = {}
 local toggleByKey: { [string]: Toggle } = {}
 local topBarFrame: Frame? = nil
@@ -228,13 +254,26 @@ local function strokeOf(label: TextLabel): UIStroke?
 	return label:FindFirstChildOfClass("UIStroke")
 end
 
--- 켜짐/꺼짐 모양 (animate = 누른 직후면 통통 + 스위치가 미끄러져요)
+-- ★v6 잠긴 버튼인가 (환생이 모자라요)
+local function lockedNow(def: ToggleDef, rebirths: number?): boolean
+	local need = def.MinRebirth
+	return need ~= nil and (rebirths or State.Rebirths()) < need
+end
+
+-- 켜짐/꺼짐 모양 (animate = 누른 직후면 통통 + 스위치가 미끄러져요). 잠겼으면 회색 + 🔒 (켜져 있어도)
 local function paintToggle(t: Toggle, on: boolean, animate: boolean)
-	local face = if on then t.Def.Color else OFF_FACE
 	t.Shown = on
+	local locked = t.Locked
+	t.Track.Visible = not locked
+	t.Lock.Visible = locked
+	t.LockIcon.Visible = locked and not t.Chip
+	if locked then
+		on = false
+	end
+	local face = if on then t.Def.Color else OFF_FACE
 	t.Button.BackgroundColor3 = face
 	t.Stroke.Thickness = if on then 3 else 2
-	t.Icon.TextTransparency = if on then 0 else 0.35
+	t.Icon.TextTransparency = if on then 0 elseif locked then 0.5 else 0.35
 	t.Caption.TextTransparency = if on then 0 else 0.15
 	local capStroke = strokeOf(t.Caption)
 	if capStroke then
@@ -262,6 +301,13 @@ local function onToggleTap(t: Toggle)
 		return -- 아주 빠른 연타는 한 번으로
 	end
 	t.LastTap = now
+	if t.Locked then
+		-- 잠겨 있어요: 설명만 (서버로 안 보내요)
+		UiKit.PlaySound("Click")
+		UiKit.Shake(t.Button, 6, 6)
+		Toasts.Show(t.Def.LockText or "🔒 아직 잠겨 있어요!", "info")
+		return
+	end
 	local key = t.Def.Key
 	local value = not State.GetSetting(key)
 	State.SetSettingLocal(key, value) -- 바로 바꿔 보여 줘요 (OnSetting → paintToggle)
@@ -324,6 +370,26 @@ local function makeToggle(parent: Instance, def: ToggleDef, order: number): Togg
 	})
 	Make("UIAspectRatioConstraint", { AspectRatio = 1, DominantAxis = Enum.DominantAxis.Height, Parent = knob })
 	UiKit.Corner(knob, UDim.new(0.5, 0))
+	-- ★v6 잠금 글씨 (스위치 자리) + 네모 버튼용 작은 자물쇠
+	local need = def.MinRebirth or 0
+	local lock = UiKit.Label({
+		Name = "Lock",
+		Text = "🔒 환생 " .. need .. "회",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Visible = false,
+		ZIndex = 3,
+		Parent = btn,
+	}, { Stroke = UiKit.Darken(OFF_FACE, 0.55), MaxText = 18, StrokeThickness = 1.5 })
+	local lockIcon = UiKit.Label({
+		Name = "LockIcon",
+		Text = "🔒",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.84, 0.16),
+		Size = UDim2.fromScale(0.36, 0.36),
+		Visible = false,
+		ZIndex = 4,
+		Parent = btn,
+	}, { MaxText = 20 })
 	local t: Toggle = {
 		Def = def,
 		Button = btn,
@@ -337,6 +403,10 @@ local function makeToggle(parent: Instance, def: ToggleDef, order: number): Togg
 		KnobOn = 0.8,
 		Shown = nil,
 		LastTap = 0,
+		Lock = lock,
+		LockIcon = lockIcon,
+		Locked = lockedNow(def),
+		Chip = false,
 	}
 	-- 누르는 느낌 (UiKit.Button 과 같게)
 	local scale = UiKit.Scale(btn)
@@ -359,6 +429,23 @@ end
 local function styleToggle(t: Toggle, w: number, h: number, chip: boolean)
 	t.Button.Size = UDim2.fromOffset(w, h)
 	t.Caption.Visible = chip
+	t.Chip = chip
+	local need = t.Def.MinRebirth or 0
+	if chip then
+		-- 스위치 자리 (이름 아래) 에 "🔒 환생 1회"
+		t.Lock.Text = "🔒 환생 " .. need .. "회"
+		t.Lock.TextXAlignment = Enum.TextXAlignment.Left
+		t.Lock.AnchorPoint = Vector2.new(0, 0)
+		t.Lock.Position = UDim2.fromOffset(math.floor(h * 0.98), math.floor(h * 0.52))
+		t.Lock.Size = UDim2.fromOffset(w - math.floor(h * 0.98) - 8, math.floor(h * 0.4))
+	else
+		-- 네모: 아래 줄에 "환생 1회", 자물쇠는 오른쪽 위
+		t.Lock.Text = "환생 " .. need .. "회"
+		t.Lock.TextXAlignment = Enum.TextXAlignment.Center
+		t.Lock.AnchorPoint = Vector2.new(0.5, 0.5)
+		t.Lock.Position = UDim2.fromOffset(math.floor(w * 0.5), math.floor(h * 0.8))
+		t.Lock.Size = UDim2.fromOffset(math.floor(w * 0.94), math.floor(h * 0.32))
+	end
 	local tw, th
 	if chip then
 		t.Icon.Position = UDim2.fromOffset(math.floor(h * 0.5) + 2, math.floor(h * 0.5))
@@ -384,7 +471,9 @@ local function styleToggle(t: Toggle, w: number, h: number, chip: boolean)
 	paintToggle(t, t.Shown == true, false)
 end
 
--- 버튼 3개 자리: 큰 버튼 칸 오른쪽 위에 세로로 (안 되면 왼쪽 위 가로 → 큰 버튼 칸 오른쪽 아래 → 오른쪽 위)
+-- 버튼 4개 자리: 큰 버튼 칸 오른쪽 위에 세로로 (안 되면 왼쪽 위 가로 → 큰 버튼 칸 오른쪽 아래 → 왼쪽 위 2×2
+-- → 큰 버튼 칸 오른쪽 2×2 (위 / 아래 맞춤) → 오른쪽 위 세로 → 오른쪽 위 2×2). 아무것도 안 가리는 첫 자리,
+-- 없으면 가장 덜 가리는 자리. (오른쪽은 되도록 아래 알림 줄 자리로 비워 둬요)
 -- 위 코인 줄(+초당/금고 알약 줄), 큰 버튼 칸(+환생 알약), 폰 점프 버튼·조이스틱 자리는 피해요
 local function layoutToggles(gui: ScreenGui, column: Frame, cell: number, gap: number)
 	local frame = toggleFrame
@@ -399,8 +488,6 @@ local function layoutToggles(gui: ScreenGui, column: Frame, cell: number, gap: n
 	local bh = if chip then math.clamp(math.floor(cell * 0.56), 44, 54) else math.clamp(math.floor(cell * 0.62), 42, 58)
 	local bw = if chip then math.floor(bh * 3.3) else bh
 	local tgap = math.max(5, math.floor(bh * 0.12))
-	local long = n * bh + (n - 1) * tgap -- 세로로 세울 때 높이
-	local wide = n * bw + (n - 1) * tgap -- 가로로 놓을 때 너비
 
 	local avoid: { UiKit.Rect } = {}
 	local top, sub = topBarFrame, subRowFrame
@@ -434,18 +521,30 @@ local function layoutToggles(gui: ScreenGui, column: Frame, cell: number, gap: n
 		table.insert(avoid, { X0 = 0, Y0 = gh - 120, X1 = gw * 0.4, Y1 = gh })
 	end
 
-	type Spot = { X: number, Y: number, Vertical: boolean }
+	-- 모양: cols 열 (1 = 세로, n = 가로, 2 = 2×2)
+	local function shape(cols: number): (number, number)
+		local rows = math.ceil(n / cols)
+		return cols * bw + (cols - 1) * tgap, rows * bh + (rows - 1) * tgap
+	end
+	local _, long = shape(1) -- 세로로 세울 때 높이
+	local gridW, gridH = shape(math.min(2, n))
+	type Spot = { X: number, Y: number, Cols: number }
+	-- 큰 버튼 오른쪽 위 빨간 "!" 알림(칸의 8 % 밖으로 나와요)과 안 닿게 조금 띄워요
+	local sx = side.X1 + math.max(tgap, math.ceil(cell * 0.09) + 3)
 	local spots: { Spot } = {
-		{ X = side.X1 + tgap, Y = math.max(8, side.Y0), Vertical = true },
-		{ X = 10, Y = 8, Vertical = false },
-		{ X = side.X1 + tgap, Y = side.Y1 - long, Vertical = true },
-		{ X = gw - 10 - bw, Y = 8, Vertical = true },
+		{ X = sx, Y = math.max(8, side.Y0), Cols = 1 },
+		{ X = 10, Y = 8, Cols = n },
+		{ X = sx, Y = side.Y1 - long, Cols = 1 },
+		{ X = 10, Y = 8, Cols = 2 },
+		{ X = sx, Y = math.max(8, side.Y0), Cols = 2 },
+		{ X = sx, Y = side.Y1 - gridH, Cols = 2 },
+		{ X = gw - 10 - bw, Y = 8, Cols = 1 },
+		{ X = gw - 10 - gridW, Y = 8, Cols = 2 },
 	}
 	local best: Spot? = nil
 	local bestOv = math.huge
 	for _, spot in spots do
-		local w = if spot.Vertical then bw else wide
-		local h = if spot.Vertical then long else bh
+		local w, h = shape(spot.Cols)
 		local r: UiKit.Rect = { X0 = spot.X, Y0 = spot.Y, X1 = spot.X + w, Y1 = spot.Y + h }
 		local ov = UiKit.OverlapArea(r, avoid)
 		if r.X0 < 0 or r.Y0 < 0 or r.X1 > gw or r.Y1 > gh then
@@ -459,14 +558,14 @@ local function layoutToggles(gui: ScreenGui, column: Frame, cell: number, gap: n
 		end
 	end
 	local spot = best :: Spot
+	local fw, fh = shape(spot.Cols)
 	frame.Position = UDim2.fromOffset(math.floor(spot.X), math.floor(spot.Y))
-	frame.Size = if spot.Vertical then UDim2.fromOffset(bw, long) else UDim2.fromOffset(wide, bh)
-	local list = frame:FindFirstChildOfClass("UIListLayout")
-	if list then
-		list.FillDirection = if spot.Vertical then Enum.FillDirection.Vertical else Enum.FillDirection.Horizontal
-		list.Padding = UDim.new(0, tgap)
-	end
-	for _, tg in toggles do
+	frame.Size = UDim2.fromOffset(fw, fh)
+	-- 버튼은 줄 순서대로 (왼쪽 → 오른쪽, 위 → 아래)
+	for i, tg in toggles do
+		local col = (i - 1) % spot.Cols
+		local row = math.floor((i - 1) / spot.Cols)
+		tg.Button.Position = UDim2.fromOffset(col * (bw + tgap), row * (bh + tgap))
 		styleToggle(tg, bw, bh, chip)
 	end
 end
@@ -609,19 +708,13 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 	end
 	local count = #defs
 
-	-- 켜고 끄는 버튼 3개 (자리는 layout 이 정해요)
+	-- 켜고 끄는 버튼 4개 (자리는 layout 이 정해요, 버튼 하나하나 Position 으로)
 	local toggleBox: Frame = Make("Frame", {
 		Name = "Toggles",
 		BackgroundTransparency = 1,
 		Parent = gui,
 	})
 	toggleFrame = toggleBox
-	Make("UIListLayout", {
-		SortOrder = Enum.SortOrder.LayoutOrder,
-		HorizontalAlignment = Enum.HorizontalAlignment.Left,
-		VerticalAlignment = Enum.VerticalAlignment.Top,
-		Parent = toggleBox,
-	})
 	for i, def in TOGGLES do
 		local t = makeToggle(toggleBox, def, i)
 		table.insert(toggles, t)
@@ -809,6 +902,20 @@ function Hud.Update(snap: State.Snapshot)
 	end
 	lastPets = pets
 	refreshRebirth()
+	-- ★v6 환생해서 잠금이 풀렸나 (⚡ 슈퍼 자석). 들어올 때 첫 스냅샷은 조용히, 노는 중에 풀리면 말풍선
+	local rebirths = tonumber(snap.Rebirths) or 0
+	for _, t in toggles do
+		local locked = lockedNow(t.Def, rebirths)
+		if locked ~= t.Locked then
+			t.Locked = locked
+			paintToggle(t, State.GetSetting(t.Def.Key), false)
+			if not locked and lockSeen then
+				UiKit.Pop(t.Button, 0.35)
+				Toasts.Show(t.Def.Emoji .. " " .. UiKit.Josa(t.Def.Caption, "이", "가") .. " 열렸어요! 눌러서 켜 보세요", "good")
+			end
+		end
+	end
+	lockSeen = true
 end
 
 return Hud

@@ -6,6 +6,9 @@
 -- 산 알은 집 받침대로 날아가요 (나는 모습은 클라이언트, 받침대에 놓기는 날아간 뒤 서버). 집이 아주 멀면 "뿅" 하고 바로 나타나요.
 -- 벨트 줄무늬 애니메이션은 클라이언트(ZoneClient)가 해요.
 -- ★v4 좋은 알(지역 맨 위 2칸, egg.Premium): Remotes.EggAlert(zone, eggId) 를 그 사람에게만 보내요 (Config.EggAlert 규칙).
+-- ★v6 아주 희귀한 알 (egg.Special: 시크릿/천상/이터널): 보통 알이 나올 때마다 따로 굴려서 (Config.RollSpecialEgg)
+-- 반 칸 뒤에 하나 더 나와요. 벨트 끝에서 옆으로 비켜 오래 기다리고 (Config.BeltEggSpot/BeltEggLife 에 eggId),
+-- 알림은 간격·지역 창 규칙 없이 늘 보내요 ("Rare"). 보통 알 사다리(비율·개수·알림)는 그대로예요.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -42,18 +45,22 @@ type Belt = {
 
 -- 한 사람의 벨트 알 하나
 type Egg = { Uid: number, EggId: string, Zone: number, Born: number }
+-- 곧 나올 희귀 알 (보통 알 사이 반 칸 뒤)
+type Queued = { EggId: string, At: number }
 -- 한 사람의 벨트 하나
 type Lane = {
 	Zone: number,
 	Eggs: { Egg },
 	NextSpawn: number,
 	LastAlert: number, -- 마지막 EggAlert 시각 (둘째 칸 알은 Config.EggAlert.Gap 초에 한 번)
+	Queued: { Queued }, -- ★v6
 }
 -- 한 사람의 모든 벨트
 type Stream = {
 	Lanes: { [number]: Lane },
 	ById: { [number]: Egg },
 	Rng: Random,
+	SpecialRng: Random, -- ★v6 희귀 알은 따로 굴려요 (보통 알 순서가 그대로)
 	NextLaneCheck: number,
 }
 
@@ -314,6 +321,13 @@ local function sendEggAlert(player: Player, lane: Lane, eggId: string, now: numb
 	if not kind then
 		return
 	end
+	if kind == "Rare" then
+		-- ★v6 희귀 알: 그 지역이 열렸으면 언제나 (Gap 시계도 그대로 둬요)
+		if DataService.Get(player) and Config.ZoneUnlocked(lane.Zone, DataService.GetRebirths(player)) then
+			Remotes.EggAlert:FireClient(player, lane.Zone, eggId)
+		end
+		return
+	end
 	local rules = Config.EggAlert
 	if kind ~= "Top" and now - lane.LastAlert < rules.Gap then
 		return
@@ -332,9 +346,23 @@ local function sendEggAlert(player: Player, lane: Lane, eggId: string, now: numb
 	end
 end
 
--- 새 알 하나 (그 사람에게 "Add" + 좋은 알이면 알림)
-local function spawnEgg(player: Player, stream: Stream, lane: Lane, now: number)
-	if #lane.Eggs >= CV.MaxEggs then
+-- 벨트 위 보통 알 / 희귀 알 수
+local function countEggs(lane: Lane): (number, number)
+	local normal, special = 0, 0
+	for _, egg in lane.Eggs do
+		if Config.IsSpecialEgg(egg.EggId) then
+			special += 1
+		else
+			normal += 1
+		end
+	end
+	return normal, special
+end
+
+-- 새 알 하나 (그 사람에게 "Add" + 좋은 알이면 알림). ★v6 같이 희귀 알도 굴려서 반 칸 뒤로 예약해요
+local function spawnEgg(player: Player, stream: Stream, lane: Lane, now: number, belts: number)
+	local normal, special = countEggs(lane)
+	if normal >= CV.MaxEggs then
 		return
 	end
 	local eggId = Config.RollEgg(stream.Rng, lane.Zone)
@@ -344,11 +372,33 @@ local function spawnEgg(player: Player, stream: Stream, lane: Lane, now: number)
 	local egg = newEgg(stream, lane, eggId, now)
 	send(player, "Add", payload(egg))
 	sendEggAlert(player, lane, eggId, now)
+
+	local rare = Config.RollSpecialEgg(stream.SpecialRng, lane.Zone, belts)
+	if rare and Config.Eggs[rare] and special + #lane.Queued < Config.SpecialEggs.MaxPerBelt then
+		table.insert(lane.Queued, { EggId = rare, At = now + CV.SpawnInterval / 2 })
+	end
+end
+
+-- ★v6 예약한 희귀 알 내보내기 (나온 시각 = 예약 시각, 늘 알림)
+local function releaseQueued(player: Player, stream: Stream, lane: Lane, now: number)
+	local queue = lane.Queued
+	local i = 1
+	while i <= #queue do
+		local q = queue[i]
+		if now >= q.At then
+			table.remove(queue, i)
+			local egg = newEgg(stream, lane, q.EggId, q.At)
+			send(player, "Add", payload(egg))
+			sendEggAlert(player, lane, q.EggId, now)
+		else
+			i += 1
+		end
+	end
 end
 
 -- 벨트를 처음 열 때: 이미 알이 지나가고 있는 것처럼 채워요 (알림은 안 보내요)
 local function addLane(stream: Stream, zone: number, now: number): Lane
-	local lane: Lane = { Zone = zone, Eggs = {}, NextSpawn = now, LastAlert = -math.huge }
+	local lane: Lane = { Zone = zone, Eggs = {}, NextSpawn = now, LastAlert = -math.huge, Queued = {} }
 	stream.Lanes[zone] = lane
 	local interval = CV.SpawnInterval
 	local phase = stream.Rng:NextNumber(0, interval)
@@ -388,7 +438,13 @@ end
 
 local function buildStream(player: Player): Stream
 	local seed = (math.floor(os.clock() * 1000) % 1000000) + player.UserId % 100000 * 37
-	local stream: Stream = { Lanes = {}, ById = {}, Rng = Random.new(seed), NextLaneCheck = 0 }
+	local stream: Stream = {
+		Lanes = {},
+		ById = {},
+		Rng = Random.new(seed),
+		SpecialRng = Random.new(seed * 7 + 12345),
+		NextLaneCheck = 0,
+	}
 	streams[player] = stream
 	ensureLanes(player, stream, clockNow(), false)
 	return stream
@@ -425,16 +481,19 @@ local function tickStream(player: Player, stream: Stream, now: number)
 		stream.NextLaneCheck = now + LANE_CHECK
 		ensureLanes(player, stream, now, true)
 	end
-	local life = Config.BeltEggLife()
 	local rebirths = DataService.GetRebirths(player)
+	local belts = Config.MaxZoneFor(rebirths) -- 열린 벨트 수 (희귀 알 확률을 나눠요)
 	for zone, lane in stream.Lanes do
 		local eggs = lane.Eggs
 		for i = #eggs, 1, -1 do
 			local egg = eggs[i]
-			if now - egg.Born > life then
+			if now - egg.Born > Config.BeltEggLife(egg.EggId) then
 				stream.ById[egg.Uid] = nil
 				table.remove(eggs, i) -- 클라이언트도 시간으로 알아서 지워요 (메시지 없음)
 			end
+		end
+		if #lane.Queued > 0 then
+			releaseQueued(player, stream, lane, now)
 		end
 		if now >= lane.NextSpawn then
 			lane.NextSpawn += CV.SpawnInterval -- 고리 간격(0.25초)에 밀리지 않게 정확히 SpawnInterval 마다
@@ -442,7 +501,7 @@ local function tickStream(player: Player, stream: Stream, now: number)
 				lane.NextSpawn = now + CV.SpawnInterval -- 오래 멈췄으면 몰아서 내지 않아요
 			end
 			if Config.ZoneUnlocked(zone, rebirths) then
-				spawnEgg(player, stream, lane, now)
+				spawnEgg(player, stream, lane, now, belts)
 			end
 		end
 	end
@@ -481,8 +540,8 @@ local function onBuy(player: Player, uid: any)
 	buyDebounce[player] = clock + 0.3
 
 	local age = clockNow() - egg.Born
-	if age > CV.DropTime + CV.TravelTime + CV.BuyGrace then
-		return -- 벨트 끝을 지났어요
+	if age > Config.BeltEggBuyEnd(egg.EggId) + CV.BuyGrace then
+		return -- 벨트 끝을 지났어요 (★v6 희귀 알은 끝에서 더 기다려요)
 	end
 	if not DataService.Get(player) then
 		return
@@ -502,7 +561,7 @@ local function onBuy(player: Player, uid: any)
 	if not (hrp and hrp:IsA("BasePart")) then
 		return
 	end
-	local spot = Config.BeltEggSpot(egg.Zone, age)
+	local spot = Config.BeltEggSpot(egg.Zone, age, egg.EggId)
 	local center = spot + Vector3.new(0, EGG_CENTER, 0)
 	if (hrp.Position - center).Magnitude > CV.BuyDistance then
 		return
@@ -543,12 +602,20 @@ local function onBuy(player: Player, uid: any)
 		send(player, "Bought", { Uid = egg.Uid, Target = target, FlyTime = flyTime, Poof = false })
 		-- 날아가는 동안 상황이 바뀌었을 수 있으니 도착할 때 다시 확인
 		task.delay(flyTime, placeIfStillThere, player, itemUid)
-		notify(player, "알을 샀어요! 집에서 부화를 기다려요 🥚", "good")
+		if def.Special then
+			notify(player, "🌟 " .. def.Name .. "을 샀어요! 집에서 부화를 기다려요 🥚", "good")
+		else
+			notify(player, "알을 샀어요! 집에서 부화를 기다려요 🥚", "good")
+		end
 	else
 		-- 너무 먼 집: 그 자리에서 뿅! 하고 받침대에 바로 나타나요
 		send(player, "Bought", { Uid = egg.Uid, Target = target, FlyTime = 0, Poof = true })
 		placeIfStillThere(player, itemUid)
-		notify(player, "✨ 뿅! 알이 집 받침대로 갔어요 🥚", "good")
+		if def.Special then
+			notify(player, "🌟 뿅! " .. def.Name .. "이 집 받침대로 갔어요 🥚", "good")
+		else
+			notify(player, "✨ 뿅! 알이 집 받침대로 갔어요 🥚", "good")
+		end
 	end
 	DataService.Sync(player)
 end
@@ -577,6 +644,28 @@ function ConveyorService.GetEggs(player: Player, zone: number?): { Egg }
 		end
 	end
 	return out
+end
+
+-- ★v6 그 사람 벨트에 희귀 알 하나 예약 (테스트·관리자용). 굴린 것처럼 다음 보통 알 사이 반 칸에 나와요
+-- (그 지역 희귀 알이어야 하고, 벨트가 있고, MaxPerBelt 를 넘지 않을 때만 true)
+function ConveyorService.SpawnSpecial(player: Player, zone: number, eggId: string): boolean
+	local stream = streams[player]
+	local lane = stream and stream.Lanes[zone]
+	local egg = Config.Eggs[eggId]
+	if not (lane and egg and egg.Special and egg.Zone == zone) then
+		return false
+	end
+	local _, special = countEggs(lane)
+	if special + #lane.Queued >= Config.SpecialEggs.MaxPerBelt then
+		return false
+	end
+	local now = clockNow()
+	local at = lane.NextSpawn - CV.SpawnInterval / 2
+	if at < now then
+		at += CV.SpawnInterval
+	end
+	table.insert(lane.Queued, { EggId = eggId, At = at })
+	return true
 end
 
 function ConveyorService.Start()

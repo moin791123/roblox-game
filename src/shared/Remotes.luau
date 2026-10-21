@@ -14,10 +14,12 @@ local NAMES = {
 	"CoinField", -- (op: "Reset" | "Add" | "Remove", payload) 내 들판 코인 (CoinFieldService 참고, 코인마다 Zone 있음)
 	"LeaderboardSync", -- (board: { Income: {Row}, Rebirths: {Row}, Global: boolean, UpdatedAt: number }) ★
 	"EggAlert", -- (zone: number, eggId: string) 좋은 알(지역 맨 위 2칸)이 벨트에 나왔어요 → 배너 (Config.EggAlert 규칙) ★v4
+	-- ★v6 아주 희귀한 알 (Config.EggAlertKind(eggId) == "Rare", egg.Special) 은 규칙 없이 늘 와요
 	"EggBelt", -- (op: "Reset" | "Add" | "Remove" | "Bought", payload) 내 벨트 알 (사람마다 따로, ConveyorService 참고) ★v5
 	-- Reset: { {Uid, EggId, Zone, Born}, … } 내 모든 벨트 알 / Add: {Uid, EggId, Zone, Born} / Remove: Uid
 	-- Bought: {Uid, Target: CFrame (받침대), FlyTime: number, Poof: boolean} 산 알 → 집으로 날아가기 (Poof 면 뿅)
-	-- Born = workspace:GetServerTimeNow() 기준 나온 시각, 자리 = Config.BeltEggSpot(Zone, 지금 - Born)
+	-- Born = workspace:GetServerTimeNow() 기준 나온 시각, 자리 = Config.BeltEggSpot(Zone, 지금 - Born, EggId)
+	-- ★v6 희귀 알은 더 오래 있어요: 지우는 때 = Config.BeltEggLife(EggId)
 	-- 클라이언트 -> 서버
 	"RequestSync", -- ()
 	"PetAction", -- (uid: string, action: "Follow" | "Unfollow" | "ToBase" | "ToBag" | "Sell" | "Ride" | "Unride" | "Hold" | "Unhold" | "Fuse")
