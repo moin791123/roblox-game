@@ -17,8 +17,12 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 >    a special EggAlert ("Rare" kind) with a distinct banner, and get a taller rainbow beacon. Each hatches ONE guaranteed pet.
 > 2. **Three new rarities above 비밀 (Secret)**: `Hidden` "시크릿" (Order 8), `Celestial` "천상" (Order 9), `Eternal` "이터널" (Order 10);
 >    one pet of each per zone (24 pets, table below). Income ≈ 2.5× / 6× / 15× the zone's Secret pet (tuned by sim).
-> 3. **Magnet**: bigger normal 🧲 radius; new ⚡ 슈퍼 자석 toggle (Config.Settings.SuperMagnet) that pulls most of the current zone's
->    coins, unlocked after 1 rebirth (server-enforced), with its own rate cap.
+> 3. **Magnet**: 🧲 `BigMagnetRadius` 45 → 80, `BigMagnetRate` 1.6/s, burst 8 (server: 80 + 8 studs, 2.4/s bucket of 12). New ⚡ 슈퍼 자석
+>    (Config.Settings.SuperMagnet; FieldCoins `SuperMagnetMinRebirth` 1, `SuperMagnetRadius` 150, `SuperMagnetRate` 2/s,
+>    `SuperMagnetBurst` 12): pulls only coins of the zone you stand in (server: same zone with 10-stud edge slack, 150 + 8 studs,
+>    30 studs of height, own 2.5/s bucket of 16); super wins when both are on (other-zone coins refused inside a zone; 🧲 still works on
+>    trails). The toggle always saves, the pull needs ≥ 1 rebirth; Hud's 4th toggle is grey "🔒 환생 1회" until then (toast on the
+>    unlocking rebirth). Toggles are positioned directly (no UIListLayout). Sim: zone 8 at 17.2 h (none) / 12.2 h (🧲) / 10.2 h (🧲 + ⚡).
 >
 > | zone | 시크릿 (Hidden) egg → pet | 천상 (Celestial) egg → pet | 이터널 (Eternal) egg → pet |
 > |---|---|---|---|
