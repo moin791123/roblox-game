@@ -900,6 +900,13 @@ function UiKit.ShowBadge(badge: Frame?, on: boolean)
 			TweenInfo.new(BADGE_PULSE_TIME, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, BADGE_PULSES - 1, true),
 			{ Scale = 1.1 }
 		)
+		-- 다 뛰고 나면 원래 크기로 가만히
+		tween.Completed:Connect(function(state)
+			if state == Enum.PlaybackState.Completed and badgePulse[badge] == tween then
+				s.Scale = 1
+				badgePulse[badge] = nil
+			end
+		end)
 		tween:Play()
 		badgePulse[badge] = tween
 	else
