@@ -1,7 +1,7 @@
 -- 지역 클라이언트: 환생이 모자란 지역 문은 나한테만 막혀요 (분홍 보호막, 스냅샷마다 다시 확인).
 -- 지역에 들어가면 "🦆 호수에 왔어요!" 배너, 새 지역이 열리면 축하 배너, 지역마다 하늘 색을 살짝 바꿔요 (우주 = 밤).
 -- 컨베이어 줄무늬도 여기서 움직여요 (서버는 줄무늬를 안 움직여요).
--- 순간이동하면 카메라를 캐릭터가 보는 쪽(섬 안쪽 SpawnLook)으로 돌리고, 배너는 위쪽 좋은 알 배너(Toasts)를 비켜요.
+-- 순간이동하면 카메라를 캐릭터가 보는 쪽(섬 안쪽 SpawnLook)으로 돌리고, 배너는 좋은 알 배너·알림 말풍선(Toasts)·부화 연출을 비켜요.
 local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -149,7 +149,7 @@ local function ensureBanner(gui: Instance?)
 		ZIndex = 35,
 		Parent = parent,
 	})
-	Make("UISizeConstraint", { MinSize = Vector2.new(260, 64), MaxSize = Vector2.new(560, 110), Parent = frame })
+	Make("UISizeConstraint", { MinSize = Vector2.new(220, 64), MaxSize = Vector2.new(560, 110), Parent = frame })
 	UiKit.Corner(frame, UDim.new(0.35, 0))
 	local stroke = UiKit.Stroke(frame, C.Pink, 5, true)
 	stroke.Name = "BannerStroke"
@@ -173,31 +173,86 @@ local function ensureBanner(gui: Instance?)
 	bannerFrame = frame
 end
 
--- 위쪽 가운데의 좋은 알 배너·알림 말풍선(Toasts)과 겹치면 그 아래로 비켜요 (태블릿·PC 처럼 큰 화면에서 겹쳐요)
--- onlyDown = 보이는 동안 다시 잴 때: 아래로만 비키고 위로는 안 돌아가요 (덜 흔들려요)
-local function placeBanner(onlyDown: boolean?)
+-- 기본 자리는 위쪽 가운데. 오른쪽 옆 칸의 좋은 알 배너·부화 연출이나 가운데 알림 말풍선(Toasts)과 겹치면
+-- 1) 왼쪽 큰 버튼과 오른쪽 상자 사이 빈칸으로 비키고 (좁으면 220px 까지 작게)  2) 그래도 겹치면 그 아래로
+-- keep = 보이는 동안 다시 잴 때: 지금 자리가 아무것도 안 가리면 그대로 있어요 (덜 흔들려요)
+local ZONE_MIN_W = 220
+local placed: UiKit.Rect? = nil
+local function placeBanner(keep: boolean?)
 	local frame = bannerFrame
 	local parent = if frame then frame.Parent else nil
 	if not frame or not parent or not parent:IsA("GuiBase2d") then
 		return
 	end
-	local gh = parent.AbsoluteSize.Y
-	local pos = UDim2.fromScale(0.5, BANNER_Y)
-	local colTop, colBottom = Toasts.TopColumn()
-	if colTop and colBottom then
-		local h = math.clamp(gh * 0.11, 64, 110) -- Size 0.11 + UISizeConstraint 와 같은 값
-		local top = gh * BANNER_Y - h / 2
-		if top < colBottom + 8 and top + h > colTop then
-			pos = UDim2.new(0.5, 0, 0, math.floor(colBottom + 8 + h / 2))
-		end
-	end
-	local cur = frame.Position
-	if onlyDown and pos.Y.Scale * gh + pos.Y.Offset <= cur.Y.Scale * gh + cur.Y.Offset then
+	local gw, gh = parent.AbsoluteSize.X, parent.AbsoluteSize.Y
+	if gw <= 0 or gh <= 0 then
 		return
 	end
-	if cur ~= pos then
+	local avoid = Toasts.TopRects()
+	local hatch = UiKit.SideRect("Hatch")
+	if hatch then
+		table.insert(avoid, hatch)
+	end
+	local function hitAt(x: number, y: number, w: number, h: number): UiKit.Rect?
+		local r: UiKit.Rect = { X0 = x, Y0 = y, X1 = x + w, Y1 = y + h }
+		for _, o in avoid do
+			if UiKit.RectsHit(r, o) then
+				return o
+			end
+		end
+		return nil
+	end
+	local cur = placed
+	if keep and cur and not hitAt(cur.X0, cur.Y0, cur.X1 - cur.X0, cur.Y1 - cur.Y0) then
+		return
+	end
+	local w = math.clamp(math.floor(gw * 0.5), 260, 560) -- 보통 크기 (화면 50%, 260~560)
+	local h = math.clamp(math.floor(gh * 0.11), 64, 110)
+	local top = math.floor(gh * BANNER_Y - h / 2)
+	local x, y, width = math.floor(gw / 2 - w / 2), top, w
+	if hitAt(x, y, w, h) then
+		-- 1) 옆으로 (오른쪽 옆 칸에 걸렸을 때): 왼쪽 큰 버튼(같은 높이일 때)과 오른쪽 상자 사이
+		local tries: { { number } } = {}
+		local left, right = 12, gw - 12
+		for _, o in UiKit.SideObstacles(nil) do
+			if o.Tag == "SideButtons" and o.Y0 < top + h and top < o.Y1 then
+				left = math.max(left, o.X1 + 8)
+			end
+		end
+		for _, o in avoid do
+			if (o.X0 + o.X1) / 2 > gw / 2 and o.Y0 < top + h and top < o.Y1 then
+				right = math.min(right, o.X0 - 8)
+			end
+		end
+		local ww = math.floor(math.min(w, right - left))
+		if ww >= ZONE_MIN_W then
+			local cx = math.clamp(gw / 2, left + ww / 2, right - ww / 2)
+			table.insert(tries, { math.floor(cx - ww / 2), ww })
+		end
+		table.insert(tries, { x, w })
+		-- 2) 그래도 겹치면 그 아래로 (옆으로 비킨 자리 / 가운데 자리 중 더 위에 놓이는 쪽)
+		local bestY = math.huge
+		for _, t in tries do
+			local ty = top
+			for _ = 1, 6 do
+				local o = hitAt(t[1], ty, t[2], h)
+				if not o then
+					break
+				end
+				ty = math.ceil(o.Y1 + 8)
+			end
+			if ty < bestY then
+				bestY, x, width = ty, t[1], t[2]
+			end
+		end
+		y = math.min(bestY, math.max(top, gh - h - 8))
+	end
+	placed = { X0 = x, Y0 = y, X1 = x + width, Y1 = y + h }
+	local pos = UDim2.fromOffset(math.floor(x + width / 2), math.floor(y + h / 2))
+	if frame.Position ~= pos then
 		frame.Position = pos
 	end
+	frame.Size = UDim2.fromOffset(width, h)
 end
 
 local function showBanner(title: string, sub: string, color: Color3, sound: string?)
@@ -450,7 +505,7 @@ function ZoneClient.Init(gui: Instance?)
 			if not ok then
 				warn("[ZoneClient] 지역 확인 오류:", err)
 			end
-			-- 보이는 동안 좋은 알 배너가 새로 뜨면 비켜요
+			-- 보이는 동안 좋은 알 배너·말풍선·부화 연출이 새로 뜨면 비켜요
 			local frame = bannerFrame
 			if frame and frame.Visible then
 				pcall(placeBanner, true)

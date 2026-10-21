@@ -919,6 +919,7 @@ function UiKit.RectsHit(a: Rect, b: Rect): boolean
 	return a.X0 < b.X1 and b.X0 < a.X1 and a.Y0 < b.Y1 and b.Y0 < a.Y1
 end
 
+-- r 이 list 의 상자들과 겹친 넓이 (합)
 local function overlapArea(r: Rect, list: { Rect }): number
 	local total = 0
 	for _, b in list do
@@ -931,17 +932,20 @@ local function overlapArea(r: Rect, list: { Rect }): number
 	return total
 end
 
--- 보이는 것들을 모두 감싸는 상자 (코인 줄 아래 "+N/초" 줄, 환생 비용 알약처럼 밖으로 삐져나온 것까지)
-local function treeRect(root: GuiObject, tag: string): Rect
+UiKit.OverlapArea = overlapArea
+
+-- 상자 + 밖으로 삐져나온 보이는 것들 (코인 줄 아래 "+N/초" 알약, 환생 비용 알약 같은 것) 을 따로따로
+local function addTree(out: { Rect }, root: GuiObject, tag: string)
 	local r = UiKit.RectOf(root, 4, tag)
+	table.insert(out, r)
 	for _, d in root:GetDescendants() do
 		if d:IsA("GuiObject") and d.Visible and d.BackgroundTransparency < 1 then
-			local q = UiKit.RectOf(d, 4)
-			r.X0, r.Y0 = math.min(r.X0, q.X0), math.min(r.Y0, q.Y0)
-			r.X1, r.Y1 = math.max(r.X1, q.X1), math.max(r.Y1, q.Y1)
+			local q = UiKit.RectOf(d, 4, tag)
+			if q.X0 < r.X0 or q.Y0 < r.Y0 or q.X1 > r.X1 or q.Y1 > r.Y1 then
+				table.insert(out, q)
+			end
 		end
 	end
-	return r
 end
 
 -- 옆 칸 상자가 피해야 하는 것: 위 코인 줄, 왼쪽 큰 버튼, 팁 줄, 꾸미기 버튼 줄·아래 판, 열린 창의 ✖ 버튼,
@@ -961,7 +965,7 @@ function UiKit.SideObstacles(mainGui: Instance?): { Rect }
 		if child:IsA("GuiObject") and child.Visible then
 			local name = child.Name
 			if name == "TopBar" or name == "SideButtons" then
-				table.insert(out, treeRect(child, name))
+				addTree(out, child, name)
 			elseif name == "Tips" then
 				table.insert(out, UiKit.RectOf(child, 4, name))
 			elseif name == "DecorateMode" then
@@ -974,7 +978,16 @@ function UiKit.SideObstacles(mainGui: Instance?): { Rect }
 				local header = child:FindFirstChild("Header")
 				local close = header and header:FindFirstChild("Close")
 				if close and close:IsA("GuiObject") and close.Visible then
-					table.insert(out, UiKit.RectOf(close, 8, "Close"))
+					local r = UiKit.RectOf(close, 8, "Close")
+					-- 창이 열리고 닫히는 중(UIScale)이면 다 열렸을 때 자리로 (창 가운데 기준)
+					local sc = child:FindFirstChild("FxScale")
+					local k = if sc and sc:IsA("UIScale") then sc.Scale else 1
+					if k > 0.05 and math.abs(k - 1) > 0.001 then
+						local c = child.AbsolutePosition + child.AbsoluteSize / 2
+						r.X0, r.X1 = c.X + (r.X0 - c.X) / k, c.X + (r.X1 - c.X) / k
+						r.Y0, r.Y1 = c.Y + (r.Y0 - c.Y) / k, c.Y + (r.Y1 - c.Y) / k
+					end
+					table.insert(out, r)
 				end
 			end
 		end
@@ -994,16 +1007,18 @@ function UiKit.SideObstacles(mainGui: Instance?): { Rect }
 end
 
 -- 오른쪽 옆 칸에서 w×h 상자 자리 찾기: 오른쪽 끝에 붙여서, 피할 것과 안 겹치는 높이 중 prefY(상자 위쪽)에 가장 가까운 곳.
--- 오른쪽 끝이 막혔으면 막은 것 왼쪽도 봐요 (화면 오른쪽 절반 안에서만).
+-- 오른쪽 끝이 막혔으면 막은 것 왼쪽도 봐요 (상자 가운데가 화면 오른쪽 1/3 안일 때만, edgeOnly 면 안 봐요).
 -- 돌려주는 값: x, y, 겹친 넓이 (0 이면 아무것도 안 가려요)
-function UiKit.SideSpot(gw: number, gh: number, w: number, h: number, prefY: number, avoid: { Rect }, margin: number?): (number, number, number)
+function UiKit.SideSpot(gw: number, gh: number, w: number, h: number, prefY: number, avoid: { Rect }, margin: number?, edgeOnly: boolean?): (number, number, number)
 	local m = margin or 12
 	local edge = math.floor(gw - m - w)
 	local xs = { edge }
-	for _, r in avoid do
-		local x = math.floor(r.X0 - 8 - w)
-		if r.X1 > edge and x < edge and x >= gw * 0.5 then
-			table.insert(xs, x)
+	if not edgeOnly then
+		for _, r in avoid do
+			local x = math.floor(r.X0 - 8 - w)
+			if r.X1 > edge and x < edge and x + w / 2 >= gw * 2 / 3 then
+				table.insert(xs, x)
+			end
 		end
 	end
 	local minY, maxY = 8, math.floor(gh - 8 - h)
@@ -1036,7 +1051,7 @@ function UiKit.SideSpot(gw: number, gh: number, w: number, h: number, prefY: num
 end
 
 -- 옆 칸을 지금 쓰고 있는 상자 (배너 "Banner", 부화 "Hatch"): 서로 비키려고 알려 줘요
-local sideRects: { [string]: Rect } = {}
+local sideRects: { [string]: Rect? } = {}
 function UiKit.SetSideRect(name: string, rect: Rect?)
 	sideRects[name] = rect
 end
