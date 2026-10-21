@@ -5,6 +5,9 @@
 --   화면을 어둡게 하지 않고, 번쩍임·색종이도 그 칸 안에서만. 코인 줄·창 ✖·점프 버튼·꾸미기 버튼은 피해요.
 --   좋은 알 배너(Toasts)가 있으면 그 아래로 비키고, 자리가 모자라면 배너가 잠깐 숨어요.
 --   연출 칸을 누르면 바로 닫혀요 (화면의 다른 곳을 눌러도 안 닫혀요: 움직이면서 볼 수 있어요)
+-- 🙈 부화 숨기기 버튼(설정 "HideHatch")이 켜져 있으면 큰 연출 없이 서버 알림 말풍선만 떠요
+--   (말풍선에 "🆕 NEW!" 가 붙어요). 새 친구·합성·실버 이상만 소리로 살짝 알려요.
+--   보는 중에 켜면 지금 연출은 바로 닫히고 기다리던 것도 건너뛰어요.
 local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
 
@@ -28,6 +31,11 @@ local usedEggUids: { [string]: boolean } = {}
 
 local CONFETTI_COLORS = { C.Pink, C.Lemon, C.Mint, C.Sky, C.Lavender, C.Peach, C.White }
 local CARD_GAP = 6
+
+-- 🙈 부화 화면 숨기기 (버튼을 누르면 바로 바뀌어요)
+local function hidden(): boolean
+	return State.GetSetting("HideHatch")
+end
 
 function HatchFx.Init(playerGui: Instance)
 	hostGui = playerGui
@@ -186,6 +194,9 @@ local function eggStage(stage: GuiObject, job: Job, manyQueued: boolean)
 		then { 8, -8, 14, -14, 20, -20 }
 		else { 5, -5, 7, -7, 10, -10, 13, -13, 16, -16, 20, -20, 24, -24 }
 	for i, a in amps do
+		if hidden() then
+			break
+		end
 		local dt = math.max(0.06, 0.13 - i * 0.005)
 		UiKit.Tween(eggHolder, dt, { Rotation = a }, Enum.EasingStyle.Sine)
 		task.wait(dt)
@@ -219,6 +230,12 @@ local function fuseStage(stage: GuiObject, job: Job, manyQueued: boolean, color:
 	end
 	-- 둥실둥실
 	task.wait(if manyQueued then 0.45 else 0.8)
+	if hidden() then
+		for _, holder in holders do
+			holder:Destroy()
+		end
+		return
+	end
 	for i, holder in holders do
 		UiKit.Tween(holder, 0.25, { Position = UDim2.fromScale(xs[math.clamp(i, 1, #xs)], 0.44) }, Enum.EasingStyle.Sine)
 	end
@@ -466,11 +483,25 @@ local function showOne(job: Job)
 		Parent = panel,
 	}, { StrokeThickness = if L.Small then 2 else 3, MaxText = 40 })
 
+	-- 칸 닫기 (미끄러져 나가요)
+	local function slideOut()
+		watching = false
+		UiKit.Tween(panel, 0.22, { Position = UDim2.fromOffset(gui.AbsoluteSize.X + 12, py) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		UiKit.Tween(glow, 0.2, { BackgroundTransparency = 1 })
+		task.wait(0.24)
+		UiKit.SetSideRect("Hatch", nil)
+		root:Destroy()
+	end
+
 	-- 1) 알 흔들기 / 펫 모으기
 	if isFuse then
 		fuseStage(stage, job, manyQueued, tc)
 	else
 		eggStage(stage, job, manyQueued)
+	end
+	if hidden() then
+		slideOut() -- 🙈 보는 중에 숨기기를 켰어요
+		return
 	end
 
 	-- 2) 번쩍! (무대 안에서만: 화면 가운데는 그대로 보여요)
@@ -629,25 +660,20 @@ local function showOne(job: Job)
 		end
 	end)
 	local hold = if #queue > 0 then 1.0 else 3
-	while not closed and os.clock() - revealAt < hold do
+	while not closed and os.clock() - revealAt < hold and not hidden() do
 		task.wait()
 	end
 
-	watching = false
-	UiKit.Tween(panel, 0.22, { Position = UDim2.fromOffset(gui.AbsoluteSize.X + 12, py) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-	UiKit.Tween(glow, 0.2, { BackgroundTransparency = 1 })
-	task.wait(0.24)
+	slideOut()
 	spin:Disconnect()
 	activeSpin = nil
-	UiKit.SetSideRect("Hatch", nil)
-	root:Destroy()
 end
 
 local function runQueue()
 	running = true
 	while #queue > 0 do
 		local job = table.remove(queue, 1)
-		if job then
+		if job and not hidden() then
 			local ok, err = pcall(showOne, job)
 			if not ok then
 				warn("[HatchFx]", err)
@@ -674,7 +700,14 @@ function HatchFx.Play(petId: any, position: any, isNew: any, tier: any, mode: an
 	local m = if mode == "Fuse" then "Fuse" else "Hatch"
 	local color = if t >= 2 then UiKit.TierColor(t) else UiKit.RarityColor(Config.Pets[petId].Rarity)
 	if typeof(position) == "Vector3" then
-		worldBurst(position, color)
+		worldBurst(position, color) -- 받침대(합성은 머리 위)의 작은 반짝이는 숨기기여도 그대로
+	end
+	if hidden() then
+		-- 🙈 큰 연출 없이: 알림은 서버 말풍선이 해요. 특별한 것만 소리로 살짝
+		if isNew == true or m == "Fuse" or t >= 3 then
+			UiKit.PlaySound(if m == "Fuse" then "Buy" else "Hatch")
+		end
+		return
 	end
 	table.insert(queue, {
 		PetId = petId,

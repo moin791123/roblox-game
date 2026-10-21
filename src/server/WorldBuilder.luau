@@ -2012,7 +2012,7 @@ local function setupLighting()
 	Lighting.Ambient = RGB(150, 145, 160)
 	Lighting.OutdoorAmbient = RGB(185, 175, 195)
 	Lighting.EnvironmentDiffuseScale = 0.6
-	Lighting.EnvironmentSpecularScale = 0.4
+	Lighting.EnvironmentSpecularScale = 0.28 -- 반짝 비치는 빛 (금속·유리 펫이 살랑살랑 돌 때 번쩍이지 않게, 0.4 → 0.28)
 	Lighting.ExposureCompensation = 0.1
 	Lighting.GlobalShadows = true
 	Lighting.ShadowSoftness = 0.35
@@ -2030,7 +2030,7 @@ local function setupLighting()
 	atmosphere.Offset = 0.2
 	atmosphere.Color = RGB(255, 228, 242)
 	atmosphere.Decay = RGB(200, 210, 255)
-	atmosphere.Glare = 0.1
+	atmosphere.Glare = 0.05
 	atmosphere.Haze = 0.8
 	atmosphere.Parent = Lighting
 
@@ -2044,10 +2044,11 @@ local function setupLighting()
 
 	local bloom = Instance.new("BloomEffect")
 	bloom.Name = "SoftBloom"
-	-- 네온·반짝이가 번지는 정도. 집 안에 빛나는 게 많이 모이면 눈부셔서 살짝 약하게 (0.35 / 1.6 → 0.28 / 1.8)
-	bloom.Intensity = 0.28
-	bloom.Size = 24
-	bloom.Threshold = 1.8
+	-- 네온·반짝이가 번지는 정도. 집 안에 빛나는 게 많이 모이면 번쩍번쩍 눈부셔서 약하게
+	-- (0.35 / 24 / 1.6 → 0.28 / 24 / 1.8 → 0.18 / 20 / 2.1)
+	bloom.Intensity = 0.18
+	bloom.Size = 20
+	bloom.Threshold = 2.1
 	bloom.Parent = Lighting
 end
 

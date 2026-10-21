@@ -42,6 +42,7 @@ export type Snapshot = {
 	Furniture: { [string]: FurniturePiece }, -- 집에 놓인 가구 (fid → 정보)
 	FurnitureInv: { [string]: number }, -- 가구 가방 (furnId → 개수)
 	Stats: { [string]: number },
+	Settings: { [string]: boolean }, -- 켜고 끄는 버튼 (Config.Settings 키만, 없으면 기본값)
 }
 
 export type SortedEntry = { Uid: string, Item: Item }
@@ -57,7 +58,14 @@ local syncListeners: { (Snapshot, Snapshot?) -> () } = {}
 local coinListeners: { (number, number, number) -> () } = {}
 local plotListeners: { (Model?) -> () } = {}
 local boardListeners: { (Board) -> () } = {}
+local settingListeners: { (string, boolean) -> () } = {}
 local plotsFolder: Instance? = nil
+
+-- 켜고 끄는 버튼: 방금 누른 값 (서버 스냅샷이 같은 값으로 올 때까지 이걸 보여 줘요)
+local SETTING_WAIT = 4
+type SettingWant = { Value: boolean, Until: number }
+local settingWant: { [string]: SettingWant } = {}
+local settingShown: { [string]: boolean } = {}
 
 -- 숫자 정리 (NaN/무한대/숫자 아님 → nil)
 local function num(v: any): number?
@@ -90,6 +98,11 @@ end
 -- 순위표가 오면
 function State.OnBoard(fn: (Board) -> ())
 	table.insert(boardListeners, fn)
+end
+
+-- 켜고 끄는 버튼 값이 (보이는 값 기준으로) 바뀌면 (key, value)
+function State.OnSetting(fn: (string, boolean) -> ())
+	table.insert(settingListeners, fn)
 end
 
 ----------------------------------------------------------------------
@@ -157,6 +170,72 @@ end
 -- 그 지역에 들어갈 수 있나
 function State.ZoneUnlocked(zone: number): boolean
 	return Config.ZoneUnlocked(zone, State.Rebirths())
+end
+
+----------------------------------------------------------------------
+-- 켜고 끄는 버튼 (Config.Settings: HideHatch / AutoCollect / Magnet)
+----------------------------------------------------------------------
+
+-- 지금 값: 방금 누른 값 → 서버 스냅샷 → Config 기본값
+function State.GetSetting(key: string): boolean
+	local want = settingWant[key]
+	if want then
+		return want.Value
+	end
+	local snap = State.Snapshot
+	local v = if snap and type(snap.Settings) == "table" then snap.Settings[key] else nil
+	if type(v) ~= "boolean" then
+		v = (Config.Settings :: any)[key]
+	end
+	return v == true
+end
+
+local function fireSettings()
+	for key in Config.Settings do
+		local v = State.GetSetting(key)
+		if settingShown[key] ~= v then
+			local first = settingShown[key] == nil
+			settingShown[key] = v
+			if not (first and v == (Config.Settings :: any)[key]) then
+				for _, fn in settingListeners do
+					task.spawn(fn, key, v)
+				end
+			end
+		end
+	end
+end
+
+-- 서버 스냅샷이 방금 누른 값을 따라잡았나 (시간이 지나면 서버 값으로 돌아가요)
+local function settleSettings()
+	local snap = State.Snapshot
+	local saved = if snap and type(snap.Settings) == "table" then snap.Settings else {}
+	local now = os.clock()
+	for key, want in settingWant do
+		local v = saved[key]
+		if type(v) ~= "boolean" then
+			v = (Config.Settings :: any)[key] == true
+		end
+		if v == want.Value or now >= want.Until then
+			settingWant[key] = nil
+		end
+	end
+end
+
+-- 버튼을 누르면 바로 바꿔 보여 줘요 (서버로 보내는 건 부르는 쪽: Remotes.SetSetting)
+function State.SetSettingLocal(key: string, value: boolean)
+	if (Config.Settings :: any)[key] == nil or type(value) ~= "boolean" then
+		return
+	end
+	local want: SettingWant = { Value = value, Until = os.clock() + SETTING_WAIT }
+	settingWant[key] = want
+	fireSettings()
+	-- 서버 답이 끝내 안 오면 서버 값으로 돌아가요
+	task.delay(SETTING_WAIT + 0.1, function()
+		if settingWant[key] == want then
+			settleSettings()
+			fireSettings()
+		end
+	end)
 end
 
 ----------------------------------------------------------------------
@@ -452,6 +531,17 @@ function State.SetSnapshot(snap: any)
 	snap.Furniture = tableOr(snap.Furniture, {})
 	snap.FurnitureInv = tableOr(snap.FurnitureInv, {})
 	snap.Stats = tableOr(snap.Stats, {})
+	-- 버튼 값: Config.Settings 에 있는 키의 true/false 만 (없는 키 = 기본값)
+	local settings: { [string]: boolean } = {}
+	if type(snap.Settings) == "table" then
+		for key in Config.Settings do
+			local v = snap.Settings[key]
+			if type(v) == "boolean" then
+				settings[key] = v
+			end
+		end
+	end
+	snap.Settings = settings
 	if type(snap.Theme) ~= "string" or not Config.House.Themes[snap.Theme] then
 		snap.Theme = "Basic"
 	end
@@ -479,6 +569,8 @@ function State.SetSnapshot(snap: any)
 	snap.BagCount = math.max(0, math.floor(bag))
 	local prev = State.Snapshot
 	State.Snapshot = snap
+	settleSettings()
+	fireSettings()
 	for _, fn in syncListeners do
 		task.spawn(fn, snap, prev)
 	end

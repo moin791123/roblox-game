@@ -45,6 +45,7 @@ local MapWindow = optionalRequire("MapWindow") -- Init(gui), Open, Close, IsOpen
 local LeaderboardWindow = optionalRequire("LeaderboardWindow") -- Init(gui), Open, Close, IsOpen, OnSync, SetBoard (LeaderboardSync 는 스스로 받아요)
 local DecorateMode = optionalRequire("DecorateMode") -- Init(gui?), Enter(floor?, furnId?), Exit, IsActive, OnSync, OnChanged(fn), SetShopOpener(fn)
 local ZoneClient = optionalRequire("ZoneClient") -- Init()
+local RideFly = optionalRequire("RideFly") -- Init(gui): 펫 타고 날기 ✈
 
 -- 모듈 함수 안전하게 부르기 (없으면 nil, 오류는 경고만)
 local function safeCall(mod: any, fnName: string, ...: any): any
@@ -212,7 +213,9 @@ Tips.Init(gui)
 HatchFx.Init(playerGui)
 WorldFx.Init()
 CoinField.Init()
+safeCall(optionalRequire("EggBelt"), "Init") -- ★v5 내 컨베이어 알 (사람마다 따로, 나만 보여요)
 safeCall(ZoneClient, "Init")
+safeCall(RideFly, "Init", gui)
 
 -- 엘리베이터 프롬프트 → 층 고르기 창
 WorldFx.OnElevator(function(floor: number?)

@@ -225,10 +225,12 @@ local function face(b: Builder, c: Vector3, s: Vector3, ex: number, ey: number, 
 	end
 end
 
+-- 가구 조명은 집 안에 여러 개 놓이니까 차분하게 (스탠드 0.8 → 0.52, 벽난로 0.9 → 0.59)
+local FURNITURE_LIGHT_MULT = 0.65
 local function light(p: BasePart, color: Color3, brightness: number, range: number)
 	local l = Instance.new("PointLight")
 	l.Color = color
-	l.Brightness = brightness
+	l.Brightness = brightness * FURNITURE_LIGHT_MULT
 	l.Range = range
 	l.Shadows = false
 	l.Parent = p

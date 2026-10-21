@@ -3,6 +3,8 @@
 -- 들고 있는 펫은 머리(Head)에 용접해서 머리 위에 둥실둥실 떠 있어요.
 -- 물리는 플레이어 클라이언트가 계산 (SetNetworkOwner) 해서 부드러워요.
 -- 펫은 입은 옷(Item.Acc)까지 같이 만들어요. WalkSpeed / HipHeight 를 정하는 곳은 여기뿐이에요. (설계: docs/DESIGN.md "FollowService")
+-- 펫 타고 날기: 타는 펫이 붙어 있는 동안 플레이어 속성 Riding = true (= 날 수 있어요), FlySpeed = 나는 속도.
+-- 나는 물리는 클라이언트(RideFly)가 해요. 내리면(Unride) Riding = false → 클라이언트가 살살 내려와 착지해요.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -37,6 +39,8 @@ local BOB = 0.7 -- 위아래 흔들림
 local HOLD_BOB = 0.25 -- 머리 위 펫 위아래 흔들림
 local SNAP_DISTANCE = 60 -- 이보다 멀어지면 순간이동
 local EFFECT_MIN_ORDER = 5 -- 타기/들기 펫 희귀도 효과: 전설 이상
+local FLY_SPEED_MULT = 1.2 -- 날 때 속도 = 탈 때 속도 × 이만큼
+local FLY_MAX_SPEED = 72 -- 나는 속도 최대
 
 local function getFolder(): Folder
 	if folder and folder.Parent then
@@ -196,6 +200,18 @@ local function restoreHip(st: State)
 	st.rideHumanoid = nil
 	st.hipAdded = 0
 	st.hipBase = nil
+end
+
+-- 날기 허락 (타는 펫이 진짜 붙어 있을 때만 true). 같은 값이면 안 써요 (Refresh 중에 false 로 깜빡이지 않게)
+local function syncRideFlag(player: Player)
+	if player.Parent == nil then
+		return
+	end
+	local st = states[player]
+	local on = st ~= nil and st.ride ~= nil and st.ride.Parent ~= nil
+	if player:GetAttribute("Riding") ~= on then
+		player:SetAttribute("Riding", on)
+	end
 end
 
 local function destroyModels(player: Player)
@@ -432,16 +448,35 @@ function FollowService.UpdateSpeed(player: Player)
 	local rebirthMult = Config.RebirthSpeedMult(DataService.GetRebirths(player))
 	local speed = (Config.BaseWalkSpeed + Config.WalkSpeedPerFollower * count) * mult * rebirthMult
 	hum.WalkSpeed = math.min(speed, Config.MaxWalkSpeed)
+	-- 날 때 속도 (탈 때보다 조금 빠르게)
+	local fly = if ride then math.floor(math.min(hum.WalkSpeed * FLY_SPEED_MULT, FLY_MAX_SPEED) * 10 + 0.5) / 10 else 0
+	if player.Parent and player:GetAttribute("FlySpeed") ~= fly then
+		player:SetAttribute("FlySpeed", fly)
+	end
 end
 
 function FollowService.Clear(player: Player)
 	destroyModels(player)
+	syncRideFlag(player)
 	if player.Parent then
 		player:SetAttribute("RideSpeedMult", 1)
 	end
 end
 
+-- 타는 펫이 지금 붙어 있나 (= 날 수 있나)
+function FollowService.IsRiding(player: Player): boolean
+	local st = states[player]
+	return st ~= nil and st.ride ~= nil and st.ride.Parent ~= nil
+end
+
+local refreshInner: (Player) -> ()
+
 function FollowService.Refresh(player: Player)
+	refreshInner(player)
+	syncRideFlag(player)
+end
+
+refreshInner = function(player: Player)
 	destroyModels(player)
 	FollowService.UpdateSpeed(player)
 	if player.Parent == nil then
@@ -562,6 +597,7 @@ local function hookPlayer(player: Player)
 	hooked[player] = {
 		player.CharacterRemoving:Connect(function()
 			destroyModels(player)
+			syncRideFlag(player)
 		end),
 		-- 리스폰하면 타던 펫 / 들고 있던 펫을 다시 올려요 (기지로 옮겨진 뒤에)
 		player.CharacterAdded:Connect(function(character)

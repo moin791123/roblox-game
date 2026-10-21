@@ -2,8 +2,8 @@
 --  · 내 것 아닌 프롬프트 숨기기 (PromptKind "Owner")
 --  · 엘리베이터 프롬프트 (PromptAction "Elevator") → init.client 가 넣은 함수 (층 고르기 창)
 --  · 집 받침대 펫 살랑살랑 (Bob = true 모델, 가까운 것만, 루프 하나로 Body CFrame 만 움직여요)
---  · 받침대 펫 빛·반짝이 살짝 줄이기 (한 방에 많이 모여 눈부시지 않게) + 멀리 있는 펫의 반짝이/빛 끄기 (LOD)
---  · 레인보우 등급(TierCycle) 색 돌리기: 가까운 받침대 펫 + 내가 데리고 다니는/탄/든 펫
+--  · 받침대 펫 빛·반짝이·반사 줄이기 (한 방에 많이 모여 번쩍번쩍 눈부시지 않게) + 멀리 있는 펫의 반짝이/빛 끄기 (LOD)
+--  · 레인보우 등급(TierCycle) 색 돌리기: 내가 데리고 다니는/탄/든 펫만 (받침대 펫은 색이 가만히 있어요)
 --  · +코인 떠오르는 숫자
 -- (들판 코인 그리기는 CoinField 모듈이 해요)
 local Players = game:GetService("Players")
@@ -25,11 +25,16 @@ local LOD_DISTANCE = 70 -- 이보다 먼 펫은 반짝이·빛을 꺼요
 local BOB_STEP = 1 / 30 -- 살랑살랑 갱신 간격 (초당 30번)
 local SCAN_STEP = 0.25 -- 거리 다시 재는 간격
 local CYCLE_STEP = 0.1 -- 레인보우 등급 색 돌리는 간격 (초당 10번)
-local CYCLE_SPEED = 0.1 -- 레인보우 색이 한 바퀴 도는 속도 (바퀴/초 → 10초에 한 바퀴. 빠르면 정신없어요)
--- 받침대 펫은 한 층에 12마리씩 모여 있어서 빛·반짝이가 겹쳐 눈부셔요 → 조금만 줄여요 (등급·희귀도 효과 모두).
+local CYCLE_SPEED = 0.07 -- 레인보우 색이 한 바퀴 도는 속도 (바퀴/초 → 약 14초에 한 바퀴. 빠르면 정신없어요)
+local PED_CYCLE = false -- 받침대 펫도 색을 돌릴까 (끄면 무지개 줄무늬는 그대로, 색만 안 바뀌어요)
+-- 받침대 펫은 한 층에 12마리씩 모여 있어서 빛·반짝이가 겹쳐 번쩍번쩍 눈부셔요 → 많이 줄여요 (등급·희귀도 효과 모두).
 -- 데리고 다니는/탄/든 펫 (FollowPets) 과 부화 화면은 그대로라서 그쪽이 조금 더 반짝여요
-local PED_LIGHT_MULT = 0.6 -- PointLight 밝기 배율
-local PED_SPARKLE_MULT = 0.6 -- 반짝이 초당 개수 배율
+local PED_LIGHT_MULT = 0.3 -- PointLight 밝기 배율 (지난번 0.6)
+local PED_LIGHT_RANGE_MULT = 0.75 -- PointLight 거리 배율 (바닥·천장 너머 다른 층으로 덜 새요)
+local PED_SPARKLE_MULT = 0.3 -- 반짝이 초당 개수 배율 (지난번 0.6)
+local PED_SPARKLE_EMISSION = 0.35 -- 반짝이 LightEmission 상한 (겹쳐도 하얗게 번쩍이지 않게)
+local PED_REFLECT_MULT = 0.5 -- 몸 반사(Reflectance) 배율 (살랑살랑 움직일 때 반짝 비치는 것 줄이기)
+local BOB_SWAY = 0.03 -- 살랑살랑 좌우 돌림 (라디안). 금속·유리 펫이 돌 때 빛이 번쩍여서 작게 (지난번 0.06)
 
 ----------------------------------------------------------------------
 -- 프롬프트 필터: PromptKind "Owner" 는 주인한테만 보여요
@@ -167,10 +172,20 @@ local function calmFx(d: Instance)
 		calmed[d] = true
 		local l = d :: Light
 		l.Brightness *= PED_LIGHT_MULT
+		if l:IsA("PointLight") then
+			(l :: PointLight).Range *= PED_LIGHT_RANGE_MULT
+		end
 	elseif d:IsA("ParticleEmitter") then
 		calmed[d] = true
 		local pe = d :: ParticleEmitter
 		pe.Rate *= PED_SPARKLE_MULT
+		pe.LightEmission = math.min(pe.LightEmission, PED_SPARKLE_EMISSION)
+	elseif d:IsA("BasePart") then
+		local p = d :: BasePart
+		if p.Reflectance > 0 then
+			calmed[d] = true
+			p.Reflectance *= PED_REFLECT_MULT
+		end
 	end
 end
 
@@ -364,7 +379,7 @@ local function step()
 			if base then
 				local s = math.sin(t * info.Speed + info.Phase)
 				local lift = info.Amp * (0.5 + 0.5 * s) -- 받침대 아래로는 안 내려가요
-				local sway = math.sin(t * info.Speed * 0.5 + info.Phase) * 0.06
+				local sway = math.sin(t * info.Speed * 0.5 + info.Phase) * BOB_SWAY
 				body.CFrame = base * CFrame.new(0, lift, 0) * CFrame.Angles(0, sway, 0)
 				info.Last = body.CFrame
 			end
@@ -421,16 +436,18 @@ local function setupBob()
 	end)
 	local bobAcc, scanAcc, cycleAcc = 0, 0, 0
 	RunService.Heartbeat:Connect(function(dt)
-		-- 레인보우 등급(TierCycle) 펫은 가까운 것만 색이 천천히 돌아요
+		-- 레인보우 등급(TierCycle) 펫은 색이 천천히 돌아요 (내가 데리고 다니는 펫만. PED_CYCLE 이면 가까운 받침대 펫도)
 		cycleAcc += dt
 		if cycleAcc >= CYCLE_STEP then
 			cycleAcc = 0
 			local pm = UiKit.PetModels
 			if pm and pm.CycleTierColors then
 				local phase = (os.clock() * CYCLE_SPEED) % 1
-				for _, info in active do
-					if info.Active and not info.Far and info.Model:GetAttribute("TierCycle") == true then
-						pcall(pm.CycleTierColors, info.Model, phase)
+				if PED_CYCLE then
+					for _, info in active do
+						if info.Active and not info.Far and info.Model:GetAttribute("TierCycle") == true then
+							pcall(pm.CycleTierColors, info.Model, phase)
+						end
 					end
 				end
 				for model in ownCycle do

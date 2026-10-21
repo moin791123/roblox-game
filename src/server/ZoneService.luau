@@ -1,6 +1,7 @@
 -- 지역 서비스: 지금 어느 지역에 있는지(플레이어 속성 Zone), 잠긴 지역에 들어간 사람 돌려보내기,
 -- 떨어지면 마지막 지역 스폰으로, 그리고 Teleport 리모트 ("Zone" n / "Floor" n / "Home").
 -- 문(Gate)은 서버에서는 안 막아요. 그래서 여기서 환생 수를 꼭 다시 확인해요.
+-- 잠긴 지역 / 잠긴 길(문 너머)은 높이와 상관없이(XZ 만) 봐요 → 펫 타고 날아서 넘어가도 돌려보내요.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -16,6 +17,8 @@ local LOOP_INTERVAL = 0.5
 local TELEPORT_COOLDOWN = 1.5 -- 순간이동 사이 최소 간격
 local REQUEST_COOLDOWN = 0.25 -- 실패한 요청도 이보다 자주는 안 받아요
 local LOCK_NOTIFY_GAP = 3 -- 잠긴 지역에서 돌려보낼 때 알림 간격
+local TRAIL_PAST_GATE = 3 -- 길 시작점에서 이만큼 지나면 "문 너머" (문 두께 안쪽은 봐줘요)
+local TRAIL_HALF_WIDTH = 12 -- 길 가운데에서 옆으로 (문 폭 20 / 2 + 2)
 
 local lastZone: { [Player]: number } = {}
 local lastTeleport: { [Player]: number } = {}
@@ -115,6 +118,22 @@ end
 ----------------------------------------------------------------------
 -- 공개 API
 ----------------------------------------------------------------------
+
+-- 위치가 어느 지역 길의 문 너머인지 (XZ 만, 높이 상관없이). 아니면 nil
+local function trailAt(position: Vector3): number?
+	for i, zone in Config.Zones do
+		local t = zone.Trail
+		if t then
+			local d = position - t.From
+			local along = d.X * t.Dir.X + d.Z * t.Dir.Z
+			local across = d.X * t.Side.X + d.Z * t.Side.Z
+			if along >= TRAIL_PAST_GATE and along <= (t.To - t.From).Magnitude and math.abs(across) <= TRAIL_HALF_WIDTH then
+				return i
+			end
+		end
+	end
+	return nil
+end
 
 -- 지금 있는 지역 (길 위에서는 마지막 지역, 모르면 1)
 function ZoneService.GetPlayerZone(player: Player): number
@@ -256,9 +275,15 @@ local function checkPlayer(player: Player)
 		return
 	end
 
+	-- 지역 땅 위 (높이 상관없이 XZ). 길 위면 그 길의 지역을 봐요 (잠겼을 때 돌려보내기만, 지역 표시는 그대로)
 	local zone = Config.ZoneAt(pos)
+	local onTrail = false
 	if not zone then
-		return -- 길 위: 마지막 값 그대로
+		zone = trailAt(pos)
+		onTrail = true
+		if not zone then
+			return -- 물 위: 마지막 값 그대로
+		end
 	end
 	if loaded and not ZoneService.CanEnter(player, zone) then
 		-- 잠긴 지역: 열린 가장 먼 지역 스폰으로 돌려보내요
@@ -272,6 +297,9 @@ local function checkPlayer(player: Player)
 			notify(player, lockedText(zone), "warn")
 		end
 		return
+	end
+	if onTrail then
+		return -- 열린 길 위: 마지막 값 그대로
 	end
 	setZone(player, zone)
 end

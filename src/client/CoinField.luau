@@ -1,6 +1,8 @@
 -- 내 들판 코인: 서버가 보내는 CoinField 이벤트대로 로컬 파트를 그리고, 가까이 가면 빨려 들어와요.
 -- 코인은 지역마다 있어요 (payload.Zone). 가벼우려고 내가 있는 지역 코인 + 가까운(RenderDistance) 코인만 파트로 그려요.
 -- 파트는 workspace.ClientCoins 아래에 (나한테만 보임). 먹기는 PickupCoin 으로 서버에 요청해요.
+-- ★v5 자석 버튼 (스냅샷 Settings.Magnet, 또는 CoinField.SetMagnet): 기본 자석 밖 BigMagnetRadius 안 코인을
+-- 가까운 것부터 초당 BigMagnetRate 개씩 빨아들여요 (서버도 같은 규칙으로 검사해요).
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -18,6 +20,9 @@ local CoinField = {}
 local MAGNET_INTERVAL = 0.1
 local CULL_INTERVAL = 0.3 -- 보이기/숨기기 다시 계산
 local FLY_TIME = 0.25 -- 플레이어에게 날아가는 시간
+local FAR_FLY_PER_STUD = 1 / 110 -- 큰 자석으로 멀리서 올 때 1 스터드마다 더 걸리는 시간
+local FAR_MAX_HEIGHT = 10 -- 큰 자석은 높이 차이가 이보다 크면 안 끌어와요 (서버는 14)
+local MAGNET_HOLD = 2 -- SetMagnet 뒤 이 초 동안은 예전 스냅샷 값이 덮어쓰지 않아요
 local CONFIRM_TIMEOUT = 3 -- 서버가 Remove 를 안 보내면 코인을 되살리는 시간
 local SPIN_SPEED = 2.4
 local BOB_HEIGHT = 0.25
@@ -36,6 +41,7 @@ type Entry = {
 	visible: boolean, -- 지금 그려야 하는지 (내 지역이거나 가까움)
 	state: string, -- "Live" | "Pending" | "Gone"
 	flyStart: number,
+	flyTime: number,
 	flyFrom: CFrame,
 	flySize: Vector3,
 	goneAt: number,
@@ -50,6 +56,12 @@ local moveCFrames: { CFrame } = {}
 local lastSound = 0
 local myZone = 1 -- 지금 있는 지역 (길 위에서는 마지막 지역)
 local initialized = false
+local magnetOn = Config.Settings.Magnet == true -- ★v5 자석 버튼
+local magnetHoldUntil = 0
+local magnetTokens = FC.BigMagnetBurst
+local magnetAt = os.clock()
+local farList: { Entry } = {}
+local farDist: { [Entry]: number } = {}
 
 ----------------------------------------------------------------------
 -- 도우미
@@ -250,6 +262,7 @@ local function addCoin(raw: any)
 		visible = false,
 		state = "Live",
 		flyStart = 0,
+		flyTime = FLY_TIME,
 		flyFrom = CFrame.identity,
 		flySize = Vector3.one,
 		goneAt = 0,
@@ -324,7 +337,7 @@ end
 -- 자석: 반경 안 코인을 빨아들여요
 ----------------------------------------------------------------------
 
-local function startFly(entry: Entry)
+local function startFly(entry: Entry, flyTime: number?)
 	ensurePart(entry)
 	local part = entry.part
 	if not part then
@@ -333,6 +346,7 @@ local function startFly(entry: Entry)
 	entry.state = "Pending"
 	entry.confirmed = false
 	entry.flyStart = os.clock()
+	entry.flyTime = flyTime or FLY_TIME
 	entry.flyFrom = part.CFrame
 	entry.flySize = part.Size
 	Remotes.PickupCoin:FireServer(entry.id)
@@ -347,12 +361,22 @@ local function magnetCheck()
 	local hrp = getHRP()
 	local radius = FC.MagnetRadius + FC.MagnetPerFollower * followerCount()
 	local r2 = radius * radius
+	local big = FC.BigMagnetRadius
+	local big2 = big * big
+	-- 큰 자석: 초당 BigMagnetRate 개씩 채워지는 표 (켜자마자는 BigMagnetBurst 개)
+	magnetTokens = math.min(FC.BigMagnetBurst, magnetTokens + (now - magnetAt) * FC.BigMagnetRate)
+	magnetAt = now
+	table.clear(farList)
 	for _, entry in entries do
 		if entry.state == "Live" then
 			if hrp then
 				local d = entry.base - hrp.Position
-				if d:Dot(d) <= r2 then
+				local d2 = d:Dot(d)
+				if d2 <= r2 then
 					startFly(entry)
+				elseif magnetOn and d2 <= big2 and math.abs(d.Y) <= FAR_MAX_HEIGHT then
+					table.insert(farList, entry)
+					farDist[entry] = d2
 				end
 			end
 		elseif entry.state == "Gone" and not entry.confirmed and now - entry.goneAt > CONFIRM_TIMEOUT then
@@ -360,6 +384,30 @@ local function magnetCheck()
 			setLive(entry)
 		end
 	end
+	if #farList > 0 then
+		-- 가까운 코인부터
+		table.sort(farList, function(a, b)
+			return (farDist[a] or 0) < (farDist[b] or 0)
+		end)
+		for _, entry in farList do
+			if magnetTokens < 1 then
+				break
+			end
+			magnetTokens -= 1
+			startFly(entry, FLY_TIME + math.sqrt(farDist[entry] or 0) * FAR_FLY_PER_STUD)
+		end
+		table.clear(farDist)
+	end
+end
+
+-- 스냅샷의 자석 버튼 값 (없으면 Config.Settings 기본값)
+local function snapshotMagnet(snap: any): boolean
+	local settings = if type(snap) == "table" then snap.Settings else nil
+	local v = if type(settings) == "table" then settings.Magnet else nil
+	if type(v) ~= "boolean" then
+		v = Config.Settings.Magnet == true
+	end
+	return v == true
 end
 
 ----------------------------------------------------------------------
@@ -384,7 +432,7 @@ local function render()
 				CFrame.new(entry.base + Vector3.new(0, bob, 0)) * CFrame.Angles(0, t * SPIN_SPEED + entry.phase, 0)
 			)
 		elseif entry.state == "Pending" then
-			local a = math.clamp((t - entry.flyStart) / FLY_TIME, 0, 1)
+			local a = math.clamp((t - entry.flyStart) / entry.flyTime, 0, 1)
 			if a >= 1 then
 				-- 다 날아갔어요: 파트는 지우고, 서버 확인이 없으면 잠시 뒤 되살릴 수 있게 Gone 으로
 				destroyPart(entry)
@@ -425,12 +473,32 @@ function CoinField.Counts(): (number, number)
 	return a, b
 end
 
+-- ★v5 자석 버튼: 버튼이 바로 불러도 되고 (서버 저장 전에 바로 반응), 안 불러도 스냅샷 Settings.Magnet 을 따라가요
+function CoinField.SetMagnet(on: boolean)
+	magnetOn = on == true -- (꺼져 있는 동안 표가 BigMagnetBurst 개까지 차 있어서 켜자마자 몇 개 쏙!)
+	magnetHoldUntil = os.clock() + MAGNET_HOLD
+end
+
+function CoinField.IsMagnetOn(): boolean
+	return magnetOn
+end
+
 function CoinField.Init()
 	if initialized then
 		return
 	end
 	initialized = true
 	getFolder()
+
+	State.OnSync(function(snap: any)
+		local v = snapshotMagnet(snap)
+		if v ~= magnetOn and os.clock() >= magnetHoldUntil then
+			magnetOn = v
+		end
+	end)
+	if State.Snapshot then
+		magnetOn = snapshotMagnet(State.Snapshot)
+	end
 
 	Remotes.CoinField.OnClientEvent:Connect(function(op: any, arg: any)
 		if op == "Reset" then

@@ -876,7 +876,9 @@ function UiKit.Badge(parent: GuiObject, text: string?, size: number?): Frame
 	return badge
 end
 
--- 알림 동그라미 켜기/끄기 (켜져 있는 동안 통통 뛰어요)
+-- 알림 동그라미 켜기/끄기: 켜질 때 천천히 몇 번만 통통 뛰고 (BADGE_PULSES 번) 가만히 있어요 (계속 깜빡이면 눈이 피곤해요)
+local BADGE_PULSE_TIME = 0.9 -- 한 번 커지는 데 걸리는 시간 (예전 0.55초, 무한 반복)
+local BADGE_PULSES = 3
 function UiKit.ShowBadge(badge: Frame?, on: boolean)
 	if not badge then
 		return
@@ -892,8 +894,12 @@ function UiKit.ShowBadge(badge: Frame?, on: boolean)
 	end
 	local s = UiKit.Scale(badge)
 	if on then
-		s.Scale = 0.88
-		local tween = TweenService:Create(s, TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Scale = 1.15 })
+		s.Scale = 1
+		local tween = TweenService:Create(
+			s,
+			TweenInfo.new(BADGE_PULSE_TIME, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, BADGE_PULSES - 1, true),
+			{ Scale = 1.1 }
+		)
 		tween:Play()
 		badgePulse[badge] = tween
 	else
@@ -902,7 +908,8 @@ function UiKit.ShowBadge(badge: Frame?, on: boolean)
 end
 
 ----------------------------------------------------------------------
--- ★ 오른쪽 옆 칸: 좋은 알 배너(Toasts)와 부화 연출(HatchFx)은 화면 가운데(캐릭터·눈높이)를 비켜서 여기에 떠요.
+-- ★ 오른쪽 옆 칸: 부화 연출(HatchFx)과 알림 줄(Toasts: 좋은 알 배너·지역 배너·말풍선, 오른쪽 아래)은
+-- 화면 가운데(캐릭터·눈높이)를 비켜서 여기에 떠요.
 -- 좌표는 모두 메인 GUI 기준 (위쪽 Roblox 바 아래부터, IgnoreGuiInset = false 인 ScreenGui 와 같아요)
 ----------------------------------------------------------------------
 export type Rect = { X0: number, Y0: number, X1: number, Y1: number, Tag: string? }
@@ -948,7 +955,8 @@ local function addTree(out: { Rect }, root: GuiObject, tag: string)
 	end
 end
 
--- 옆 칸 상자가 피해야 하는 것: 위 코인 줄, 왼쪽 큰 버튼, 팁 줄, 꾸미기 버튼 줄·아래 판, 열린 창의 ✖ 버튼,
+-- 옆 칸 상자(부화 연출 · 오른쪽 아래 알림 줄)가 피해야 하는 것: 위 코인 줄, 왼쪽 큰 버튼, 팁 줄, 꾸미기 버튼 줄·아래 판,
+-- 열린 창의 ✖ 버튼, 그 밖에 메인 GUI 에 새로 생긴 HUD 조각 (속성 SideIgnore = true 면 빼요),
 -- 폰이면 점프 버튼(오른쪽 아래)과 조이스틱 칸(왼쪽 아래)
 function UiKit.SideObstacles(mainGui: Instance?): { Rect }
 	local out: { Rect } = {}
@@ -974,10 +982,28 @@ function UiKit.SideObstacles(mainGui: Instance?): { Rect }
 						table.insert(out, UiKit.RectOf(part, 6, "Decorate"))
 					end
 				end
-			else
+			elseif child:GetAttribute("SideIgnore") ~= true then
 				local header = child:FindFirstChild("Header")
 				local close = header and header:FindFirstChild("Close")
-				if close and close:IsA("GuiObject") and close.Visible then
+				if not header then
+					-- 그 밖의 HUD 조각 (새로 생긴 버튼 줄 같은 것): 화면을 덮는 투명 틀이면 안의 것들만, 아니면 통째로.
+					-- 창 뒤 반투명 배경(화면 전체 버튼)은 빼요
+					local size = (main :: GuiBase2d).AbsoluteSize
+					local s = child.AbsoluteSize
+					local big = s.X >= size.X * 0.7 and s.Y >= size.Y * 0.7
+					if not big then
+						addTree(out, child, name)
+					elseif not child:IsA("GuiButton") and child.BackgroundTransparency >= 1 then
+						for _, part in child:GetChildren() do
+							if part:IsA("GuiObject") and part.Visible then
+								local ps = part.AbsoluteSize
+								if ps.X < size.X * 0.7 or ps.Y < size.Y * 0.7 then
+									table.insert(out, UiKit.RectOf(part, 4, name))
+								end
+							end
+						end
+					end
+				elseif close and close:IsA("GuiObject") and close.Visible then
 					local r = UiKit.RectOf(close, 8, "Close")
 					-- 창이 열리고 닫히는 중(UIScale)이면 다 열렸을 때 자리로 (창 가운데 기준)
 					local sc = child:FindFirstChild("FxScale")
@@ -1050,7 +1076,7 @@ function UiKit.SideSpot(gw: number, gh: number, w: number, h: number, prefY: num
 	return bestX, bestY, bestOv
 end
 
--- 옆 칸을 지금 쓰고 있는 상자 (배너 "Banner", 부화 "Hatch"): 서로 비키려고 알려 줘요
+-- 옆 칸을 지금 쓰고 있는 상자 (알림 줄 전체 "Banner", 부화 "Hatch"): 서로 비키려고 알려 줘요
 local sideRects: { [string]: Rect? } = {}
 function UiKit.SetSideRect(name: string, rect: Rect?)
 	sideRects[name] = rect

@@ -86,7 +86,12 @@ local NEBULA_COLORS = {
 }
 -- 은하 궁전 벽 위 네온 띠는 층마다 방을 빙 둘러서 (눈높이) 성운 색 그대로면 눈부셔요 → 이만큼 짙은 남색 쪽으로
 local NEBULA_DEEP = Color3.fromRGB(40, 30, 80)
-local NEBULA_CAP_SOFT = 0.35
+local NEBULA_CAP_SOFT = 0.75 -- (지난번 0.35) 훨씬 짙게: 눈높이 네온 띠가 번쩍이지 않게
+local NEBULA_BAND_SOFT = 0.35 -- 처마 성운 띠도 조금 짙게
+-- 집 조명 차분하게: 현관등·가로등·버섯등 밝기 배율, 수금 판(네온) 투명도·색
+local HOUSE_LIGHT_MULT = 0.65
+local COLLECTOR_COLOR = Color3.fromRGB(250, 190, 70) -- GOLD 보다 살짝 짙은 금색 (네온이 덜 번져요)
+local COLLECTOR_TRANSPARENCY = 0.3
 
 type Theme = { Name: string, Price: number, Size: number, Floor: Color3, Wall: Color3, Roof: Color3, Accent: Color3, Deco: string }
 local THEMES = (Config.House.Themes :: any) :: { [string]: Theme }
@@ -242,7 +247,7 @@ local function addLight(p: BasePart, color: Color3, range: number, brightness: n
 	local light = Instance.new("PointLight")
 	light.Color = color
 	light.Range = range
-	light.Brightness = brightness
+	light.Brightness = brightness * HOUSE_LIGHT_MULT
 	light.Shadows = false
 	light.Parent = p
 end
@@ -856,9 +861,9 @@ local function buildCollector(ctx: Ctx, plotModel: Model): BasePart
 	c.BottomSurface = Enum.SurfaceType.Smooth
 	c.Size = Vector3.new(0.6, cl.D, cl.D)
 	c.CFrame = ctx.origin * CFrame.new(cl.X, FLOOR1_TOP + 0.3, cl.Z) * CFrame.Angles(0, 0, math.pi / 2)
-	c.Color = GOLD
+	c.Color = COLLECTOR_COLOR
 	c.Material = Enum.Material.Neon
-	c.Transparency = 0
+	c.Transparency = COLLECTOR_TRANSPARENCY
 	if c:GetAttribute("Pending") == nil then
 		c:SetAttribute("Pending", 0)
 	end
@@ -952,7 +957,7 @@ local function planet(ctx: Ctx, pos: Vector3, d: number, color: Color3, ringColo
 		Name = "PlanetRing",
 		Color = ringColor,
 		Material = Enum.Material.Neon,
-		Transparency = 0.25,
+		Transparency = 0.45,
 		CastShadow = false,
 	})
 end
@@ -1189,7 +1194,7 @@ DECO.galaxy = function(ctx: Ctx)
 	for i, sz in { -1, 1 } do
 		local z = if sz < 0 then L.FrontZ - 1.3 else L.BackZ + 1.3
 		box(ctx, "Nebula", -L.Half - 1.2, L.Half + 1.2, ctx.eaveY - 0.15, ctx.eaveY + 0.15, z - 0.12, z + 0.12, {
-			Color = NEBULA_COLORS[i],
+			Color = NEBULA_COLORS[i]:Lerp(NEBULA_DEEP, NEBULA_BAND_SOFT),
 			Material = Enum.Material.Neon,
 			CanCollide = false,
 			CanTouch = false,

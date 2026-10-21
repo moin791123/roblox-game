@@ -1,7 +1,8 @@
 -- 지역 클라이언트: 환생이 모자란 지역 문은 나한테만 막혀요 (분홍 보호막, 스냅샷마다 다시 확인).
 -- 지역에 들어가면 "🦆 호수에 왔어요!" 배너, 새 지역이 열리면 축하 배너, 지역마다 하늘 색을 살짝 바꿔요 (우주 = 밤).
 -- 컨베이어 줄무늬도 여기서 움직여요 (서버는 줄무늬를 안 움직여요).
--- 순간이동하면 카메라를 캐릭터가 보는 쪽(섬 안쪽 SpawnLook)으로 돌리고, 배너는 좋은 알 배너·알림 말풍선(Toasts)·부화 연출을 비켜요.
+-- 순간이동하면 카메라를 캐릭터가 보는 쪽(섬 안쪽 SpawnLook)으로 돌려요.
+-- 배너 자리는 Toasts 가 정해요: 다른 알림과 같이 오른쪽 아래 줄에 쌓여요 (Toasts.Dock).
 local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -22,7 +23,7 @@ local BANNER_TIME = 2.6
 local STRIPE_DISTANCE = 240 -- 이 안의 컨베이어만 줄무늬를 움직여요
 local LOCKED_COLOR = Color3.fromRGB(255, 120, 200)
 local NIGHT_CLOCK = 22 -- 우주는 밤
-local BANNER_Y = 0.27 -- 배너 가운데 높이 (화면 비율)
+local BANNER_H_PC, BANNER_H_SMALL = 84, 58 -- 배너 높이 (큰 화면 / 폰). 너비는 알림 줄 너비
 local TELEPORT_JUMP = 100 -- 한 번 확인하는 사이(0.25초)에 이보다 멀리 옮겨졌으면 순간이동한 거예요
 
 type StripeBelt = {
@@ -142,15 +143,14 @@ local function ensureBanner(gui: Instance?)
 	local frame: Frame = Make("Frame", {
 		Name = "ZoneBanner",
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, BANNER_Y),
-		Size = UDim2.fromScale(0.5, 0.11),
+		Position = UDim2.fromOffset(-400, -400),
+		Size = UDim2.fromOffset(300, BANNER_H_PC),
 		BackgroundColor3 = C.Cream,
 		Visible = false,
 		ZIndex = 35,
 		Parent = parent,
 	})
-	Make("UISizeConstraint", { MinSize = Vector2.new(220, 64), MaxSize = Vector2.new(560, 110), Parent = frame })
-	UiKit.Corner(frame, UDim.new(0.35, 0))
+	UiKit.Corner(frame, UDim.new(0.3, 0))
 	local stroke = UiKit.Stroke(frame, C.Pink, 5, true)
 	stroke.Name = "BannerStroke"
 	bannerTitle = UiKit.Label({
@@ -160,7 +160,7 @@ local function ensureBanner(gui: Instance?)
 		Size = UDim2.fromScale(0.92, 0.56),
 		ZIndex = 36,
 		Parent = frame,
-	}, { MaxText = 40, StrokeThickness = 3 })
+	}, { MaxText = 30, StrokeThickness = 3 })
 	bannerSub = UiKit.Label({
 		Name = "Sub",
 		AnchorPoint = Vector2.new(0.5, 0),
@@ -171,88 +171,6 @@ local function ensureBanner(gui: Instance?)
 		Parent = frame,
 	}, { Stroke = C.White, MaxText = 22 })
 	bannerFrame = frame
-end
-
--- 기본 자리는 위쪽 가운데. 오른쪽 옆 칸의 좋은 알 배너·부화 연출이나 가운데 알림 말풍선(Toasts)과 겹치면
--- 1) 왼쪽 큰 버튼과 오른쪽 상자 사이 빈칸으로 비키고 (좁으면 220px 까지 작게)  2) 그래도 겹치면 그 아래로
--- keep = 보이는 동안 다시 잴 때: 지금 자리가 아무것도 안 가리면 그대로 있어요 (덜 흔들려요)
-local ZONE_MIN_W = 220
-local placed: UiKit.Rect? = nil
-local function placeBanner(keep: boolean?)
-	local frame = bannerFrame
-	local parent = if frame then frame.Parent else nil
-	if not frame or not parent or not parent:IsA("GuiBase2d") then
-		return
-	end
-	local gw, gh = parent.AbsoluteSize.X, parent.AbsoluteSize.Y
-	if gw <= 0 or gh <= 0 then
-		return
-	end
-	local avoid = Toasts.TopRects()
-	local hatch = UiKit.SideRect("Hatch")
-	if hatch then
-		table.insert(avoid, hatch)
-	end
-	local function hitAt(x: number, y: number, w: number, h: number): UiKit.Rect?
-		local r: UiKit.Rect = { X0 = x, Y0 = y, X1 = x + w, Y1 = y + h }
-		for _, o in avoid do
-			if UiKit.RectsHit(r, o) then
-				return o
-			end
-		end
-		return nil
-	end
-	local cur = placed
-	if keep and cur and not hitAt(cur.X0, cur.Y0, cur.X1 - cur.X0, cur.Y1 - cur.Y0) then
-		return
-	end
-	local w = math.clamp(math.floor(gw * 0.5), 260, 560) -- 보통 크기 (화면 50%, 260~560)
-	local h = math.clamp(math.floor(gh * 0.11), 64, 110)
-	local top = math.floor(gh * BANNER_Y - h / 2)
-	local x, y, width = math.floor(gw / 2 - w / 2), top, w
-	if hitAt(x, y, w, h) then
-		-- 1) 옆으로 (오른쪽 옆 칸에 걸렸을 때): 왼쪽 큰 버튼(같은 높이일 때)과 오른쪽 상자 사이
-		local tries: { { number } } = {}
-		local left, right = 12, gw - 12
-		for _, o in UiKit.SideObstacles(nil) do
-			if o.Tag == "SideButtons" and o.Y0 < top + h and top < o.Y1 then
-				left = math.max(left, o.X1 + 8)
-			end
-		end
-		for _, o in avoid do
-			if (o.X0 + o.X1) / 2 > gw / 2 and o.Y0 < top + h and top < o.Y1 then
-				right = math.min(right, o.X0 - 8)
-			end
-		end
-		local ww = math.floor(math.min(w, right - left))
-		if ww >= ZONE_MIN_W then
-			local cx = math.clamp(gw / 2, left + ww / 2, right - ww / 2)
-			table.insert(tries, { math.floor(cx - ww / 2), ww })
-		end
-		table.insert(tries, { x, w })
-		-- 2) 그래도 겹치면 그 아래로 (옆으로 비킨 자리 / 가운데 자리 중 더 위에 놓이는 쪽)
-		local bestY = math.huge
-		for _, t in tries do
-			local ty = top
-			for _ = 1, 6 do
-				local o = hitAt(t[1], ty, t[2], h)
-				if not o then
-					break
-				end
-				ty = math.ceil(o.Y1 + 8)
-			end
-			if ty < bestY then
-				bestY, x, width = ty, t[1], t[2]
-			end
-		end
-		y = math.min(bestY, math.max(top, gh - h - 8))
-	end
-	placed = { X0 = x, Y0 = y, X1 = x + width, Y1 = y + h }
-	local pos = UDim2.fromOffset(math.floor(x + width / 2), math.floor(y + h / 2))
-	if frame.Position ~= pos then
-		frame.Position = pos
-	end
-	frame.Size = UDim2.fromOffset(width, h)
 end
 
 local function showBanner(title: string, sub: string, color: Color3, sound: string?)
@@ -274,8 +192,8 @@ local function showBanner(title: string, sub: string, color: Color3, sound: stri
 	if titleStroke then
 		titleStroke.Color = UiKit.Darken(color, 0.35)
 	end
-	placeBanner()
-	frame.Visible = true
+	-- 오른쪽 아래 알림 줄에 넣어요 (자리·보이기는 Toasts 가 정해요. 자리가 없으면 잠깐 숨어요)
+	Toasts.Dock("Zone", frame, BANNER_H_PC, BANNER_H_SMALL)
 	UiKit.Pop(frame, 0.4)
 	if sound then
 		UiKit.PlaySound(sound)
@@ -288,6 +206,7 @@ local function showBanner(title: string, sub: string, color: Color3, sound: stri
 		UiKit.Tween(s, 0.2, { Scale = 0 }, Enum.EasingStyle.Back, Enum.EasingDirection.In)
 		task.delay(0.22, function()
 			if bannerToken == my then
+				Toasts.Undock("Zone")
 				frame.Visible = false
 			end
 		end)
@@ -504,11 +423,6 @@ function ZoneClient.Init(gui: Instance?)
 			local ok, err = pcall(zoneCheck)
 			if not ok then
 				warn("[ZoneClient] 지역 확인 오류:", err)
-			end
-			-- 보이는 동안 좋은 알 배너·말풍선·부화 연출이 새로 뜨면 비켜요
-			local frame = bannerFrame
-			if frame and frame.Visible then
-				pcall(placeBanner, true)
 			end
 		end
 	end)

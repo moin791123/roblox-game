@@ -1,5 +1,6 @@
 -- 집(플롯): 외형(바닥/벽/받침대/층/계단/엘리베이터/간판/수금 패드)은 HouseBuilder 가 짓고, 여기서는 배정·수입/부화 틱·수금·
 -- 구매(받침대/층/테마)·환생·펫 행동(PetAction)·자동 배치(AutoPlace)·집 비우기(ClearBase)를 처리해요.
+-- 🏦 자동 수금 버튼(설정 "AutoCollect")이 켜져 있으면 어디에 있든 몇 초마다 집 금고 코인을 조용히 받아요.
 -- (설계: docs/DESIGN.md "PlotService", §7)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -21,6 +22,8 @@ local SLOTS_PER_FLOOR = Config.Plot.SlotsPerFloor
 local TOTAL_SLOTS = Config.Plot.TotalSlots
 
 local CLAIM_DEBOUNCE = 1
+local AUTO_COLLECT_EVERY = 3 -- 자동 수금 간격 (초)
+local AUTO_FX_RANGE = 120 -- 집 근처에 있을 때만 수금 패드 위에 "+N 💰" (소리 없이)
 local ACTION_THROTTLE = 0.15
 local EFFECT_MIN_ORDER = 5 -- 받침대/타기 펫 희귀도 효과: 전설 이상 (반짝이가 너무 많아지지 않게)
 
@@ -53,7 +56,9 @@ export type Plot = {
 	ItemsFolder: Folder,
 	Visuals: { [string]: Visual },
 	LastClaim: number,
+	LastAutoClaim: number, -- 마지막 자동 수금 (os.clock)
 	ShownPending: number,
+	ShownAuto: boolean?, -- 수금 패드 글자가 "자동 수금 중" 인가
 }
 
 export type PlotChangeReason = "Assign" | "Rebuild" | "Release"
@@ -235,18 +240,28 @@ local function updatePedestals(plot: Plot)
 	HouseBuilder.UpdatePedestals(plot.Handles, unlocked, floors)
 end
 
+-- 자동 수금 버튼이 켜져 있나
+local function autoOn(player: Player?): boolean
+	return player ~= nil and DataService.GetSetting(player, "AutoCollect")
+end
+
 local function updateCollector(plot: Plot)
 	local owner = plot.Owner
 	local data = owner and DataService.Get(owner)
 	local pending = if data then math.floor(data.Pending) else 0
-	if pending == plot.ShownPending then
+	local auto = data ~= nil and autoOn(owner)
+	if pending == plot.ShownPending and auto == plot.ShownAuto then
 		return
 	end
 	plot.ShownPending = pending
+	plot.ShownAuto = auto
 	plot.Collector:SetAttribute("Pending", pending)
 	local label = plot.CollectorLabel
 	if label then
-		label.Text = if pending > 0 then "💰 " .. Config.FormatNumber(pending) .. " 받기" else "💰 모으기"
+		label.Text = if auto
+			then "🏦 자동 수금 중"
+			elseif pending > 0 then "💰 " .. Config.FormatNumber(pending) .. " 받기"
+			else "💰 모으기"
 	end
 end
 
@@ -309,6 +324,7 @@ local function applyHandles(plot: Plot, handles: HouseBuilder.Handles)
 	bindCollector(plot)
 	setSign(plot)
 	plot.ShownPending = -1
+	plot.ShownAuto = nil
 	updateCollector(plot)
 end
 
@@ -360,6 +376,7 @@ local function buildPlot(index: number, origin: CFrame, parent: Instance): Plot
 		ItemsFolder = items,
 		Visuals = {},
 		LastClaim = 0,
+		LastAutoClaim = 0,
 		ShownPending = -1,
 	}
 	applyHandles(plot, handles)
@@ -714,8 +731,8 @@ end
 -- 수금 / 받침대 구매 / 층 / 테마 / 환생
 ----------------------------------------------------------------------
 claim = function(plot: Plot, player: Player)
-	if plot.Owner ~= player then
-		return
+	if plot.Owner ~= player or autoOn(player) then
+		return -- 자동 수금이 켜져 있으면 틱이 조용히 받아요
 	end
 	local t = os.clock()
 	if t - plot.LastClaim < CLAIM_DEBOUNCE then
@@ -734,6 +751,30 @@ claim = function(plot: Plot, player: Player)
 	DataService.AddCoins(player, amount) -- 코인만 바뀌어서 CoinSync 로 충분해요
 	Remotes.CoinFx:FireClient(player, amount, plot.Collector.Position + Vector3.new(0, 3, 0))
 	notify(player, "💰 " .. Config.FormatNumber(amount) .. " 코인을 받았어요!", "good")
+	updateCollector(plot)
+end
+
+-- 🏦 자동 수금: 수금 패드를 밟은 것과 같은 결과 (코인 + 패드 글자), 알림 말풍선·소리 없이 조용히
+local function autoCollect(plot: Plot, player: Player)
+	if plot.Owner ~= player then
+		return
+	end
+	local data = DataService.Get(player)
+	if not data then
+		return
+	end
+	local amount = math.floor(data.Pending)
+	if amount <= 0 then
+		return
+	end
+	plot.LastAutoClaim = os.clock()
+	data.Pending -= amount
+	DataService.AddCoins(player, amount)
+	local hrp = rootPart(player)
+	local pos = plot.Collector.Position + Vector3.new(0, 3, 0)
+	if hrp and (hrp.Position - pos).Magnitude < AUTO_FX_RANGE then
+		Remotes.CoinFx:FireClient(player, amount, pos, true)
+	end
 	updateCollector(plot)
 end
 
@@ -1126,7 +1167,8 @@ local function fuse(player: Player, data: DataService.Data, uid: string, item: D
 	end
 	Remotes.HatchFx:FireClient(player, item.Id, effectPosition(player), isNew, newTier, "Fuse")
 	local newName = Config.PetDisplayName(item.Id, newTier)
-	notify(player, "✨ 합성 성공! " .. josa(newName, "이", "가") .. " 되었어요!", "good")
+	-- 🆕 = 도감에 처음 (부화 화면을 숨긴 아이도 알 수 있게 말풍선에도 적어요)
+	notify(player, (if isNew then "🆕 NEW! " else "") .. "✨ 합성 성공! " .. josa(newName, "이", "가") .. " 되었어요!", "good")
 	return true
 end
 
@@ -1328,7 +1370,7 @@ local function hatch(player: Player, plot: Plot, uid: string, item: DataService.
 	local rarityName = Config.Rarities[pet.Rarity].Name
 	local sizeLabel = Config.SizeLabel(size)
 	local bornName = (if sizeLabel ~= "" then sizeLabel .. " " else "") .. Config.PetDisplayName(petId, tier)
-	notify(player, "🎉 [" .. rarityName .. "] " .. josa(bornName, "이", "가") .. " 태어났어요!", "good")
+	notify(player, (if isNew then "🆕 NEW! [" else "🎉 [") .. rarityName .. "] " .. josa(bornName, "이", "가") .. " 태어났어요!", "good")
 	DataService.Sync(player)
 end
 
@@ -1373,6 +1415,10 @@ local function tickPlot(plot: Plot)
 				hatch(owner, plot, uid, item)
 			end
 		end
+	end
+	-- 🏦 자동 수금 (어디에 있든 몇 초마다)
+	if autoOn(owner) and os.clock() - plot.LastAutoClaim >= AUTO_COLLECT_EVERY - 0.05 then
+		autoCollect(plot, owner)
 	end
 	updateCollector(plot)
 
@@ -1435,6 +1481,14 @@ function PlotService.Start()
 	connectSimple(Remotes.Rebirth, tryRebirth)
 	connectSimple(Remotes.AutoPlace, tryAutoPlace)
 	connectSimple(Remotes.ClearBase, tryClearBase)
+
+	-- 자동 수금 버튼을 누르면 수금 패드 글자를 바로 바꿔요 (코인은 다음 틱에)
+	DataService.OnSettingChanged(function(player, key)
+		local plot = plotByPlayer[player]
+		if key == "AutoCollect" and plot then
+			updateCollector(plot)
+		end
+	end)
 
 	Players.PlayerRemoving:Connect(function(player)
 		lastAction[player] = nil

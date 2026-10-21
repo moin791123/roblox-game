@@ -1,5 +1,8 @@
 -- 들판 코인 (플레이어마다 따로, 열린 지역마다 따로): 서버는 파트를 만들지 않고 메모리에만 코인 목록을 둬요.
 -- 그리기/자석은 클라이언트(CoinField)가 하고, 먹기 요청(PickupCoin)은 여기서 거리·지역·상태를 검증해요.
+-- 남이 먹어도 내 코인은 그대로예요 (코인 목록·번호가 사람마다 따로).
+-- ★v5 자석 버튼 (DataService.GetSetting(player, "Magnet")): BigMagnetRadius 안 코인도 먹을 수 있어요.
+-- 기본 자석 밖 코인은 초당 BigMagnetRate 개까지만 받아 줘요 (클라이언트도 같은 속도로 끌어와요, 서버는 여유를 둬요).
 -- 코인 값 = 기본값 × 지역 CoinMult × (1 + 집 초당 수익 / IncomeScale) × (1 + min(펫 보너스, MaxBoost)) × 환생 코인 배율
 -- (집 초당 수익은 DataService.GetIncome 이라 환생·테마 수익 배율이 이미 들어 있어요)
 local Players = game:GetService("Players")
@@ -26,6 +29,8 @@ local PICKUP_SLACK = 8 -- 서버 거리 판정 여유 (지연 대비)
 local MAX_HEIGHT_DIFF = 14 -- 코인과 캐릭터 높이 차 허용치
 local LOAD_TIMEOUT = 20 -- 데이터 로딩 기다리는 최대 초
 local MAX_PICKUPS_PER_SEC = 20
+local MAGNET_RATE_SLACK = 1.5 -- 큰 자석 속도 여유 (지연으로 몰려 와도 괜찮게)
+local MAGNET_BURST_SLACK = 4
 local ZONE_POLL = 5 -- 새로 열린 지역 확인 간격
 
 type CoinKind = { Name: string, Value: number, Weight: number, Color: Color3, Size: number }
@@ -37,6 +42,8 @@ type Field = {
 	rng: Random,
 	windowStart: number,
 	windowCount: number,
+	magnetTokens: number, -- 큰 자석으로 먹을 수 있는 남은 개수
+	magnetAt: number, -- 마지막으로 채운 시각
 }
 -- 지역마다 코인 놓는 곳 (들판 상자 + 컨베이어 선분)
 type ZoneGeo = { Min: Vector3, Max: Vector3, SegA: Vector3, SegB: Vector3, Fallback: Vector3 }
@@ -215,6 +222,8 @@ local function buildField(player: Player): Field
 		rng = Random.new(seed),
 		windowStart = os.clock(),
 		windowCount = 0,
+		magnetTokens = FC.BigMagnetBurst + MAGNET_BURST_SLACK,
+		magnetAt = os.clock(),
 	}
 	for zone = 1, DataService.GetMaxZone(player) do
 		addZone(field, zone)
@@ -338,12 +347,24 @@ local function onPickup(player: Player, coinId: any)
 		return
 	end
 
-	-- 거리 검증: 자석 반경 + 여유
+	-- 거리 검증: 자석 반경 + 여유 (자석 버튼이 켜져 있으면 큰 자석 반경까지, 대신 초당 개수 제한)
 	local radius = FC.MagnetRadius + FC.MagnetPerFollower * FollowService.GetFollowerCount(player) + PICKUP_SLACK
 	local d = hrp.Position - coin.Position
 	local flat = Vector3.new(d.X, 0, d.Z).Magnitude
-	if flat > radius or math.abs(d.Y) > MAX_HEIGHT_DIFF then
+	if math.abs(d.Y) > MAX_HEIGHT_DIFF then
 		return
+	end
+	if flat > radius then
+		if flat > FC.BigMagnetRadius + PICKUP_SLACK or not DataService.GetSetting(player, "Magnet") then
+			return
+		end
+		local cap = FC.BigMagnetBurst + MAGNET_BURST_SLACK
+		field.magnetTokens = math.min(cap, field.magnetTokens + (now - field.magnetAt) * FC.BigMagnetRate * MAGNET_RATE_SLACK)
+		field.magnetAt = now
+		if field.magnetTokens < 1 then
+			return
+		end
+		field.magnetTokens -= 1
 	end
 
 	local value = CoinFieldService.CoinValue(player, coin.Kind, coin.Zone)

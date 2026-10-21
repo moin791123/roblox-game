@@ -14,6 +14,10 @@ local NAMES = {
 	"CoinField", -- (op: "Reset" | "Add" | "Remove", payload) 내 들판 코인 (CoinFieldService 참고, 코인마다 Zone 있음)
 	"LeaderboardSync", -- (board: { Income: {Row}, Rebirths: {Row}, Global: boolean, UpdatedAt: number }) ★
 	"EggAlert", -- (zone: number, eggId: string) 좋은 알(지역 맨 위 2칸)이 벨트에 나왔어요 → 배너 (Config.EggAlert 규칙) ★v4
+	"EggBelt", -- (op: "Reset" | "Add" | "Remove" | "Bought", payload) 내 벨트 알 (사람마다 따로, ConveyorService 참고) ★v5
+	-- Reset: { {Uid, EggId, Zone, Born}, … } 내 모든 벨트 알 / Add: {Uid, EggId, Zone, Born} / Remove: Uid
+	-- Bought: {Uid, Target: CFrame (받침대), FlyTime: number, Poof: boolean} 산 알 → 집으로 날아가기 (Poof 면 뿅)
+	-- Born = workspace:GetServerTimeNow() 기준 나온 시각, 자리 = Config.BeltEggSpot(Zone, 지금 - Born)
 	-- 클라이언트 -> 서버
 	"RequestSync", -- ()
 	"PetAction", -- (uid: string, action: "Follow" | "Unfollow" | "ToBase" | "ToBag" | "Sell" | "Ride" | "Unride" | "Hold" | "Unhold" | "Fuse")
@@ -24,6 +28,7 @@ local NAMES = {
 	"SetTheme", -- (themeId: string) 집 테마 사기/적용
 	"Rebirth", -- () 환생하기
 	"PickupCoin", -- (coinId: number) 들판 코인 먹기 요청
+	"BuyEgg", -- (uid: number) 내 벨트 알 사기 (내 목록에 있고, 벨트 위, 계산한 자리 20 안, 지역 열림, 빈 받침대, 코인) ★v5
 	"Teleport", -- (kind: "Zone" | "Floor" | "Home", n: number?) 지역/우리 집 층/우리 집으로 이동 ★
 	"BuyAccessory", -- (accId: string) 펫 옷 사기 (옷장에 영원히) ★
 	"EquipAccessory", -- (uid: string, accId: string) 펫에게 옷 입히기, accId = "" 이면 벗기기 ★

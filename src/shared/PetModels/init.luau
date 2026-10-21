@@ -1461,8 +1461,9 @@ local function addSpecks(model: Model, count: number)
 end
 
 -- 합성 등급 색/재질/반짝이 (1 기본 ~ 7 갤럭시). 레인보우는 파트마다 TierHue 속성을 남겨요.
--- 반짝이 LightEmission: 1 이면 겹칠수록 하얗게 번쩍여요 (받침대에 여러 마리 모이면 눈부셔서 살짝 낮춰요)
-local TIER_SPARKLE_EMISSION = 0.8
+-- 반짝이 LightEmission: 1 이면 겹칠수록 하얗게 번쩍여요 (받침대에 여러 마리 모이면 눈부셔서 낮춰요, 0.8 → 0.6.
+-- 받침대 펫은 클라이언트 WorldFx 가 0.35 까지 더 낮춰요)
+local TIER_SPARKLE_EMISSION = 0.6
 local function applyTier(model: Model, tier: number)
 	local t = math.clamp(math.floor(tier), 1, Config.MaxTier)
 	model:SetAttribute("Tier", t)

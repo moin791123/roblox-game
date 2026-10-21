@@ -689,14 +689,53 @@ Config.Ride = {
 	MaxStandHeight = 8.5, -- 문/천장 설계용 (탄 채로 머리 꼭대기 높이 대략)
 }
 
--- 컨베이어 (지역마다 1개, 값은 벨트 하나 기준)
+-- 컨베이어 (지역마다 1개, 값은 벨트 하나 기준). ★v5 알은 사람마다 따로 나와요 (남이 사도 내 알은 그대로)
 Config.Conveyor = {
-	SpawnInterval = 2.6, -- 몇 초마다 새 알
+	SpawnInterval = 2.6, -- 몇 초마다 새 알 (한 사람의 벨트 하나 기준)
 	TravelTime = 26, -- 끝까지 가는 데 걸리는 초 (끝에 닿으면 사라짐)
 	MaxEggs = 12,
 	FlyMaxDistance = 400, -- 이보다 먼 집으로는 날아가지 않고 "뿅" 하고 바로 받침대에 나타나요
 	BeaconHeight = 70, -- 좋은 알(위 2칸) 위로 솟는 빛기둥 높이 (숲 마을에서도 보여요)
+	-- ★v5 알 자리는 나온 시각으로 계산해요 (Config.BeltEggSpot, 서버·클라이언트가 같은 공식)
+	BeltTop = 1.2, -- 벨트 윗면 높이 (알 바닥)
+	DropTime = 0.7, -- 슈트에서 벨트로 떨어지는 시간
+	DropHeight = 9, -- 슈트 안에서 알이 나오는 높이
+	FallTime = 0.7, -- 끝에서 통 안으로 떨어지는 시간
+	BuyDistance = 20, -- 서버: 계산한 알 자리에서 이 거리 안에 있어야 살 수 있어요
+	BuyGrace = 0.5, -- 벨트 끝에 닿은 뒤에도 이만큼은 사기를 받아 줘요 (지연 대비)
+	RenderDistance = 200, -- 클라이언트: 이 거리 안 알만 모델로 그려요 (좋은 알 빛기둥은 어디서나 보여요)
 }
+
+-- ★v5 벨트 위 알 자리: 나온 지 age 초 된 알의 피벗 위치 (흔들기 전) 와 단계
+-- (1 = 슈트에서 떨어지는 중, 2 = 벨트 위, 3 = 통으로 떨어지는 중, 4 = 끝). 1~2 단계일 때 살 수 있어요
+function Config.BeltEggSpot(zone: number, age: number): (Vector3, number)
+	local def = Config.Zones[zone] or Config.Zones[1]
+	local cv = Config.Conveyor
+	local start, finish = def.ConveyorStart, def.ConveyorEnd
+	local length = (finish - start).Magnitude
+	local dir = (finish - start).Unit
+	local speed = length / cv.TravelTime
+	local t = math.max(0, age)
+	local s, y, phase
+	if t < cv.DropTime then
+		local a = t / cv.DropTime
+		s, y, phase = 0, cv.DropHeight + (cv.BeltTop - cv.DropHeight) * (a * a), 1
+	elseif t < cv.DropTime + cv.TravelTime then
+		s, y, phase = (t - cv.DropTime) * speed, cv.BeltTop, 2
+	elseif t < cv.DropTime + cv.TravelTime + cv.FallTime then
+		local ft = t - cv.DropTime - cv.TravelTime
+		s, y, phase = length + ft * speed, cv.BeltTop - 1.4 * (ft / cv.FallTime) ^ 2, 3
+	else
+		s, y, phase = length + cv.FallTime * speed, cv.BeltTop - 1.4, 4
+	end
+	return start + dir * s + Vector3.new(0, y, 0), phase
+end
+
+-- ★v5 알이 벨트에 머무는 전체 시간 (이 뒤에는 서버·클라이언트 모두 목록에서 지워요)
+function Config.BeltEggLife(): number
+	local cv = Config.Conveyor
+	return cv.DropTime + cv.TravelTime + cv.FallTime
+end
 
 -- 좋은 알 알림 (Remotes.EggAlert). 지역의 맨 위 알 2칸이 벨트에 나오면 그 지역이 열린 사람에게 보내요.
 -- 맨 위 칸은 언제나, 둘째 칸은 벨트마다 Gap 초에 한 번만. 받는 사람: 그 지역이 열렸고,
@@ -867,13 +906,18 @@ Config.Leaderboard = {
 -- 들판 코인 (플레이어마다 따로 보이고 따로 먹어요). 지역마다 따로 있어요
 -- 코인 값 = Value × 지역 CoinMult × (1 + 집 초당 수익 / IncomeScale) × (1 + min(펫 보너스, MaxBoost)) × RebirthCoinMult
 Config.FieldCoins = {
-	CountPerZone = 30, -- 열린 지역마다 이만큼
-	Count = 30, -- (예전 이름) = CountPerZone
-	RespawnTime = 5,
+	CountPerZone = 40, -- 열린 지역마다 이만큼 (★v5 30 → 40)
+	Count = 40, -- (예전 이름) = CountPerZone
+	RespawnTime = 3, -- 먹은 코인이 다시 나오는 초 (★v5 5 → 3)
 	IncomeScale = 30,
 	MaxBoost = 3, -- 펫 보너스 합 최대 +300%
 	MagnetRadius = 6, -- 기본 자석 반경
 	MagnetPerFollower = 2, -- 따라오는 펫 1마리당 자석 반경 추가
+	-- ★v5 자석 버튼 (Settings.Magnet 켜짐): 기본 자석 밖 BigMagnetRadius 안 코인도 하나씩 빨아들여요.
+	-- 서 있기만 해도 너무 빨리 부자가 되지 않게 초당 BigMagnetRate 개까지만 (켜자마자는 BigMagnetBurst 개 한꺼번에)
+	BigMagnetRadius = 45,
+	BigMagnetRate = 1.2,
+	BigMagnetBurst = 6,
 	RenderDistance = 160, -- 클라이언트는 이 거리 안 코인만 그려요
 	Kinds = {
 		{ Name = "Bronze", Value = 3, Weight = 80, Color = RGB(230, 150, 70), Size = 1.8 },

@@ -1,46 +1,33 @@
--- 컨베이어(알 공장 벨트): 지역마다 벨트 1개 (workspace.Conveyors.Zone<k>), 그 지역 알 5~6종이 SpawnWeight 비율로 나와요.
--- 그 지역이 열린 사람이 접속해 있을 때만 알이 나오고 (숲 마을은 항상), 지역이 잠긴 사람은 못 사요.
--- 산 알은 집 받침대로 날아가요. 집이 아주 멀면 "뿅" 하고 사라졌다가 받침대에 바로 나타나요.
--- 벨트 줄무늬 애니메이션은 클라이언트(ZoneClient)가 해요 (서버 복제 줄이기).
--- ★v4 좋은 알(지역 맨 위 2칸, egg.Premium): 높은 네온 빛기둥 + 멀리서도 보이는 "✨ <알 이름>!" 간판,
--- 그리고 Remotes.EggAlert(zone, eggId) 를 보내요 (Config.EggAlert 규칙, Notify 토스트는 따로 안 보내요).
-local Debris = game:GetService("Debris")
+-- 컨베이어(알 공장 벨트): 지역마다 벨트 1개 (workspace.Conveyors.Zone<k>.Belt), 그 지역 알 5~6종이 SpawnWeight 비율로 나와요.
+-- ★v5 알은 사람마다 따로예요! 서버는 알 파트를 만들지 않고 플레이어마다 메모리에 알 목록만 둬요 (Uid, EggId, Zone, Born).
+-- 알 자리는 나온 시각으로 정해져요 (Config.BeltEggSpot): 그리기·흔들기·빛기둥·간판·사기 프롬프트는 클라이언트(EggBelt)가 하고,
+-- 사기 요청(Remotes.BuyEgg)은 여기서 검증해요. 남이 사도 내 알은 그대로, 남의 알은 보이지도 사지지도 않아요.
+-- 그 사람에게 열린 지역 벨트마다 알이 나와요 (숲 마을은 항상). 메모리만 써서 가볍고, 멀리 있어도 좋은 알 알림이 와요.
+-- 산 알은 집 받침대로 날아가요 (나는 모습은 클라이언트, 받침대에 놓기는 날아간 뒤 서버). 집이 아주 멀면 "뿅" 하고 바로 나타나요.
+-- 벨트 줄무늬 애니메이션은 클라이언트(ZoneClient)가 해요.
+-- ★v4 좋은 알(지역 맨 위 2칸, egg.Premium): Remotes.EggAlert(zone, eggId) 를 그 사람에게만 보내요 (Config.EggAlert 규칙).
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
-local PetModels = require(Shared.PetModels)
 
 local DataService = require(script.Parent.DataService)
 local PlotService = require(script.Parent.PlotService)
 
 local ConveyorService = {}
 
-local BELT_TOP = 1.2
-local DROP_TIME = 0.7 -- 슈트에서 벨트로 떨어지는 시간
-local DROP_HEIGHT = 9 -- 슈트 안에서 알이 나오는 높이
-local FALL_TIME = 0.7 -- 끝에서 통 안으로 떨어지는 시간
+local CV = Config.Conveyor
+local BELT_TOP = CV.BeltTop
+local DROP_HEIGHT = CV.DropHeight -- 슈트 안에서 알이 나오는 높이
 local FLY_TIME = 0.9 -- 산 알이 집으로 날아가는 시간 (가까울 때)
 local FLY_TIME_MAX = 1.8
 local STRIPE_SPACING = 8
-local BUY_DISTANCE = 20
-local WATCH_DISTANCE = 260 -- 이 안에 사람이 있는 벨트만 알을 매 프레임 움직여요
-local BEACON_WIDTH = 0.8
-
-type EggEntry = {
-	Model: Model,
-	EggId: string,
-	Price: number,
-	Born: number,
-	Phase: number,
-	Claimed: boolean,
-	Done: boolean,
-	Wobble: number,
-	Beacon: BasePart?, -- 좋은 알 빛기둥 (벨트 폴더 아래, 알을 따라가요)
-}
+local EGG_CENTER = 1.2 -- 알 피벗(바닥)에서 몸통 가운데까지 (거리 검사용)
+local LOAD_TIMEOUT = 20 -- 데이터 로딩 기다리는 최대 초
+local LOOP_INTERVAL = 0.25
+local LANE_CHECK = 0.5 -- 새로 열린 지역 확인 간격
 
 type Belt = {
 	Zone: number,
@@ -51,20 +38,39 @@ type Belt = {
 	Base: CFrame,
 	Speed: number,
 	Center: Vector3,
-	Eggs: { EggEntry },
-	Active: boolean, -- 알이 나오는지 (지역이 열린 사람이 접속 중)
-	Watched: boolean, -- 근처에 사람이 있는지
+}
+
+-- 한 사람의 벨트 알 하나
+type Egg = { Uid: number, EggId: string, Zone: number, Born: number }
+-- 한 사람의 벨트 하나
+type Lane = {
+	Zone: number,
+	Eggs: { Egg },
 	NextSpawn: number,
 	LastAlert: number, -- 마지막 EggAlert 시각 (둘째 칸 알은 Config.EggAlert.Gap 초에 한 번)
 }
+-- 한 사람의 모든 벨트
+type Stream = {
+	Lanes: { [number]: Lane },
+	ById: { [number]: Egg },
+	Rng: Random,
+	NextLaneCheck: number,
+}
 
-local rng = Random.new()
-local belts: { Belt } = {}
+local belts: { [number]: Belt } = {}
+local streams: { [Player]: Stream } = {}
+local hooked: { [Player]: boolean } = {}
 local buyDebounce: { [Player]: number } = {}
+local nextUid = 1 -- 서버 전체에서 하나뿐인 알 번호 (남의 번호를 보내도 내 목록에는 없어요)
 local started = false
 
 local function notify(player: Player, text: string, kind: string)
 	Remotes.Notify:FireClient(player, text, kind)
+end
+
+-- 알 시계 (클라이언트도 workspace:GetServerTimeNow() 로 같은 자리를 계산해요)
+local function clockNow(): number
+	return workspace:GetServerTimeNow()
 end
 
 local function makePart(props: { [string]: any }): Part
@@ -251,196 +257,200 @@ local function buildBelt(belt: Belt)
 end
 
 ----------------------------------------------------------------------
--- 알
+-- 사람마다 알 목록
 ----------------------------------------------------------------------
-local function buildEggModel(eggId: string): Model
-	local ok, model = pcall(PetModels.BuildEgg, eggId)
-	if ok and typeof(model) == "Instance" and model:IsA("Model") then
-		return model
-	end
-	warn("[ConveyorService] BuildEgg 실패:", model)
-	local m = Instance.new("Model")
-	local body = Instance.new("Part")
-	body.Name = "Body"
-	body.Shape = Enum.PartType.Ball
-	body.Size = Vector3.new(2.4, 2.4, 2.4)
-	body.Color = Config.Rarities[Config.Eggs[eggId].Rarity].Color
-	body.CanCollide = false
-	body.Parent = m
-	m.PrimaryPart = body
-	m.WorldPivot = body.CFrame * CFrame.new(0, -1.2, 0)
-	return m
+
+local function payload(egg: Egg)
+	return { Uid = egg.Uid, EggId = egg.EggId, Zone = egg.Zone, Born = egg.Born }
 end
 
-local function getMainPart(model: Model): BasePart?
-	return model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
-end
-
-local function makeBillboard(adornee: BasePart, egg: any, price: number)
-	local rarity = Config.Rarities[egg.Rarity]
-	local premium = egg.Premium == true
-	local gui = Instance.new("BillboardGui")
-	gui.Name = "EggInfo"
-	gui.Adornee = adornee
-	-- 비싼 알은 간판도 커요
-	gui.Size = if premium then UDim2.new(9, 0, 4, 0) else UDim2.new(7, 0, 3, 0)
-	gui.StudsOffsetWorldSpace = Vector3.new(0, if premium then 3.8 else 3.2, 0)
-	gui.MaxDistance = if premium then 120 else 90
-	gui.LightInfluence = 0
-	gui.ResetOnSpawn = false
-
-	local function label(text: string, color: Color3, y: number, h: number)
-		local l = Instance.new("TextLabel")
-		l.BackgroundTransparency = 1
-		l.Size = UDim2.new(1, 0, h, 0)
-		l.Position = UDim2.new(0, 0, y, 0)
-		l.Font = Enum.Font.FredokaOne
-		l.TextScaled = true
-		l.Text = text
-		l.TextColor3 = color
-		l.TextStrokeTransparency = 0.2
-		l.TextStrokeColor3 = Color3.fromRGB(40, 30, 60)
-		l.Parent = gui
-		return l
-	end
-	label(if premium then "✨ " .. egg.Name .. " ✨" else egg.Name, rarity.Color, 0, 0.4)
-	label("💰 " .. Config.FormatNumber(price), Color3.fromRGB(255, 225, 90), 0.4, 0.33)
-	label(rarity.Name, rarity.Color, 0.73, 0.27)
-	gui.Parent = adornee
-end
-
--- 비싼 알 반짝임 (빛 + 반짝이)
-local function addPremiumGlow(main: BasePart, egg: any)
-	local color = Config.Rarities[egg.Rarity].Color
-	local light = Instance.new("PointLight")
-	light.Name = "PremiumGlow"
-	light.Color = color
-	light.Brightness = 1.6
-	light.Range = 9
-	light.Parent = main
-	local sparkle = Instance.new("ParticleEmitter")
-	sparkle.Name = "PremiumSparkle"
-	sparkle.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-	sparkle.Color = ColorSequence.new(color, Color3.new(1, 1, 1))
-	sparkle.LightEmission = 0.8
-	sparkle.Size = NumberSequence.new(0.5, 0)
-	sparkle.Lifetime = NumberRange.new(0.6, 1)
-	sparkle.Speed = NumberRange.new(1, 2.5)
-	sparkle.SpreadAngle = Vector2.new(180, 180)
-	sparkle.Rate = 6
-	sparkle.Parent = main
-end
-
--- 좋은 알 빛기둥: 앵커된 네온 기둥 + 멀리서도 보이는 간판. 알 모델 밖에 있어서 흔들리지 않아요
-local function beaconCFrame(pos: Vector3): CFrame
-	local h = Config.Conveyor.BeaconHeight
-	return CFrame.new(pos + Vector3.new(0, h / 2 + 1.5, 0)) * CFrame.Angles(0, 0, math.pi / 2)
-end
-
-local function makeBeacon(parent: Instance, egg: any, pos: Vector3): BasePart
-	local h = Config.Conveyor.BeaconHeight
-	local color = Config.Rarities[egg.Rarity].Color
-	local beam = makePart({
-		Name = "EggBeacon",
-		Shape = Enum.PartType.Cylinder,
-		Size = Vector3.new(h, BEACON_WIDTH, BEACON_WIDTH),
-		CFrame = beaconCFrame(pos),
-		Color = color,
-		Material = Enum.Material.Neon,
-		Transparency = 0.3,
-		CanCollide = false,
-		CanTouch = false,
-		CanQuery = false,
-		CastShadow = false,
-	})
-	local gui = Instance.new("BillboardGui")
-	gui.Name = "BeaconSign"
-	gui.Size = UDim2.fromOffset(230, 56) -- 픽셀 크기: 멀리서도 똑같이 크게
-	gui.StudsOffsetWorldSpace = Vector3.new(0, h / 2 + 3, 0) -- 기둥 꼭대기 (월드 좌표 위쪽)
-	gui.AlwaysOnTop = true
-	gui.MaxDistance = 700
-	gui.LightInfluence = 0
-	gui.ResetOnSpawn = false
-	local label = Instance.new("TextLabel")
-	label.BackgroundTransparency = 1
-	label.Size = UDim2.fromScale(1, 1)
-	label.Font = Enum.Font.FredokaOne
-	label.TextScaled = true
-	label.Text = "✨ " .. egg.Name .. "!"
-	label.TextColor3 = color
-	label.TextStrokeTransparency = 0
-	label.TextStrokeColor3 = Color3.fromRGB(40, 30, 60)
-	label.Parent = gui
-	gui.Parent = beam
-	beam.Parent = parent
-	return beam
-end
-
-local function dropBeacon(entry: EggEntry)
-	if entry.Beacon then
-		entry.Beacon:Destroy()
-		entry.Beacon = nil
+local function send(player: Player, op: string, arg: any)
+	if player.Parent then
+		Remotes.EggBelt:FireClient(player, op, arg)
 	end
 end
 
--- 좋은 알 알림 보내기: 맨 위 칸은 언제나, 둘째 칸은 벨트마다 Gap 초에 한 번.
--- 받는 사람: 그 지역이 열렸고, 그 지역이 내 열린 지역 중 위에서 ZoneWindow 개 안이거나 지금 그 지역에 있을 때
+local function sendReset(player: Player)
+	local stream = streams[player]
+	if not stream then
+		return
+	end
+	local list = {}
+	for zone = 1, Config.MaxZone do
+		local lane = stream.Lanes[zone]
+		if lane then
+			for _, egg in lane.Eggs do
+				table.insert(list, payload(egg))
+			end
+		end
+	end
+	send(player, "Reset", list)
+end
+
+local function newEgg(stream: Stream, lane: Lane, eggId: string, born: number): Egg
+	local egg: Egg = { Uid = nextUid, EggId = eggId, Zone = lane.Zone, Born = born }
+	nextUid += 1
+	table.insert(lane.Eggs, egg)
+	stream.ById[egg.Uid] = egg
+	return egg
+end
+
+local function removeEgg(stream: Stream, egg: Egg)
+	stream.ById[egg.Uid] = nil
+	local lane = stream.Lanes[egg.Zone]
+	if lane then
+		local i = table.find(lane.Eggs, egg)
+		if i then
+			table.remove(lane.Eggs, i)
+		end
+	end
+end
+
+-- 좋은 알 알림 보내기 (그 사람에게만): 맨 위 칸은 언제나, 둘째 칸은 그 사람의 벨트마다 Gap 초에 한 번.
+-- 받는 조건: 그 지역이 열렸고, 그 지역이 내 열린 지역 중 위에서 ZoneWindow 개 안이거나 지금 그 지역에 있을 때
 -- (숲 마을은 모두의 집이 있는 곳이라 "거기 있음"으로 치지 않아요: 환생 많이 한 아이에게 숲 알 알림이 계속 오지 않게)
-local function sendEggAlert(belt: Belt, eggId: string, now: number)
+local function sendEggAlert(player: Player, lane: Lane, eggId: string, now: number)
 	local kind = Config.EggAlertKind(eggId)
 	if not kind then
 		return
 	end
 	local rules = Config.EggAlert
-	if kind ~= "Top" and now - belt.LastAlert < rules.Gap then
+	if kind ~= "Top" and now - lane.LastAlert < rules.Gap then
 		return
 	end
-	belt.LastAlert = now
-	for _, player in Players:GetPlayers() do
-		if DataService.Get(player) then
-			local rebirths = DataService.GetRebirths(player)
-			if Config.ZoneUnlocked(belt.Zone, rebirths) then
-				local here = belt.Zone ~= 1 and player:GetAttribute("Zone") == belt.Zone
-				if here or belt.Zone > Config.MaxZoneFor(rebirths) - rules.ZoneWindow then
-					Remotes.EggAlert:FireClient(player, belt.Zone, eggId)
+	lane.LastAlert = now
+	if not DataService.Get(player) then
+		return
+	end
+	local rebirths = DataService.GetRebirths(player)
+	if not Config.ZoneUnlocked(lane.Zone, rebirths) then
+		return
+	end
+	local here = lane.Zone ~= 1 and player:GetAttribute("Zone") == lane.Zone
+	if here or lane.Zone > Config.MaxZoneFor(rebirths) - rules.ZoneWindow then
+		Remotes.EggAlert:FireClient(player, lane.Zone, eggId)
+	end
+end
+
+-- 새 알 하나 (그 사람에게 "Add" + 좋은 알이면 알림)
+local function spawnEgg(player: Player, stream: Stream, lane: Lane, now: number)
+	if #lane.Eggs >= CV.MaxEggs then
+		return
+	end
+	local eggId = Config.RollEgg(stream.Rng, lane.Zone)
+	if not Config.Eggs[eggId] then
+		return
+	end
+	local egg = newEgg(stream, lane, eggId, now)
+	send(player, "Add", payload(egg))
+	sendEggAlert(player, lane, eggId, now)
+end
+
+-- 벨트를 처음 열 때: 이미 알이 지나가고 있는 것처럼 채워요 (알림은 안 보내요)
+local function addLane(stream: Stream, zone: number, now: number): Lane
+	local lane: Lane = { Zone = zone, Eggs = {}, NextSpawn = now, LastAlert = -math.huge }
+	stream.Lanes[zone] = lane
+	local interval = CV.SpawnInterval
+	local phase = stream.Rng:NextNumber(0, interval)
+	local maxAge = CV.DropTime + CV.TravelTime - 1
+	local ages = {}
+	local age = phase
+	while age < maxAge and #ages < CV.MaxEggs do
+		table.insert(ages, 1, age) -- 오래된 알부터
+		age += interval
+	end
+	for _, a in ages do
+		local eggId = Config.RollEgg(stream.Rng, zone)
+		if Config.Eggs[eggId] then
+			newEgg(stream, lane, eggId, now - a)
+		end
+	end
+	lane.NextSpawn = now + (interval - phase)
+	return lane
+end
+
+-- 열린 지역마다 벨트가 있는지 (새로 열렸으면 채워서 "Add")
+local function ensureLanes(player: Player, stream: Stream, now: number, announce: boolean)
+	if not DataService.Get(player) then
+		return
+	end
+	for zone = 1, DataService.GetMaxZone(player) do
+		if not stream.Lanes[zone] and belts[zone] then
+			local lane = addLane(stream, zone, now)
+			if announce then
+				for _, egg in lane.Eggs do
+					send(player, "Add", payload(egg))
 				end
 			end
 		end
 	end
 end
 
-local function removeEntry(belt: Belt, entry: EggEntry)
-	local i = table.find(belt.Eggs, entry)
-	if i then
-		table.remove(belt.Eggs, i)
+local function buildStream(player: Player): Stream
+	local seed = (math.floor(os.clock() * 1000) % 1000000) + player.UserId % 100000 * 37
+	local stream: Stream = { Lanes = {}, ById = {}, Rng = Random.new(seed), NextLaneCheck = 0 }
+	streams[player] = stream
+	ensureLanes(player, stream, clockNow(), false)
+	return stream
+end
+
+-- 데이터가 로딩될 때까지 기다렸다가 벨트를 채워요
+local function setupPlayer(player: Player)
+	if hooked[player] then
+		return
+	end
+	hooked[player] = true
+	task.spawn(function()
+		local waited = 0
+		while player.Parent and DataService.Get(player) == nil and waited < LOAD_TIMEOUT do
+			waited += task.wait(0.25)
+		end
+		if player.Parent == nil or DataService.Get(player) == nil or streams[player] then
+			return
+		end
+		buildStream(player)
+		sendReset(player)
+	end)
+end
+
+local function cleanupPlayer(player: Player)
+	streams[player] = nil
+	hooked[player] = nil
+	buyDebounce[player] = nil
+end
+
+-- 한 사람의 벨트들: 끝난 알 지우기 + 새 알
+local function tickStream(player: Player, stream: Stream, now: number)
+	if now >= stream.NextLaneCheck then
+		stream.NextLaneCheck = now + LANE_CHECK
+		ensureLanes(player, stream, now, true)
+	end
+	local life = Config.BeltEggLife()
+	local rebirths = DataService.GetRebirths(player)
+	for zone, lane in stream.Lanes do
+		local eggs = lane.Eggs
+		for i = #eggs, 1, -1 do
+			local egg = eggs[i]
+			if now - egg.Born > life then
+				stream.ById[egg.Uid] = nil
+				table.remove(eggs, i) -- 클라이언트도 시간으로 알아서 지워요 (메시지 없음)
+			end
+		end
+		if now >= lane.NextSpawn then
+			lane.NextSpawn += CV.SpawnInterval -- 고리 간격(0.25초)에 밀리지 않게 정확히 SpawnInterval 마다
+			if lane.NextSpawn <= now then
+				lane.NextSpawn = now + CV.SpawnInterval -- 오래 멈췄으면 몰아서 내지 않아요
+			end
+			if Config.ZoneUnlocked(zone, rebirths) then
+				spawnEgg(player, stream, lane, now)
+			end
+		end
 	end
 end
 
--- 잠깐 반짝 터지는 효과 (보이지 않는 파트 + 파티클 한 번)
-local function poofAt(pos: Vector3, color: Color3)
-	local p = Instance.new("Part")
-	p.Name = "EggPoof"
-	p.Anchored = true
-	p.CanCollide = false
-	p.CanTouch = false
-	p.CanQuery = false
-	p.Transparency = 1
-	p.Size = Vector3.new(1, 1, 1)
-	p.CFrame = CFrame.new(pos)
-	p.Parent = workspace
-	local e = Instance.new("ParticleEmitter")
-	e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-	e.Color = ColorSequence.new(color, Color3.new(1, 1, 1))
-	e.LightEmission = 0.7
-	e.Size = NumberSequence.new(0.9, 0)
-	e.Lifetime = NumberRange.new(0.5, 0.9)
-	e.Speed = NumberRange.new(6, 12)
-	e.SpreadAngle = Vector2.new(180, 180)
-	e.Rate = 0
-	e.Parent = p
-	e:Emit(24)
-	Debris:AddItem(p, 1.5)
-end
+----------------------------------------------------------------------
+-- 사기
+----------------------------------------------------------------------
 
 local function placeIfStillThere(player: Player, uid: string)
 	if player.Parent == nil then
@@ -452,53 +462,28 @@ local function placeIfStillThere(player: Player, uid: string)
 	end
 end
 
-local function flyToSlot(model: Model, player: Player, uid: string, target: CFrame)
-	task.spawn(function()
-		local from = model:GetPivot()
-		local p0 = from.Position
-		local p2 = target.Position
-		local dist = (p2 - p0).Magnitude
-		local p1 = (p0 + p2) / 2 + Vector3.new(0, math.max(10, dist * 0.35), 0)
-		local flyTime = math.clamp(FLY_TIME + dist / 500, FLY_TIME, FLY_TIME_MAX)
-		local t0 = os.clock()
-		while true do
-			local a = math.clamp((os.clock() - t0) / flyTime, 0, 1)
-			if model.Parent == nil then
-				break
-			end
-			local u = 1 - a
-			local pos = p0 * (u * u) + p1 * (2 * u * a) + p2 * (a * a)
-			local rot = target.Rotation * CFrame.Angles(0, (1 - a) * math.pi * 4, 0)
-			model:PivotTo(CFrame.new(pos) * rot)
-			if a >= 1 then
-				break
-			end
-			RunService.Heartbeat:Wait()
-		end
-		model:Destroy()
-		-- 날아가는 동안 상황이 바뀌었을 수 있으니 다시 확인
-		placeIfStillThere(player, uid)
-	end)
-end
-
--- 너무 먼 집: 그 자리에서 뿅! 하고 받침대에 바로 나타나요
-local function poofToSlot(model: Model, player: Player, uid: string, target: CFrame, color: Color3)
-	poofAt(model:GetPivot().Position + Vector3.new(0, 1.5, 0), color)
-	model:Destroy()
-	placeIfStillThere(player, uid)
-	poofAt(target.Position + Vector3.new(0, 1.5, 0), color)
-end
-
-local function onBuy(belt: Belt, entry: EggEntry, player: Player)
-	if entry.Claimed or entry.Done or entry.Phase >= 3 then
+local function onBuy(player: Player, uid: any)
+	if type(uid) ~= "number" or uid ~= uid or uid ~= math.floor(uid) then
 		return
 	end
-	local now = os.clock()
-	if (buyDebounce[player] or 0) > now then
+	local stream = streams[player]
+	if not stream then
 		return
 	end
-	buyDebounce[player] = now + 0.3
+	local egg = stream.ById[uid]
+	if not egg then
+		return -- 내 알이 아니거나 이미 없어요
+	end
+	local clock = os.clock()
+	if (buyDebounce[player] or 0) > clock then
+		return
+	end
+	buyDebounce[player] = clock + 0.3
 
+	local age = clockNow() - egg.Born
+	if age > CV.DropTime + CV.TravelTime + CV.BuyGrace then
+		return -- 벨트 끝을 지났어요
+	end
 	if not DataService.Get(player) then
 		return
 	end
@@ -506,20 +491,20 @@ local function onBuy(belt: Belt, entry: EggEntry, player: Player)
 		notify(player, "아직 내 집이 없어요! 🏠", "warn")
 		return
 	end
-	local egg = Config.Eggs[entry.EggId]
+	local def = Config.Eggs[egg.EggId]
 	local rebirths = DataService.GetRebirths(player)
-	local zone = Config.EggZone(entry.EggId)
-	if not Config.ZoneUnlocked(zone, rebirths) then
-		notify(player, "🔒 환생 " .. Config.Zones[zone].MinRebirth .. "회가 필요해요!", "warn")
+	if not Config.ZoneUnlocked(egg.Zone, rebirths) then
+		notify(player, "🔒 환생 " .. Config.Zones[egg.Zone].MinRebirth .. "회가 필요해요!", "warn")
 		return
 	end
 	local character = player.Character
 	local hrp = character and character:FindFirstChild("HumanoidRootPart")
-	local main = getMainPart(entry.Model)
-	if not (hrp and hrp:IsA("BasePart") and main) then
+	if not (hrp and hrp:IsA("BasePart")) then
 		return
 	end
-	if (hrp.Position - main.Position).Magnitude > BUY_DISTANCE then
+	local spot = Config.BeltEggSpot(egg.Zone, age)
+	local center = spot + Vector3.new(0, EGG_CENTER, 0)
+	if (hrp.Position - center).Magnitude > CV.BuyDistance then
 		return
 	end
 
@@ -529,199 +514,43 @@ local function onBuy(belt: Belt, entry: EggEntry, player: Player)
 		notify(player, "집에 빈 받침대가 없어요! 🏠", "warn")
 		return
 	end
-	if not DataService.TrySpend(player, entry.Price) then
-		notify(player, "코인이 부족해요! 💰 " .. Config.FormatNumber(entry.Price) .. " 필요", "warn")
+	if not DataService.TrySpend(player, def.Price) then
+		notify(player, "코인이 부족해요! 💰 " .. Config.FormatNumber(def.Price) .. " 필요", "warn")
 		return
 	end
 
 	-- 여기부터는 이 알은 이 플레이어 것 (중간에 yield 없음)
-	entry.Claimed = true
-	entry.Done = true
-	removeEntry(belt, entry)
-	dropBeacon(entry)
-
-	local uid = DataService.AddItem(player, {
+	removeEgg(stream, egg)
+	local itemUid = DataService.AddItem(player, {
 		Kind = "Egg",
-		Id = entry.EggId,
+		Id = egg.EggId,
 		Loc = "Slot",
 		Slot = slot,
-		HatchAt = os.time() + Config.RebirthHatchTime(entry.EggId, rebirths), -- 환생할수록 빨리 부화
+		HatchAt = os.time() + Config.RebirthHatchTime(egg.EggId, rebirths), -- 환생할수록 빨리 부화
 	})
-	if not uid or uid == "" then
+	if not itemUid or itemUid == "" then
 		-- 혹시 실패하면 환불
-		DataService.AddCoins(player, entry.Price)
-		entry.Model:Destroy()
+		DataService.AddCoins(player, def.Price)
+		send(player, "Remove", egg.Uid)
 		DataService.Sync(player)
 		return
 	end
 
-	local model = entry.Model
-	for _, d in model:GetDescendants() do
-		if d:IsA("ProximityPrompt") or d:IsA("BillboardGui") then
-			d:Destroy()
-		end
-	end
 	local target = PlotService.GetSlotCFrame(player, slot)
-	if (target.Position - main.Position).Magnitude <= Config.Conveyor.FlyMaxDistance then
-		flyToSlot(model, player, uid, target)
+	local dist = (target.Position - center).Magnitude
+	if dist <= CV.FlyMaxDistance then
+		local flyTime = math.clamp(FLY_TIME + dist / 500, FLY_TIME, FLY_TIME_MAX)
+		send(player, "Bought", { Uid = egg.Uid, Target = target, FlyTime = flyTime, Poof = false })
+		-- 날아가는 동안 상황이 바뀌었을 수 있으니 도착할 때 다시 확인
+		task.delay(flyTime, placeIfStillThere, player, itemUid)
 		notify(player, "알을 샀어요! 집에서 부화를 기다려요 🥚", "good")
 	else
-		poofToSlot(model, player, uid, target, Config.Rarities[egg.Rarity].Color)
+		-- 너무 먼 집: 그 자리에서 뿅! 하고 받침대에 바로 나타나요
+		send(player, "Bought", { Uid = egg.Uid, Target = target, FlyTime = 0, Poof = true })
+		placeIfStillThere(player, itemUid)
 		notify(player, "✨ 뿅! 알이 집 받침대로 갔어요 🥚", "good")
 	end
 	DataService.Sync(player)
-end
-
-local function spawnEgg(belt: Belt)
-	if #belt.Eggs >= Config.Conveyor.MaxEggs then
-		return
-	end
-	local eggId = Config.RollEgg(rng, belt.Zone)
-	local egg = Config.Eggs[eggId]
-	if not egg then
-		return
-	end
-	local rarity = Config.Rarities[egg.Rarity]
-	local price = egg.Price
-
-	local model = buildEggModel(eggId)
-	model.Name = "ConveyorEgg_" .. eggId
-	model:SetAttribute("EggId", eggId)
-	model:SetAttribute("Price", price)
-	model:SetAttribute("Zone", belt.Zone)
-
-	local main = getMainPart(model)
-	if not main then
-		model:Destroy()
-		return
-	end
-	-- 몸통만 앵커 (나머지는 WeldConstraint 로 따라와요). 매 프레임 움직일 때 몸통 CFrame 하나만 복제돼서 가벼워요.
-	for _, d in model:GetDescendants() do
-		if d:IsA("BasePart") then
-			d.Anchored = d == main
-			d.CanCollide = false
-			d.CanTouch = false
-		end
-	end
-
-	if rarity.Order >= 4 then
-		pcall(PetModels.AddRarityEffects, model, egg.Rarity)
-	end
-	if egg.Premium then
-		addPremiumGlow(main, egg)
-	end
-	makeBillboard(main, egg, price)
-
-	local prompt = Instance.new("ProximityPrompt")
-	prompt.Name = "BuyPrompt"
-	prompt.ActionText = "구매 💰" .. Config.FormatNumber(price)
-	prompt.ObjectText = egg.Name
-	prompt.HoldDuration = 0.2
-	prompt.MaxActivationDistance = 10
-	prompt.RequiresLineOfSight = false
-	prompt:SetAttribute("PromptKind", "Buy")
-	prompt.Parent = main
-
-	local entry: EggEntry = {
-		Model = model,
-		EggId = eggId,
-		Price = price,
-		Born = os.clock(),
-		Phase = 1,
-		Claimed = false,
-		Done = false,
-		Wobble = rng:NextNumber() * 10,
-	}
-	prompt.Triggered:Connect(function(player)
-		onBuy(belt, entry, player)
-	end)
-
-	local startCF = beltCFrame(belt, 0, DROP_HEIGHT)
-	model:PivotTo(startCF)
-	model.Parent = belt.Folder
-	if egg.Premium then
-		entry.Beacon = makeBeacon(belt.Folder, egg, startCF.Position)
-	end
-	table.insert(belt.Eggs, entry)
-
-	-- 좋은 알 알림 (배너는 클라이언트가 그려요. Notify 토스트는 따로 안 보내요)
-	sendEggAlert(belt, eggId, os.clock())
-end
-
--- 벨트 하나의 알을 한 번에 움직여요 (근처에 아무도 없으면 시간만 세고 움직이진 않아요)
-local function updateEggs(belt: Belt, now: number)
-	local travel = Config.Conveyor.TravelTime
-	local eggs = belt.Eggs
-	for i = #eggs, 1, -1 do
-		local e = eggs[i]
-		local t = now - e.Born
-		local s, y
-		if t < DROP_TIME then
-			-- 슈트에서 톡 떨어지기
-			local a = t / DROP_TIME
-			s = 0
-			y = DROP_HEIGHT + (BELT_TOP - DROP_HEIGHT) * (a * a)
-		elseif t < DROP_TIME + travel then
-			e.Phase = 2
-			s = (t - DROP_TIME) * belt.Speed
-			y = BELT_TOP
-		elseif t < DROP_TIME + travel + FALL_TIME then
-			if e.Phase < 3 then
-				e.Phase = 3
-				local prompt = e.Model:FindFirstChildWhichIsA("ProximityPrompt", true)
-				if prompt then
-					prompt.Enabled = false
-				end
-			end
-			local ft = t - DROP_TIME - travel
-			s = belt.Length + ft * belt.Speed
-			y = BELT_TOP - 1.4 * (ft / FALL_TIME) ^ 2
-		else
-			e.Done = true
-			table.remove(eggs, i)
-			dropBeacon(e)
-			e.Model:Destroy()
-			continue
-		end
-		if belt.Watched then
-			local phase = e.Wobble
-			local wobble = CFrame.Angles(0, now * 0.8 + phase, 0)
-				* CFrame.Angles(math.sin(now * 5 + phase) * 0.07, 0, math.sin(now * 4 + phase) * 0.1)
-			local cf = beltCFrame(belt, s, y)
-			e.Model:PivotTo(cf * wobble)
-			if e.Beacon then
-				e.Beacon.CFrame = beaconCFrame(cf.Position)
-			end
-		end
-	end
-end
-
--- 벨트마다: 알이 나와도 되는지 / 근처에 사람이 있는지
-local function refreshBeltStates()
-	local players = Players:GetPlayers()
-	for _, belt in belts do
-		local active = belt.Zone == 1
-		local watched = false
-		local minRebirth = Config.Zones[belt.Zone].MinRebirth
-		for _, player in players do
-			if not active and DataService.Get(player) and DataService.GetRebirths(player) >= minRebirth then
-				active = true
-			end
-			local char = player.Character
-			local hrp = char and char:FindFirstChild("HumanoidRootPart")
-			if hrp and hrp:IsA("BasePart") then
-				local d = hrp.Position - belt.Center
-				if d.X * d.X + d.Z * d.Z <= WATCH_DISTANCE * WATCH_DISTANCE then
-					watched = true
-				end
-			end
-		end
-		if active and not belt.Active then
-			belt.NextSpawn = os.clock() + rng:NextNumber(0, Config.Conveyor.SpawnInterval)
-		end
-		belt.Active = active
-		belt.Watched = watched
-	end
 end
 
 ----------------------------------------------------------------------
@@ -730,12 +559,24 @@ end
 
 -- 지역 k 의 벨트 폴더 (workspace.Conveyors.Zone<k>)
 function ConveyorService.GetZoneFolder(zone: number): Folder?
-	for _, belt in belts do
-		if belt.Zone == zone then
-			return belt.Folder
+	local belt = belts[zone]
+	return if belt then belt.Folder else nil
+end
+
+-- 그 사람 벨트에 지금 있는 알 (테스트·디버그용, 복사본)
+function ConveyorService.GetEggs(player: Player, zone: number?): { Egg }
+	local out = {}
+	local stream = streams[player]
+	if stream then
+		for z, lane in stream.Lanes do
+			if zone == nil or z == zone then
+				for _, egg in lane.Eggs do
+					table.insert(out, table.clone(egg))
+				end
+			end
 		end
 	end
-	return nil
+	return out
 end
 
 function ConveyorService.Start()
@@ -767,53 +608,47 @@ function ConveyorService.Start()
 			Dir = dir,
 			Length = length,
 			Base = CFrame.lookAt(startPos, startPos + dir),
-			Speed = length / Config.Conveyor.TravelTime,
+			Speed = length / CV.TravelTime,
 			Center = (startPos + endPos) / 2,
-			Eggs = {},
-			Active = k == 1,
-			Watched = false,
-			NextSpawn = os.clock() + (k - 1) * 0.3,
-			LastAlert = -math.huge,
 		}
 		buildBelt(belt)
-		table.insert(belts, belt)
+		belts[k] = belt
 	end
 	root.Parent = workspace
 
-	Players.PlayerRemoving:Connect(function(player)
-		buyDebounce[player] = nil
-	end)
+	Players.PlayerAdded:Connect(setupPlayer)
+	for _, p in Players:GetPlayers() do
+		setupPlayer(p)
+	end
+	Players.PlayerRemoving:Connect(cleanupPlayer)
 
-	RunService.Heartbeat:Connect(function()
-		local now = os.clock()
-		for _, belt in belts do
-			if #belt.Eggs > 0 then
-				updateEggs(belt, now)
-			end
+	Remotes.BuyEgg.OnServerEvent:Connect(function(player, uid)
+		local ok, err = pcall(onBuy, player, uid)
+		if not ok then
+			warn("[ConveyorService] 알 사기 오류:", err)
 		end
 	end)
 
+	-- 클라이언트가 동기화를 요청하면 알 목록도 다시 보내요
+	Remotes.RequestSync.OnServerEvent:Connect(function(player)
+		if not streams[player] and player.Parent and DataService.Get(player) then
+			buildStream(player)
+		end
+		sendReset(player)
+	end)
+
 	task.spawn(function()
-		local nextRefresh = 0
 		while true do
-			local now = os.clock()
-			if now >= nextRefresh then
-				nextRefresh = now + 0.5
-				local ok, err = pcall(refreshBeltStates)
-				if not ok then
-					warn("[ConveyorService] 벨트 상태 오류:", err)
-				end
-			end
-			for _, belt in belts do
-				if belt.Active and now >= belt.NextSpawn then
-					belt.NextSpawn = now + Config.Conveyor.SpawnInterval
-					local ok, err = pcall(spawnEgg, belt)
+			local now = clockNow()
+			for player, stream in streams do
+				if player.Parent then
+					local ok, err = pcall(tickStream, player, stream, now)
 					if not ok then
 						warn("[ConveyorService] 알 생성 오류:", err)
 					end
 				end
 			end
-			task.wait(0.25)
+			task.wait(LOOP_INTERVAL)
 		end
 	end)
 end
