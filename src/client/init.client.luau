@@ -211,6 +211,7 @@ safeCall(LeaderboardWindow, "Init", gui)
 safeCall(DecorateMode, "Init", gui)
 Tips.Init(gui)
 HatchFx.Init(playerGui)
+pcall(UiKit.PreloadRareSounds) -- ★v7 희귀 알 알림 소리를 미리 불러 둬요
 WorldFx.Init()
 CoinField.Init()
 safeCall(optionalRequire("EggBelt"), "Init") -- ★v5 내 컨베이어 알 (사람마다 따로, 나만 보여요)

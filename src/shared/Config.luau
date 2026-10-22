@@ -1237,6 +1237,10 @@ Config.Sounds = {
 	Buy = "rbxasset://sounds/action_jump.mp3",
 	Alert = "rbxasset://sounds/impact_water.mp3",
 	Steal = "rbxasset://sounds/action_get_up.mp3", -- (예전 이름, 안 써도 남겨 둬요)
+	-- ★v7 아주 희귀한 알 알림 소리 (단계마다 다른 소리, 로블록스 무료 효과음 라이브러리. 못 불러오면 UiKit 가 짧은 가락으로 대신)
+	RareHidden = "rbxassetid://9116395089", -- 시크릿: 반짝이는 마법 종소리 (ProSoundEffects "Magic Glows Soft Clusters Of Chiming Hits 4")
+	RareCelestial = "rbxassetid://1848271884", -- 천상: 하프 같은 동화 왈츠 끝맺음 (APM "Fairytown Waltz - Tag2")
+	RareEternal = "rbxassetid://1842335078", -- 이터널: 귀여운 팡파르 (APM "Cartoon Fanfare (c)")
 }
 
 ----------------------------------------------------------------------

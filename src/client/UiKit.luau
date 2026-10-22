@@ -476,20 +476,95 @@ function UiKit.SpecialEggOfPet(petId: any): string?
 	return map[petId]
 end
 
--- 희귀 알 소리: 단계마다 다른 짧은 가락 (Config.Sounds 에 "Rare<단계>" 가 있으면 그걸 써요)
+-- 희귀 알 소리: ★v7 단계마다 다른 효과음 (Config.Sounds "Rare<단계>", 로블록스 무료 효과음 라이브러리).
+-- 시작할 때 미리 불러 두고, 못 불러온 소리(또는 아직 확인 전)는 예전처럼 단계마다 다른 짧은 가락으로 대신해요
 local RARE_TUNES: { [string]: { { number } } } = {
 	-- { 시각, 음 높이, 소리 (1 = Alert, 2 = Coin) }
 	Hidden = { { 0, 1.15, 1 }, { 0.16, 1.5, 2 } },
 	Celestial = { { 0, 1.2, 2 }, { 0.14, 1.5, 2 }, { 0.3, 1.05, 1 } },
 	Eternal = { { 0, 1.0, 2 }, { 0.12, 1.26, 2 }, { 0.24, 1.5, 2 }, { 0.38, 2.0, 2 }, { 0.5, 0.85, 1 } },
 }
-function UiKit.PlayRareSound(tier: any)
-	local key = if type(tier) == "string" then tier else "Hidden"
-	if type((Config.Sounds :: any)["Rare" .. key]) == "string" then
-		UiKit.PlaySound("Rare" .. key)
+local RARE_VOLUME: { [string]: number } = { Hidden = 0.6, Celestial = 0.5, Eternal = 0.5 }
+local rareReady: { [string]: boolean } = {} -- 단계 → 불러오기 성공 (false = 실패, nil = 아직)
+local rareSounds: { [string]: Sound } = {}
+
+local function rareSound(key: string): Sound?
+	local id = (Config.Sounds :: any)["Rare" .. key]
+	if type(id) ~= "string" then
+		return nil
+	end
+	local sound = rareSounds[key]
+	if not sound then
+		local made = Instance.new("Sound")
+		made.Name = "Ui_Rare" .. key
+		made.SoundId = id
+		made.Volume = RARE_VOLUME[key] or 0.55
+		made.Parent = SoundService
+		rareSounds[key] = made
+		sound = made
+	end
+	return sound
+end
+
+-- 희귀 알 소리 미리 불러오기 (init.client 가 안 불러도 처음 PlayRareSound 때 시작해요)
+local rarePreloading = false
+function UiKit.PreloadRareSounds()
+	if rarePreloading then
 		return
 	end
-	local tune = RARE_TUNES[key] or RARE_TUNES.Hidden
+	rarePreloading = true
+	local list: { Instance } = {}
+	local byId: { [string]: string } = {}
+	for key in RARE_TUNES do
+		local sound = rareSound(key)
+		if sound then
+			table.insert(list, sound)
+			byId[sound.SoundId] = key
+		end
+	end
+	if #list == 0 then
+		return
+	end
+	task.spawn(function()
+		local ok = pcall(function()
+			local ContentProvider = game:GetService("ContentProvider")
+			ContentProvider:PreloadAsync(list, function(contentId: string, status: Enum.AssetFetchStatus)
+				local key = byId[contentId]
+				if key then
+					rareReady[key] = status == Enum.AssetFetchStatus.Success
+				end
+			end)
+		end)
+		if not ok then
+			for _, key in byId do
+				if rareReady[key] == nil then
+					rareReady[key] = false
+				end
+			end
+		end
+		-- 콜백이 안 온 소리는 IsLoaded 로 한 번 더 봐요
+		for _, key in byId do
+			if rareReady[key] == nil then
+				local sound = rareSounds[key]
+				rareReady[key] = sound ~= nil and sound.IsLoaded
+			end
+		end
+	end)
+end
+
+function UiKit.PlayRareSound(tier: any)
+	local key = if type(tier) == "string" and RARE_TUNES[tier] then tier else "Hidden"
+	UiKit.PreloadRareSounds()
+	local sound = rareSound(key)
+	if sound and rareReady[key] then
+		local played = pcall(function()
+			SoundService:PlayLocalSound(sound)
+		end)
+		if played then
+			return
+		end
+	end
+	local tune = RARE_TUNES[key]
 	for _, note in tune do
 		local name = if note[3] == 1 then "Alert" else "Coin"
 		if note[1] <= 0 then
