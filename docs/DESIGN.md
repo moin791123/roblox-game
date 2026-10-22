@@ -1,4 +1,4 @@
-# 펫 월드 (v7): design contract
+# 펫 월드 (v7.1): design contract
 
 Kid-friendly **pet-collecting simulator**. Rojo project, Luau. All player-facing text is **Korean**, cute and short.
 Code comments: short Korean comments (match existing files). Tabs, `task.*` (never `wait`/`spawn`/`delay`).
@@ -51,6 +51,14 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 > 4b. ★v7.1 the parent clarified item 4 ("펫중에 젤나쁜펫을 빼고 알먹으려고"): the button is **"🐾 나쁜 펫 빼기"** (phone "펫 빼기").
 >    Full pedestals → the WEAKEST pedestal pet (lowest income) goes to the bag; eggs stay and keep hatching. Only with no pet on any pedestal
 >    does the worst egg go (old egg order). BuyEgg hint "🐾 나쁜 펫 빼기를 눌러 보세요". Remote name stays `StashEgg`.
+> 8. ★v7.1 **Bag tools** (BagWindow, not the Hud). Settings InfiniteBag (bool), AutoSell (bool), SellZoneMax (1–8, default 1),
+>    SellRarityMax (rarity order 1–7, default 2) via `Config.SettingValue`. "♾ 가방 무한" in the bag header: capacity
+>    `Config.InfiniteBagItems` = 500 (a full save ≈ 82 KB; every Sync sends the whole save), pill "가방 n/∞"; turning it off deletes
+>    nothing (bag counts as full until < 150); server and client BagSpace go through BagCapacity. "💰 한꺼번에 팔기" (tools row) opens a
+>    panel: 테마 ○ 이하 · 등급(희귀도) ○ 이하, preview "n마리 · 💰 X", 팔기 (second tap when ≥ 20 pets or ≥ 1e6), 🤖 자동 판매 switch.
+>    `Remotes.SellBulk(zoneMax, rarityMax)` sells BAG pets only — never Special (시크릿/천상/이터널), pets wearing an Acc, or tier ≥ 4 골드;
+>    one coin add / toast / CoinFx / Sync; 1 s gap. Auto sell: a freshly hatched pet matching the filter is sold at once (no HatchFx, one
+>    small toast "🤖 자동 판매: <펫>[ 외 n마리] +💰X", pedestal freed), except NEW pets (incl. a first-time tier) and tier ≥ 2; fusion never.
 > 7. **Hatch card shows the real income** (× Size) and, for rare pets, "📏 ×n": `Remotes.HatchFx` gains a 6th arg `size` (hatch + fuse).
 >
 > **v6 changes (this round)** — "조금 진행하니까 루즈해지네": a reason to rush to every map, plus a stronger magnet. ★v6 marks v6 below.
