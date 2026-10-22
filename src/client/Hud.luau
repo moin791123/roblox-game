@@ -1,16 +1,15 @@
 -- 화면 고정 UI: 코인(CoinSync 로 바로바로), 초당 수익, 집 금고, 펫 수, 왼쪽 큰 버튼 7개
 -- (가방 B / 도감 N / 집 H / 상점 P / 지도 M / 순위 L / 환생 R). 화면이 낮으면 2~3열로 접혀요.
 -- Hud.SetBadge("집", true): 버튼 오른쪽 위에 빨간 "!" (새 집을 살 수 있을 때 init.client 가 켜요)
--- 켜고 끄는 버튼 4개 (🙈 부화 숨기기 / 🏦 자동 수금 / 🧲 자석 / ★v6 ⚡ 슈퍼 자석): 한 번 누르면 바로 켜짐/꺼짐
+-- 켜고 끄는 버튼 3개 (🏦 자동 수금 / 🧲 자석 / ⚡ 슈퍼 자석): 한 번 누르면 바로 켜짐/꺼짐
 --   (색 + ON/OFF 스위치), 서버로 Remotes.SetSetting, 스냅샷 Settings 를 따라가요 (State.GetSetting). PC·태블릿은 이름이 보이는
 --   가로 버튼, 폰은 작은 네모. 자리: 큰 버튼 칸 바로 오른쪽 세로 (위 → 아래 맞춤) → 왼쪽 위 가로 줄 → 왼쪽 위 2×2
 --   → 큰 버튼 칸 오른쪽 2×2 → 오른쪽 위 (세로 / 2×2). 코인 줄·점프·조이스틱은 피해요. 꾸미기 모드 동안은 큰 버튼과 같이 숨어요.
---   ⚡ 슈퍼 자석은 환생 FieldCoins.SuperMagnetMinRebirth 번 전에는 잠겨 있어요 ("🔒 환생 1회", 누르면 설명만).
--- ★v7 🔔 알 알림 버튼 (켜고 끄는 버튼 줄 마지막 칸, 지금 단계 짧은 이름 "모두"/"최종만"…): 누르면 작은 고르는 창
---   (Config.AlertLevels 5줄, 지금 단계 ✔, 누르면 Remotes.SetSetting("AlertLevel", n) + 말풍선, 밖을 누르거나 ✖ / Esc 면 닫혀요).
---   5칸이 안 들어가면 3×2 로 (왼쪽 위 / 큰 버튼 칸 오른쪽).
--- ★v7 빠른 버튼 2개 (가방 밖): "🐾 나쁜 펫 빼기" (Remotes.StashEgg) · "✨ 자동 배치" (Remotes.AutoPlace).
---   폰은 작은 네모 (이모지 + 두 낱말) 를 코인 줄 오른쪽 위 구석에 (알림 줄은 코인 줄 때문에 원래 거기까지 못 올라가요),
+--   ★v7.2 셋 다 환생해야 열려요 (Config.SettingMinRebirth: 🧲 1 · ⚡ 2 · 🏦 3). 그 전에는 회색 "🔒 환생 N회", 누르면 설명만.
+--   켜 둔 값은 그대로 저장돼요 (열리면 바로 작동). 열렸다는 말풍선은 서버가 그 환생 때 보내요 (PlotService), 여기서는 버튼만 통통.
+-- ★v7.2 ⚙️ 옵션 버튼 (켜고 끄는 버튼 줄 마지막 칸): 누르면 ⚙️ 게임 옵션 창 (OptionsWindow: 🙈 부화 숨기기 · 🔔 알 알림).
+-- ★v7 빠른 버튼 2개 (가방 밖): "🐾 하위 펫 한 개 가방으로" (★v7.2 이름, Remotes.StashEgg) · "✨ 자동 배치" (Remotes.AutoPlace).
+--   폰은 작은 네모 (이모지 + 두 줄 글씨) 를 코인 줄 오른쪽 위 구석에 (알림 줄은 코인 줄 때문에 원래 거기까지 못 올라가요),
 --   PC·태블릿은 이름 버튼을 켜고 끄는 버튼 아래에. 알림 줄 띠·팁 줄·점프·조이스틱은 피하고, 꾸미기 동안은 숨어요.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
@@ -59,16 +58,11 @@ type ToggleDef = {
 	MinRebirth: number?, -- 이 환생 수 전에는 잠겨 있어요
 	LockText: string?, -- 잠겼을 때 누르면 나오는 말
 }
-local SUPER_MIN = Config.FieldCoins.SuperMagnetMinRebirth or 1
+-- ★v7.2 잠금 숫자는 Config 에서 (🧲 자석 1 · ⚡ 슈퍼 자석 2 · 🏦 자동 수금 3)
+local function lockText(key: string, emoji: string, name: string, what: string): string
+	return "🔒 환생을 " .. Config.SettingMinRebirth(key) .. "번 하면 " .. emoji .. " " .. UiKit.Josa(name, "이", "가") .. " 열려요! " .. what
+end
 local TOGGLES: { ToggleDef } = {
-	{
-		Key = "HideHatch",
-		Emoji = "🙈",
-		Caption = "부화 숨기기",
-		Color = C.Lavender,
-		OnText = "🙈 부화 화면을 숨겨요! 작은 알림만 떠요",
-		OffText = "🐣 부화 화면을 다시 보여 줘요!",
-	},
 	{
 		Key = "AutoCollect",
 		Emoji = "🏦",
@@ -76,6 +70,8 @@ local TOGGLES: { ToggleDef } = {
 		Color = C.Orange,
 		OnText = "🏦 자동 수금 켜짐! 집 금고 코인이 저절로 들어와요",
 		OffText = "🏦 자동 수금 꺼짐! 집의 금색 판을 밟으면 받아요",
+		MinRebirth = Config.SettingMinRebirth("AutoCollect"),
+		LockText = lockText("AutoCollect", "🏦", "자동 수금", "집 금고 코인이 저절로 들어와요"),
 	},
 	{
 		Key = "Magnet",
@@ -84,6 +80,8 @@ local TOGGLES: { ToggleDef } = {
 		Color = C.Sky,
 		OnText = "🧲 자석 켜짐! 주변 코인이 저절로 끌려와요",
 		OffText = "🧲 자석 꺼짐!",
+		MinRebirth = Config.SettingMinRebirth("Magnet"),
+		LockText = lockText("Magnet", "🧲", "자석", "주변 코인을 저절로 끌어와요"),
 	},
 	{
 		Key = "SuperMagnet",
@@ -92,8 +90,8 @@ local TOGGLES: { ToggleDef } = {
 		Color = C.Pink,
 		OnText = "⚡ 슈퍼 자석 켜짐! 이 지역 코인이 몽땅 날아와요",
 		OffText = "⚡ 슈퍼 자석 꺼짐!",
-		MinRebirth = SUPER_MIN,
-		LockText = "🔒 환생을 " .. SUPER_MIN .. "번 하면 ⚡ 슈퍼 자석이 열려요! 지금 있는 지역 코인을 몽땅 모아 줘요",
+		MinRebirth = Config.SettingMinRebirth("SuperMagnet"),
+		LockText = lockText("SuperMagnet", "⚡", "슈퍼 자석", "지금 있는 지역 코인을 몽땅 모아 줘요"),
 	},
 }
 local OFF_FACE = Color3.fromRGB(190, 190, 206)
@@ -124,27 +122,23 @@ local toggleByKey: { [string]: Toggle } = {}
 local topBarFrame: Frame? = nil
 local subRowFrame: Frame? = nil
 
--- ★v7 🔔 알 알림 단계 버튼 (켜고 끄는 버튼 줄 마지막 칸) + 고르는 작은 창
-type AlertButton = {
+-- ★v7.2 ⚙️ 옵션 버튼 (켜고 끄는 버튼 줄 마지막 칸) → OptionsWindow
+type OptionsButton = {
 	Button: TextButton,
 	Icon: TextLabel,
 	Caption: TextLabel,
 	Pill: Frame,
 	PillLabel: TextLabel,
-	Shown: number?,
 	LastTap: number,
 }
-local alertButton: AlertButton? = nil
-local pickerPanel: Frame? = nil
-local pickerShade: TextButton? = nil
-local pickerRows: { TextButton } = {}
-local pickerOpen = false
-local ALERT_FACE = C.Lemon
+local optionsButton: OptionsButton? = nil
+local OPTIONS_FACE = C.Lemon
 
 -- ★v7 가방 밖 빠른 버튼 2개
 type QuickDef = { Name: string, Emoji: string, Caption: string, Short: string, Color: Color3 }
+-- ★v7.2 "하위 펫 한 개 가방으로": 이름 버튼은 두 줄로 (한 줄이면 글씨가 너무 작아요), 폰 네모도 두 줄 ("하위 펫 / 1개 가방")
 local QUICK: { QuickDef } = {
-	{ Name = "StashEgg", Emoji = "🐾", Caption = "나쁜 펫 빼기", Short = "펫 빼기", Color = C.Peach },
+	{ Name = "StashEgg", Emoji = "🐾", Caption = "하위 펫 한 개\n가방으로", Short = "하위 펫\n1개 가방", Color = C.Peach },
 	{ Name = "AutoPlace", Emoji = "✨", Caption = "자동 배치", Short = "자동 배치", Color = C.Mint },
 }
 type Quick = { Def: QuickDef, Button: TextButton, Icon: TextLabel, Caption: TextLabel, LastTap: number }
@@ -159,6 +153,7 @@ export type Actions = {
 	ToggleShop: (() -> ())?,
 	ToggleMap: (() -> ())?,
 	ToggleLeaderboard: (() -> ())?,
+	ToggleOptions: (() -> ())?, -- ★v7.2 ⚙️ 게임 옵션 창
 }
 
 -- 키보드가 있는 PC 에서만 버튼 구석에 단축키 글자를 보여 줘요
@@ -505,37 +500,13 @@ local function styleToggle(t: Toggle, w: number, h: number, chip: boolean)
 end
 
 ----------------------------------------------------------------------
--- ★v7 🔔 알 알림 단계 버튼 + 고르는 작은 창 (Config.AlertLevels)
+-- ★v7.2 ⚙️ 옵션 버튼 (켜고 끄는 버튼 줄 마지막 칸, 누르면 ⚙️ 게임 옵션 창)
 ----------------------------------------------------------------------
-local alertRect: UiKit.Rect? = nil -- 🔔 버튼 자리 (방금 정한 값, AbsolutePosition 은 늦을 수 있어요)
-local toggleRect: UiKit.Rect? = nil -- 켜고 끄는 버튼 줄 전체
-
-local function alertLevelNow(): number
-	local v = State.GetSetting("AlertLevel")
-	return if type(v) == "number" then v else 0
-end
-
--- 지금 단계 짧은 이름 (모두 = 민트, 줄였으면 주황)
-local function paintAlert(a: AlertButton, level: number, animate: boolean)
-	local info = Config.AlertLevelInfo(level)
-	a.Shown = level
-	a.PillLabel.Text = info.Short
-	local color = if level == 0 then C.Mint else C.Orange
-	a.Pill.BackgroundColor3 = color
-	local st = strokeOf(a.PillLabel)
-	if st then
-		st.Color = UiKit.Darken(color, 0.5)
-	end
-	if animate then
-		UiKit.Bump(a.Button, 0.12)
-	end
-end
-
-local function makeAlertButton(parent: Instance, onTap: () -> ()): AlertButton
+local function makeOptionsButton(parent: Instance, onTap: () -> ()): OptionsButton
 	local btn, icon = UiKit.Button({
-		Name = "AlertLevel",
-		Text = "🔔",
-		Color = ALERT_FACE,
+		Name = "Options",
+		Text = "⚙️",
+		Color = OPTIONS_FACE,
 		Radius = UDim.new(0.28, 0),
 		TextSize = 40,
 		Parent = parent,
@@ -544,281 +515,62 @@ local function makeAlertButton(parent: Instance, onTap: () -> ()): AlertButton
 	icon.Name = "Icon"
 	local caption = UiKit.Label({
 		Name = "Caption",
-		Text = "알 알림",
-		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = "게임 옵션",
 		ZIndex = 2,
 		Parent = btn,
-	}, { Stroke = UiKit.Darken(ALERT_FACE, 0.5), MaxText = 24, StrokeThickness = 2 })
+	}, { Stroke = UiKit.Darken(OPTIONS_FACE, 0.5), MaxText = 24, StrokeThickness = 2 })
+	-- 안에 뭐가 있는지 작은 알약으로 (🙈 부화 숨기기 · 🔔 알 알림)
 	local pill: Frame = Make("Frame", {
-		Name = "Level",
-		BackgroundColor3 = C.Mint,
+		Name = "Inside",
+		BackgroundColor3 = C.White,
 		ZIndex = 2,
 		Parent = btn,
 	})
 	UiKit.Corner(pill, UDim.new(0.5, 0))
-	UiKit.Stroke(pill, C.White, 1.5, true)
+	UiKit.Stroke(pill, UiKit.Darken(OPTIONS_FACE, 0.25), 1.5, true)
 	local pillLabel = UiKit.Label({
-		Name = "Short",
-		Text = "",
+		Name = "Emojis",
+		Text = "🙈 🔔",
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromScale(0.92, 0.86),
+		Size = UDim2.fromScale(0.9, 0.86),
 		ZIndex = 3,
 		Parent = pill,
-	}, { MaxText = 16, StrokeThickness = 1.5 })
-	return { Button = btn, Icon = icon, Caption = caption, Pill = pill, PillLabel = pillLabel, Shown = nil, LastTap = 0 }
+	}, { MaxText = 16, StrokeThickness = 0 })
+	return { Button = btn, Icon = icon, Caption = caption, Pill = pill, PillLabel = pillLabel, LastTap = 0 }
 end
 
--- 켜고 끄는 버튼과 같은 모양: chip = [🔔 | 알 알림 / 단계], 네모 = [🔔 / 단계]
-local function styleAlert(a: AlertButton, w: number, h: number, chip: boolean)
-	a.Button.Size = UDim2.fromOffset(w, h)
-	a.Caption.Visible = chip
-	a.Icon.AnchorPoint = Vector2.new(0.5, 0.5)
+-- 켜고 끄는 버튼과 같은 모양: chip = [⚙️ | 게임 옵션 / 🙈 🔔], 네모 = [⚙️ / 옵션]
+local function styleOptions(o: OptionsButton, w: number, h: number, chip: boolean)
+	o.Button.Size = UDim2.fromOffset(w, h)
+	o.Icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	o.Pill.Visible = chip
+	local cap = o.Caption
 	if chip then
 		local left = math.floor(h * 0.98)
-		a.Icon.Position = UDim2.fromOffset(math.floor(h * 0.5) + 2, math.floor(h * 0.5))
-		a.Icon.Size = UDim2.fromOffset(math.floor(h * 0.74), math.floor(h * 0.74))
-		a.Caption.Position = UDim2.fromOffset(left, math.floor(h * 0.1))
-		a.Caption.Size = UDim2.fromOffset(w - left - 8, math.floor(h * 0.42))
-		a.Pill.AnchorPoint = Vector2.new(0, 0)
-		a.Pill.Position = UDim2.fromOffset(left, math.floor(h * 0.57))
-		a.Pill.Size = UDim2.fromOffset(math.min(w - left - 8, math.floor(h * 1.6)), math.floor(h * 0.34))
+		o.Icon.Position = UDim2.fromOffset(math.floor(h * 0.5) + 2, math.floor(h * 0.5))
+		o.Icon.Size = UDim2.fromOffset(math.floor(h * 0.74), math.floor(h * 0.74))
+		cap.Text = "게임 옵션"
+		cap.TextXAlignment = Enum.TextXAlignment.Left
+		cap.AnchorPoint = Vector2.new(0, 0)
+		cap.Position = UDim2.fromOffset(left, math.floor(h * 0.1))
+		cap.Size = UDim2.fromOffset(w - left - 8, math.floor(h * 0.42))
+		o.Pill.AnchorPoint = Vector2.new(0, 0)
+		o.Pill.Position = UDim2.fromOffset(left, math.floor(h * 0.57))
+		o.Pill.Size = UDim2.fromOffset(math.min(w - left - 8, math.floor(h * 1.2)), math.floor(h * 0.34))
 	else
-		a.Icon.Position = UDim2.fromOffset(math.floor(w * 0.5), math.floor(h * 0.36))
-		a.Icon.Size = UDim2.fromOffset(math.floor(w * 0.68), math.floor(h * 0.52))
-		a.Pill.AnchorPoint = Vector2.new(0.5, 0.5)
-		a.Pill.Position = UDim2.fromOffset(math.floor(w * 0.5), math.floor(h * 0.8))
-		a.Pill.Size = UDim2.fromOffset(math.floor(w * 0.92), math.floor(h * 0.3))
+		o.Icon.Position = UDim2.fromOffset(math.floor(w * 0.5), math.floor(h * 0.36))
+		o.Icon.Size = UDim2.fromOffset(math.floor(w * 0.68), math.floor(h * 0.52))
+		cap.Text = "옵션"
+		cap.TextXAlignment = Enum.TextXAlignment.Center
+		cap.AnchorPoint = Vector2.new(0.5, 0.5)
+		cap.Position = UDim2.fromOffset(math.floor(w * 0.5), math.floor(h * 0.8))
+		cap.Size = UDim2.fromOffset(math.floor(w * 0.92), math.floor(h * 0.3))
 	end
-	paintAlert(a, alertLevelNow(), false)
-end
-
-local function closePicker()
-	pickerOpen = false
-	local panel, shade = pickerPanel, pickerShade
-	if panel then
-		panel.Visible = false
-	end
-	if shade then
-		shade.Visible = false
-	end
-end
-
--- 지금 단계 줄에 ✔ + 노란 바탕
-local function paintPicker()
-	local level = alertLevelNow()
-	for i, row in pickerRows do
-		local on = i - 1 == level
-		row.BackgroundColor3 = if on then UiKit.Lighten(C.Lemon, 0.45) else C.White
-		local check = row:FindFirstChild("Check")
-		if check and check:IsA("GuiObject") then
-			check.Visible = on
-		end
-		local st = row:FindFirstChildOfClass("UIStroke")
-		if st then
-			st.Color = if on then C.Gold else UiKit.Lighten(C.Ink, 0.65)
-			st.Thickness = if on then 3 else 1.5
-		end
-	end
-end
-
--- 고르는 창 자리: 켜고 끄는 버튼 줄 오른쪽 (🔔 높이에서 화면 안으로), 안 되면 🔔 왼쪽 → 가운데
-local function layoutPicker(gui: ScreenGui)
-	local panel = pickerPanel
-	local a = alertRect
-	if not panel or not a then
-		return
-	end
-	local size = gui.AbsoluteSize
-	local gw, gh = size.X, size.Y
-	local small = gh < 500
-	local pad = if small then 4 else 8
-	local gap = if small then 2 else 5
-	local headH = if small then 28 else 40
-	local n = #pickerRows
-	local rowH = math.clamp(math.floor((gh - 16 - headH - 2 * pad - (n - 1) * gap) / n), 34, if small then 48 else 56)
-	local w = math.min(math.clamp(math.floor(gw * 0.3), 236, 340), gw - 16)
-	local h = headH + pad + n * rowH + (n - 1) * gap + pad
-	local box = toggleRect or a
-	local x = box.X1 + 8
-	if x + w > gw - 8 then
-		x = a.X0 - 8 - w
-		if x < 8 then
-			x = math.floor((gw - w) / 2)
-		end
-	end
-	local y = math.clamp(a.Y0, 8, math.max(8, gh - 8 - h))
-	panel.Position = UDim2.fromOffset(math.floor(x), math.floor(y))
-	panel.Size = UDim2.fromOffset(w, h)
-	local title = panel:FindFirstChild("Title")
-	if title and title:IsA("GuiObject") then
-		title.Position = UDim2.fromOffset(pad + 6, 2)
-		title.Size = UDim2.fromOffset(w - headH - 2 * pad - 10, headH - 4)
-	end
-	local close = panel:FindFirstChild("Close")
-	if close and close:IsA("GuiObject") then
-		close.Position = UDim2.fromOffset(w - pad - headH + 2, 2)
-		close.Size = UDim2.fromOffset(headH - 4, headH - 4)
-	end
-	local rw = w - 2 * pad
-	-- 줄마다 글자 크기를 같게 (가장 긴 이름 13자 · 설명 18자가 들어가는 크기)
-	local function setMax(label: Instance?, size: number)
-		local c = label and label:FindFirstChildOfClass("UITextSizeConstraint")
-		if c then
-			c.MaxTextSize = math.max(8, size)
-		end
-	end
-	for i, row in pickerRows do
-		row.Position = UDim2.fromOffset(pad, headH + pad + (i - 1) * (rowH + gap))
-		row.Size = UDim2.fromOffset(rw, rowH)
-		local icon = math.floor(rowH * 0.66)
-		local textX = icon + 12
-		local checkW = math.floor(rowH * 0.5)
-		local emoji = row:FindFirstChild("Emoji") :: TextLabel?
-		if emoji then
-			emoji.Position = UDim2.fromOffset(6, math.floor((rowH - icon) / 2))
-			emoji.Size = UDim2.fromOffset(icon, icon)
-		end
-		local textW = rw - textX - checkW - 8
-		local name = row:FindFirstChild("LevelName") :: TextLabel?
-		if name then
-			name.Position = UDim2.fromOffset(textX, 2)
-			name.Size = UDim2.fromOffset(textW, math.floor(rowH * 0.54))
-			setMax(name, math.min(20, math.floor(rowH * 0.46), math.floor(textW / 13)))
-		end
-		local desc = row:FindFirstChild("Desc") :: TextLabel?
-		if desc then
-			desc.Position = UDim2.fromOffset(textX, math.floor(rowH * 0.56))
-			desc.Size = UDim2.fromOffset(textW, math.floor(rowH * 0.38))
-			setMax(desc, math.min(15, math.floor(rowH * 0.34), math.floor(textW / 18)))
-		end
-		local check = row:FindFirstChild("Check") :: TextLabel?
-		if check then
-			check.Position = UDim2.fromOffset(rw - checkW - 6, math.floor((rowH - checkW) / 2))
-			check.Size = UDim2.fromOffset(checkW, checkW)
-		end
-	end
-end
-
-local function openPicker(gui: ScreenGui)
-	local panel, shade = pickerPanel, pickerShade
-	if not panel or not shade then
-		return
-	end
-	pickerOpen = true
-	paintPicker()
-	layoutPicker(gui)
-	shade.Visible = true
-	panel.Visible = true
-	UiKit.Pop(panel, 0.25)
-end
-
--- 단계 고르기 → 바로 바꿔 보여 주고 (낙관적) 서버로 + 말풍선
-local function chooseLevel(n: number)
-	local info = Config.AlertLevels[n + 1]
-	closePicker()
-	if not info or n == alertLevelNow() then
-		return
-	end
-	State.SetSettingLocal("AlertLevel", n)
-	Remotes.SetSetting:FireServer("AlertLevel", n)
-	Toasts.Show(info.Toast, "good")
-end
-
-local function buildPicker(gui: ScreenGui)
-	local shade: TextButton = Make("TextButton", {
-		Name = "AlertPickerShade",
-		Text = "",
-		AutoButtonColor = false,
-		BackgroundTransparency = 1,
-		Size = UDim2.fromScale(1, 1),
-		Visible = false,
-		ZIndex = 30,
-		Parent = gui,
-	})
-	shade:SetAttribute("SideIgnore", true) -- 화면 전체 투명 버튼 (밖을 누르면 닫혀요), 알림 줄은 신경 안 써요
-	shade.Activated:Connect(closePicker)
-	local panel: Frame = Make("Frame", {
-		Name = "AlertPicker",
-		BackgroundColor3 = C.Cream,
-		Visible = false,
-		Active = true,
-		ZIndex = 31,
-		Parent = gui,
-	})
-	UiKit.Corner(panel, UDim.new(0, 16))
-	UiKit.Stroke(panel, C.Gold, 4, true)
-	UiKit.Label({
-		Name = "Title",
-		Text = "🔔 알 알림 어디까지 받을까요?",
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 32,
-		Parent = panel,
-	}, { Stroke = UiKit.Darken(C.Gold, 0.45), MaxText = 22, StrokeThickness = 2 })
-	UiKit.Button({
-		Name = "Close",
-		Text = "✖",
-		Color = C.Red,
-		Radius = UDim.new(0.5, 0),
-		TextSize = 22,
-		ZIndex = 32,
-		Parent = panel,
-		OnClick = closePicker,
-	})
-	local inkSoft = Color3.fromRGB(125, 100, 150)
-	for i, info in Config.AlertLevels do
-		local n = i - 1
-		local row: TextButton = Make("TextButton", {
-			Name = "Level" .. n,
-			Text = "",
-			AutoButtonColor = false,
-			BackgroundColor3 = C.White,
-			ZIndex = 32,
-			Selectable = true,
-			Parent = panel,
-		})
-		UiKit.Corner(row, UDim.new(0, 10))
-		UiKit.Stroke(row, UiKit.Lighten(C.Ink, 0.65), 1.5, true)
-		UiKit.Label({ Name = "Emoji", Text = info.Emoji, ZIndex = 33, Parent = row }, { MaxText = 30 })
-		UiKit.Label({
-			Name = "LevelName",
-			Text = info.Name,
-			TextColor3 = C.Ink,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			ZIndex = 33,
-			Parent = row,
-		}, { Stroke = C.White, StrokeThickness = 0, MaxText = 20 })
-		UiKit.Label({
-			Name = "Desc",
-			Text = info.Desc,
-			TextColor3 = inkSoft,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			ZIndex = 33,
-			Parent = row,
-		}, { Stroke = C.White, StrokeThickness = 0, MaxText = 15 })
-		UiKit.Label({ Name = "Check", Text = "✔", TextColor3 = C.Mint, Visible = false, ZIndex = 33, Parent = row }, { Stroke = UiKit.Darken(C.Mint, 0.45), MaxText = 28 })
-		local scale = UiKit.Scale(row)
-		row.MouseButton1Down:Connect(function()
-			UiKit.Tween(scale, 0.08, { Scale = 0.96 })
-		end)
-		row.MouseButton1Up:Connect(function()
-			UiKit.Tween(scale, 0.15, { Scale = 1 })
-		end)
-		row.MouseLeave:Connect(function()
-			UiKit.Tween(scale, 0.15, { Scale = 1 })
-		end)
-		row.Activated:Connect(function()
-			UiKit.PlaySound("Click")
-			chooseLevel(n)
-		end)
-		table.insert(pickerRows, row)
-	end
-	pickerShade = shade
-	pickerPanel = panel
 end
 
 ----------------------------------------------------------------------
--- ★v7 가방 밖 빠른 버튼 (🐾 나쁜 펫 빼기 / ✨ 자동 배치)
+-- ★v7 가방 밖 빠른 버튼 (🐾 하위 펫 한 개 가방으로 / ✨ 자동 배치)
 ----------------------------------------------------------------------
 local function onQuickTap(q: Quick)
 	local now = os.clock()

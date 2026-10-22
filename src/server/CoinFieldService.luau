@@ -1,9 +1,10 @@
 -- 들판 코인 (플레이어마다 따로, 열린 지역마다 따로): 서버는 파트를 만들지 않고 메모리에만 코인 목록을 둬요.
 -- 그리기/자석은 클라이언트(CoinField)가 하고, 먹기 요청(PickupCoin)은 여기서 거리·지역·상태를 검증해요.
 -- 남이 먹어도 내 코인은 그대로예요 (코인 목록·번호가 사람마다 따로).
--- ★v5 자석 버튼 (DataService.GetSetting(player, "Magnet")): BigMagnetRadius 안 코인도 먹을 수 있어요.
+-- ★v5 자석 버튼 (DataService.GetSetting(player, "Magnet") + ★v7.2 환생 MagnetMinRebirth 번 이상): BigMagnetRadius 안 코인도 먹을 수 있어요.
 -- 기본 자석 밖 코인은 초당 BigMagnetRate 개까지만 받아 줘요 (클라이언트도 같은 속도로 끌어와요, 서버는 여유를 둬요).
 -- ★v6 슈퍼 자석 (GetSetting "SuperMagnet" + 환생 SuperMagnetMinRebirth 번 이상): 거리 대신 "같은 지역" 으로 검사해요.
+-- (★v7.2 잠겨 있으면 켜 둔 값은 저장만 되고 아무 일도 안 해요: Config.SettingUnlocked)
 -- 내가 서 있는 지역 코인만 (SuperMagnetRadius 안, 높이 SUPER_MAX_HEIGHT 안), 따로 된 표로 초당 SuperMagnetRate 개까지.
 -- 둘 다 켜져 있으면 슈퍼 자석이 이겨요: 지역 안에 있으면 다른 지역 코인은 🧲 자석으로도 안 돼요 (길 위에서만 🧲).
 -- 코인 값 = 기본값 × 지역 CoinMult × (1 + 집 초당 수익 / IncomeScale) × (1 + min(펫 보너스, MaxBoost)) × 환생 코인 배율
@@ -192,10 +193,13 @@ local function inZone(zone: number, pos: Vector3, slack: number): boolean
 	return math.abs(d.X) <= def.Size.X / 2 + slack and math.abs(d.Z) <= def.Size.Z / 2 + slack
 end
 
--- ★v6 슈퍼 자석이 정말 켜져 있나 (버튼 + 환생 조건)
+-- ★v6 슈퍼 자석 / ★v7.2 🧲 자석이 정말 켜져 있나 (버튼 + 환생 조건)
+local function settingActive(player: Player, key: string): boolean
+	return DataService.GetSetting(player, key) == true and Config.SettingUnlocked(key, DataService.GetRebirths(player))
+end
+
 local function superActive(player: Player): boolean
-	return DataService.GetSetting(player, "SuperMagnet") == true
-		and DataService.GetRebirths(player) >= (FC.SuperMagnetMinRebirth or 1)
+	return settingActive(player, "SuperMagnet")
 end
 
 -- 표 하나 꺼내 쓰기 (초당 rate 개씩 cap 개까지 채워져요). 없으면 false
@@ -414,7 +418,7 @@ local function onPickup(player: Player, coinId: any)
 			end
 		else
 			-- 🧲 자석: 슈퍼 자석이 켜져 있고 어느 지역 안이면 다른 지역 코인은 안 돼요 (슈퍼가 이겨요)
-			if not DataService.GetSetting(player, "Magnet") or (super and Config.ZoneAt(pos) ~= nil) then
+			if not settingActive(player, "Magnet") or (super and Config.ZoneAt(pos) ~= nil) then
 				return
 			end
 			if flat > FC.BigMagnetRadius + PICKUP_SLACK or dy > MAX_HEIGHT_DIFF then

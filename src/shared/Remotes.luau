@@ -39,7 +39,7 @@ local NAMES = {
 	"MoveFurniture", -- (fid: string, floor: number, x: number, z: number, r: number) 놓인 가구 옮기기/돌리기 ★
 	"PickupFurniture", -- (fid: string) 놓인 가구를 가구 가방으로 ★
 	"SetSetting", -- (key: string, value: boolean | number) 켜고 끄는 버튼 (Config.Settings 의 키만) ★v5, ★v7 AlertLevel 은 0..4 숫자
-	"StashEgg", -- () ★v7.1 "🐾 나쁜 펫 빼기": 받침대가 다 찼으면 가장 약한 펫(펫이 없으면 가장 나쁜 알) 하나를 가방으로
+	"StashEgg", -- () ★v7.1 "🐾 하위 펫 한 개 가방으로" (★v7.2 이름): 받침대가 다 찼으면 가장 약한 펫(펫이 없으면 가장 나쁜 알) 하나를 가방으로
 	"SellBulk", -- (zoneMax: number, rarityMax: number) ★v7.1 💰 한꺼번에 팔기: 가방 펫 중 테마 ≤ zoneMax, 등급 ≤ rarityMax (Config.SellMatch)
 }
 

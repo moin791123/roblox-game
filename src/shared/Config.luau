@@ -15,9 +15,9 @@ Config.StartCoins = 200
 -- ★v7.1 숫자 설정 더: SellZoneMax (테마 1..MaxZone), SellRarityMax (등급 1..SellRarityTop). 범위는 Config.SettingRange
 Config.Settings = {
 	HideHatch = false, -- 알 까는 화면 숨기기 (작은 알림만)
-	AutoCollect = false, -- 집에 모인 돈 자동으로 먹기
-	Magnet = false, -- 맵 돈 자석 (넓은 범위 자동으로 먹기)
-	SuperMagnet = false, -- ★v6 슈퍼 자석 (지금 있는 지역 코인 대부분, 환생해야 열려요)
+	AutoCollect = false, -- 집에 모인 돈 자동으로 먹기 (★v7.2 환생 3번부터)
+	Magnet = false, -- 맵 돈 자석 (넓은 범위 자동으로 먹기, ★v7.2 환생 1번부터)
+	SuperMagnet = false, -- ★v6 슈퍼 자석 (지금 있는 지역 코인 대부분, ★v7.2 환생 2번부터)
 	AlertLevel = 0, -- ★v7 알 알림 단계 (Config.AlertLevels, 0 = 모두 받기)
 	InfiniteBag = false, -- ★v7.1 ♾ 가방 무한 (가방 칸 = Config.InfiniteBagItems)
 	AutoSell = false, -- ★v7.1 🤖 자동 판매 (새로 태어난 펫이 아래 조건이면 바로 팔아요)
@@ -74,6 +74,31 @@ end
 function Config.AlertLevelInfo(level: any): { [string]: any }
 	local n = Config.SettingValue("AlertLevel", level) or 0
 	return Config.AlertLevels[n + 1]
+end
+
+-- ★v7.2 환생해야 열리는 버튼 (열리는 순서). 켜 둔 값은 언제나 저장되고, 열리기 전에는 아무 일도 안 해요
+-- (환생 수는 FieldCoins.MagnetMinRebirth · SuperMagnetMinRebirth, Plot.AutoCollectMinRebirth → Config.SettingMinRebirth)
+Config.SettingUnlocks = {
+	{ Key = "Magnet", Emoji = "🧲", Name = "자석", Desc = "주변 코인을 저절로 끌어와요" },
+	{ Key = "SuperMagnet", Emoji = "⚡", Name = "슈퍼 자석", Desc = "지금 있는 지역 코인을 몽땅 모아 줘요" },
+	{ Key = "AutoCollect", Emoji = "🏦", Name = "자동 수금", Desc = "집 금고 코인이 저절로 들어와요" },
+}
+
+-- ★v7.2 그 버튼이 열리는 환생 수 (잠금 없는 버튼은 0)
+function Config.SettingMinRebirth(key: any): number
+	if key == "Magnet" then
+		return Config.FieldCoins.MagnetMinRebirth
+	elseif key == "SuperMagnet" then
+		return Config.FieldCoins.SuperMagnetMinRebirth
+	elseif key == "AutoCollect" then
+		return Config.Plot.AutoCollectMinRebirth
+	end
+	return 0
+end
+
+-- ★v7.2 이 환생 수면 그 버튼이 열려 있나 (서버 CoinFieldService / PlotService, 클라이언트 CoinField / Hud 가 같이 써요)
+function Config.SettingUnlocked(key: any, rebirths: any): boolean
+	return (tonumber(rebirths) or 0) >= Config.SettingMinRebirth(key)
 end
 Config.MaxFollow = 3 -- 데리고 다닐 수 있는 펫 수
 Config.MaxBagItems = 150 -- 가방 최대 칸 (Loc == "Bag" 인 아이템 수)
@@ -1096,6 +1121,7 @@ Config.Plot = {
 	SlotPrices = {}, -- 아래에서 채워요: [받침대 번호] = 가격 (무료 받침대는 없음)
 	OfflineRate = 0.5, -- 접속 안 했을 때 수익 비율
 	OfflineMaxSeconds = 2 * 60 * 60,
+	AutoCollectMinRebirth = 3, -- ★v7.2 🏦 자동 수금 버튼은 환생 3번부터 (그 전에는 켜 둬도 금색 판을 밟아야 해요)
 }
 
 -- 층 정보: Price = 층 올리기 가격, MinRebirth = 필요한 환생 수 (2층은 1층 받침대 12개를 다 열어야 해요.
@@ -1258,10 +1284,11 @@ Config.FieldCoins = {
 	BigMagnetRadius = 80,
 	BigMagnetRate = 1.6,
 	BigMagnetBurst = 8,
+	MagnetMinRebirth = 1, -- ★v7.2 🧲 자석 버튼은 환생 1번부터
 	-- ★v6 슈퍼 자석 (Settings.SuperMagnet, 환생 SuperMagnetMinRebirth 번부터): 지금 서 있는 지역 코인만
 	-- SuperMagnetRadius 안에서 초당 SuperMagnetRate 개씩 (다른 지역 코인은 절대 안 와요).
 	-- 둘 다 켜면 슈퍼 자석이 이겨요 (길 위처럼 지역 밖이면 🧲 자석만). 시뮬: 지역 8 까지 ~10 시간 (v6_magnet/sim4.py)
-	SuperMagnetMinRebirth = 1,
+	SuperMagnetMinRebirth = 2, -- ★v7.2 1 → 2
 	SuperMagnetRadius = 150,
 	SuperMagnetRate = 2,
 	SuperMagnetBurst = 12,

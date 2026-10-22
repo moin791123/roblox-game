@@ -587,7 +587,7 @@ local function onBuy(player: Player, uid: any)
 	-- 빈 받침대 먼저 확인하고 돈을 빼요 (반대 순서면 돈만 빠질 수 있어요)
 	local slot = PlotService.FreeSlot(player)
 	if not slot then
-		notify(player, "집에 빈 받침대가 없어요! 🐾 나쁜 펫 빼기를 눌러 보세요", "warn") -- ★v7 Hud 버튼 (Remotes.StashEgg)
+		notify(player, "집에 빈 받침대가 없어요! 🐾 '하위 펫 한 개 가방으로'를 눌러 보세요", "warn") -- ★v7.2 Hud 버튼 (Remotes.StashEgg)
 		return
 	end
 	if not DataService.TrySpend(player, def.Price) then
