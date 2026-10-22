@@ -31,6 +31,12 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 >    hold, pedestal; pedestal and ride capped so pets fit slots/doors/floors). Ride/fly speed of rare pets grows with Size (and tier):
 >    `Config.RideSpeedMultiplier(petId, tier, size)`; caps may rise for rare rides. Sparkle rises 시크릿 < 천상 < 이터널 (more/bigger
 >    sparkles than v6, light never brighter than Secret's); WorldFx pedestal dimming still applies.
+>    Built (LOOK): `Config.PetDisplayScale(item, where, fit?)` never shrinks below v6 and eases toward caps (Slot 2.2 + measured fit:
+>    neighbour midline, walls/stair glass, 8.9 studs of headroom; Follow 2.2, top ≤ 9.8, big followers spaced by measured width; Ride 2.4,
+>    top ≤ 10.6, `Config.RideHipAdd(item, rideScale?)` = 2.2 × max(1, scale / 1.45), stand height ≤ 9.94 < floor gap 11; Hold 1.2, head
+>    offset ≤ 1.97). Tier adds +4 %/tier for rare pets. `PetModels.PivotBounds` measures models. Effects 시크릿/천상/이터널: sparkles 8/12/16 /s
+>    (size 0.48/0.56/0.64), twinkle stars 1.5/2.5/3.5 /s, soft aura 0.5/0.8/1.1 /s, light 1.3/1.45/1.6 (range 10/11/12) < Secret 1.8/13,
+>    rainbow only 이터널; rare followers get the effects too.
 > 4. **"🥚 나쁜 알 빼기" button outside the bag** (`Remotes.StashEgg()`): if a pedestal is already free → info toast only; else the worst egg
 >    on a pedestal (normal before rare, lower rarity, then lower price, then most hatch time left) goes to the bag (hatch paused like
 >    ToBag); with no egg on pedestals the weakest pedestal pet goes instead. Bag full → warn. BuyEgg's "빈 받침대가 없어요" toast hints at it.
