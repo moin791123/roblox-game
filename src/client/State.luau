@@ -42,7 +42,7 @@ export type Snapshot = {
 	Furniture: { [string]: FurniturePiece }, -- 집에 놓인 가구 (fid → 정보)
 	FurnitureInv: { [string]: number }, -- 가구 가방 (furnId → 개수)
 	Stats: { [string]: number },
-	Settings: { [string]: boolean }, -- 켜고 끄는 버튼 (Config.Settings 키만, 없으면 기본값)
+	Settings: { [string]: any }, -- 켜고 끄는 버튼 (Config.Settings 키만, 없으면 기본값. ★v7 AlertLevel 은 숫자)
 }
 
 export type SortedEntry = { Uid: string, Item: Item }
@@ -58,14 +58,14 @@ local syncListeners: { (Snapshot, Snapshot?) -> () } = {}
 local coinListeners: { (number, number, number) -> () } = {}
 local plotListeners: { (Model?) -> () } = {}
 local boardListeners: { (Board) -> () } = {}
-local settingListeners: { (string, boolean) -> () } = {}
+local settingListeners: { (string, any) -> () } = {}
 local plotsFolder: Instance? = nil
 
 -- 켜고 끄는 버튼: 방금 누른 값 (서버 스냅샷이 같은 값으로 올 때까지 이걸 보여 줘요)
 local SETTING_WAIT = 4
-type SettingWant = { Value: boolean, Until: number }
+type SettingWant = { Value: any, Until: number }
 local settingWant: { [string]: SettingWant } = {}
-local settingShown: { [string]: boolean } = {}
+local settingShown: { [string]: any } = {}
 
 -- 숫자 정리 (NaN/무한대/숫자 아님 → nil)
 local function num(v: any): number?
@@ -100,8 +100,8 @@ function State.OnBoard(fn: (Board) -> ())
 	table.insert(boardListeners, fn)
 end
 
--- 켜고 끄는 버튼 값이 (보이는 값 기준으로) 바뀌면 (key, value)
-function State.OnSetting(fn: (string, boolean) -> ())
+-- 켜고 끄는 버튼 값이 (보이는 값 기준으로) 바뀌면 (key, value). ★v7 AlertLevel 의 value 는 숫자
+function State.OnSetting(fn: (string, any) -> ())
 	table.insert(settingListeners, fn)
 end
 
@@ -173,19 +173,22 @@ function State.ZoneUnlocked(zone: number): boolean
 end
 
 ----------------------------------------------------------------------
--- 켜고 끄는 버튼 (Config.Settings: HideHatch / AutoCollect / Magnet)
+-- 켜고 끄는 버튼 (Config.Settings: HideHatch / AutoCollect / Magnet / SuperMagnet, ★v7 AlertLevel 숫자)
 ----------------------------------------------------------------------
 
--- 지금 값: 방금 누른 값 → 서버 스냅샷 → Config 기본값
-function State.GetSetting(key: string): boolean
+-- 지금 값: 방금 누른 값 → 서버 스냅샷 → Config 기본값. AlertLevel 은 숫자 (0..4), 나머지는 true/false
+function State.GetSetting(key: string): any
 	local want = settingWant[key]
 	if want then
 		return want.Value
 	end
 	local snap = State.Snapshot
-	local v = if snap and type(snap.Settings) == "table" then snap.Settings[key] else nil
-	if type(v) ~= "boolean" then
+	local v = if snap and type(snap.Settings) == "table" then Config.SettingValue(key, snap.Settings[key]) else nil
+	if v == nil then
 		v = (Config.Settings :: any)[key]
+	end
+	if type(v) == "number" then
+		return v
 	end
 	return v == true
 end
@@ -211,9 +214,9 @@ local function settleSettings()
 	local saved = if snap and type(snap.Settings) == "table" then snap.Settings else {}
 	local now = os.clock()
 	for key, want in settingWant do
-		local v = saved[key]
-		if type(v) ~= "boolean" then
-			v = (Config.Settings :: any)[key] == true
+		local v = Config.SettingValue(key, saved[key])
+		if v == nil then
+			v = Config.SettingValue(key, (Config.Settings :: any)[key])
 		end
 		if v == want.Value or now >= want.Until then
 			settingWant[key] = nil
@@ -222,8 +225,8 @@ local function settleSettings()
 end
 
 -- 버튼을 누르면 바로 바꿔 보여 줘요 (서버로 보내는 건 부르는 쪽: Remotes.SetSetting)
-function State.SetSettingLocal(key: string, value: boolean)
-	if (Config.Settings :: any)[key] == nil or type(value) ~= "boolean" then
+function State.SetSettingLocal(key: string, value: any)
+	if Config.SettingValue(key, value) == nil then
 		return
 	end
 	local want: SettingWant = { Value = value, Until = os.clock() + SETTING_WAIT }
@@ -531,12 +534,12 @@ function State.SetSnapshot(snap: any)
 	snap.Furniture = tableOr(snap.Furniture, {})
 	snap.FurnitureInv = tableOr(snap.FurnitureInv, {})
 	snap.Stats = tableOr(snap.Stats, {})
-	-- 버튼 값: Config.Settings 에 있는 키의 true/false 만 (없는 키 = 기본값)
-	local settings: { [string]: boolean } = {}
+	-- 버튼 값: Config.Settings 에 있는 키의 맞는 값만 (true/false, ★v7 AlertLevel 은 0..4 정수. 없는 키 = 기본값)
+	local settings: { [string]: any } = {}
 	if type(snap.Settings) == "table" then
 		for key in Config.Settings do
-			local v = snap.Settings[key]
-			if type(v) == "boolean" then
+			local v = Config.SettingValue(key, snap.Settings[key])
+			if v ~= nil then
 				settings[key] = v
 			end
 		end

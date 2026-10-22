@@ -1,5 +1,5 @@
 -- 집(플롯): 외형(바닥/벽/받침대/층/계단/엘리베이터/간판/수금 패드)은 HouseBuilder 가 짓고, 여기서는 배정·수입/부화 틱·수금·
--- 구매(받침대/층/테마)·환생·펫 행동(PetAction)·자동 배치(AutoPlace)·집 비우기(ClearBase)를 처리해요.
+-- 구매(받침대/층/테마)·환생·펫 행동(PetAction)·자동 배치(AutoPlace)·집 비우기(ClearBase)·★v7 나쁜 알 빼기(StashEgg)를 처리해요.
 -- 🏦 자동 수금 버튼(설정 "AutoCollect")이 켜져 있으면 어디에 있든 몇 초마다 집 금고 코인을 조용히 받아요.
 -- (설계: docs/DESIGN.md "PlotService", §7)
 local Players = game:GetService("Players")
@@ -11,6 +11,7 @@ local PetModels = require(ReplicatedStorage.Shared.PetModels)
 local DataService = require(script.Parent.DataService)
 local FollowService = require(script.Parent.FollowService)
 local HouseBuilder = require(script.Parent.HouseBuilder)
+local HouseLayout = require(ReplicatedStorage.Shared.HouseLayout)
 
 local PlotService = {}
 
@@ -397,7 +398,7 @@ end
 
 local function itemLabelText(item: any): string
 	if item.Kind == "Pet" then
-		local sizeLabel = Config.SizeLabel(Config.SizeOf(item))
+		local sizeLabel = Config.SizeLabel(Config.SizeOf(item), item.Id)
 		local prefix = if sizeLabel ~= "" then sizeLabel .. " " else ""
 		return prefix .. itemName(item) .. "  💰" .. Config.FormatNumber(Config.ItemIncome(item)) .. "/초"
 	end
@@ -426,6 +427,44 @@ function PlotService.RemoveItemVisual(player: Player, uid: string)
 end
 
 local handlePetAction: (player: Player, uid: any, action: any) -> ()
+
+-- ★v7 받침대 펫이 들어가는 가장 큰 모델 배율 (배율 1 모델을 재요). 이웃 받침대와는 가운데 선까지
+-- (가로/세로 중 더 먼 쪽으로 나눠서 양쪽 펫이 같은 선을 써요 → 둘 다 커져도 안 겹쳐요), 벽·계단 유리는 안쪽 면까지,
+-- 위로는 천장(층 사이 11) - 받침대 - 살랑살랑 흔들림까지. 보통 펫은 Config.PetDisplayScale 이 v6 크기 그대로 둬요
+local SLOT_UP = Config.House.FloorHeight - HouseLayout.SLAB_T - HouseLayout.PED_H - 0.5 -- 받침대 윗면 → 천장 (8.9)
+local SLOT_TAG_TOP = SLOT_UP - 0.3 -- 이름표 가운데는 받침대 윗면 위 이만큼까지 (천장 속에 안 묻히게)
+local function slotFit(plot: Plot, slot: number, m: Model): number?
+	local L = HouseLayout.Get(plot.Theme)
+	local me = L.Slots[(slot - 1) % #L.Slots + 1]
+	if not me then
+		return nil
+	end
+	local lo, hi = PetModels.PivotBounds(m) -- 모델 상자 (피벗 기준, 배율 1)
+	-- 자리마다 남은 거리 (왼 -X / 오른 +X / 앞 -Z / 뒤 +Z)
+	local inner = L.Inner
+	local rightWall = if me.X < L.Stair.GlassX then L.Stair.GlassX else inner.MaxX
+	local left, right, front, back = me.X - inner.MinX, rightWall - me.X, me.Z - inner.MinZ, inner.MaxZ - me.Z
+	for _, o in L.Slots do
+		if o ~= me then
+			local dx, dz = o.X - me.X, o.Z - me.Z
+			if math.abs(dx) >= math.abs(dz) then
+				if dx > 0 then
+					right = math.min(right, dx / 2)
+				else
+					left = math.min(left, -dx / 2)
+				end
+			elseif dz > 0 then
+				back = math.min(back, dz / 2)
+			else
+				front = math.min(front, -dz / 2)
+			end
+		end
+	end
+	local function k(space: number, ext: number): number
+		return if ext > 0.05 then math.max(space, 0) / ext else math.huge
+	end
+	return math.min(k(left, -lo.X), k(right, hi.X), k(front, -lo.Z), k(back, hi.Z), k(SLOT_UP, hi.Y))
+end
 
 -- 받침대 위 알/펫 모델을 (다시) 그려요. 펫은 Body 를 받침대에 고정(Anchored)하고 Bob = true:
 -- 서버는 절대 움직이지 않고, 살랑살랑은 클라이언트(WorldFx)가 해요
@@ -466,10 +505,13 @@ function PlotService.PlaceItem(player: Player, uid: string)
 	end
 	local m = model :: Model
 	local size = if isPet then Config.SizeOf(item) else 1
+	local scale = 1 -- ★v7 보이는 크기 (희귀 펫은 더 크게, 받침대 자리에 맞게)
 	if isPet then
 		-- 크기 (피벗 = 바닥 중심이라 받침대 위에 그대로 앉아요. 옷도 같이 커져요)
+		local okFit, fit = pcall(slotFit, plot, slot, m)
+		scale = Config.PetDisplayScale(item, "Slot", if okFit then fit else nil)
 		pcall(function()
-			m:ScaleTo(size)
+			m:ScaleTo(scale)
 		end)
 	end
 	m.Name = (if isPet then "Pet_" else "Egg_") .. uid
@@ -510,8 +552,12 @@ function PlotService.PlaceItem(player: Player, uid: string)
 	end
 	m:PivotTo(slotCFrameOf(plot, slot))
 
-	-- 이름표 (브론즈 이상은 등급 색). 큰 펫은 조금 더 위에
-	local bb, label = makeBillboard(bodyPart, 3.2 * size, 6, if isPet then 1.1 else 1.8, 40)
+	-- 이름표 (브론즈 이상은 등급 색). 큰 펫은 조금 더 위에 (★v7 천장 속에는 안 묻히게)
+	local tagY = 3.2 * scale
+	if isPet then
+		tagY = math.min(tagY, math.max(SLOT_TAG_TOP - (bodyPart.Position.Y - m:GetPivot().Position.Y), 1))
+	end
+	local bb, label = makeBillboard(bodyPart, tagY, 6, if isPet then 1.1 else 1.8, 40)
 	bb.Name = "ItemTag"
 	label.TextColor3 = if isPet and tier >= 2 then Config.TierInfo(tier).Color else Config.Rarities[rarity].Color
 	label.Text = itemLabelText(item)
@@ -1085,6 +1131,80 @@ local function tryClearBase(player: Player)
 	DataService.Sync(player)
 end
 
+-- ★v7 "🥚 나쁜 알 빼기" (Remotes.StashEgg): 새 알을 살 자리 만들기. 빈 받침대가 있으면 말만 하고,
+-- 없으면 받침대 위 가장 나쁜 알 하나를 가방으로 (부화 시간은 ToBag 처럼 멈춰요: HatchLeft).
+-- 나쁜 알 순서: 보통 알 먼저 (희귀 알은 마지막) → 희귀도 낮은 알 → 싼 알 → 부화까지 오래 남은 알.
+-- 받침대에 알이 없으면 가장 약한 펫 (Config.ItemIncome 작은 펫, CompareItems 맨 뒤) 을 빼요
+local function eggWorse(a: DataService.Item, b: DataService.Item): boolean
+	local sa, sb = Config.IsSpecialEgg(a.Id), Config.IsSpecialEgg(b.Id)
+	if sa ~= sb then
+		return not sa
+	end
+	local ea, eb = Config.Eggs[a.Id], Config.Eggs[b.Id]
+	local oa, ob = rarityOrder(ea and ea.Rarity), rarityOrder(eb and eb.Rarity)
+	if oa ~= ob then
+		return oa < ob
+	end
+	local pa, pb = if ea then ea.Price else 0, if eb then eb.Price else 0
+	if pa ~= pb then
+		return pa < pb
+	end
+	return (a.HatchAt or 0) > (b.HatchAt or 0)
+end
+
+local function tryStashEgg(player: Player)
+	local data = DataService.Get(player)
+	if not data then
+		return
+	end
+	if not plotByPlayer[player] then
+		notify(player, "집이 없어요 😢", "warn")
+		return
+	end
+	if PlotService.FreeSlot(player) then
+		notify(player, "이미 빈 받침대가 있어요! 알을 살 수 있어요 🥚", "info")
+		return
+	end
+	if DataService.BagSpace(player) <= 0 then
+		notify(player, "가방이 가득 찼어요! 🎒 가방을 조금 비워 주세요", "warn")
+		return
+	end
+	local worstUid: string? = nil
+	local worst: DataService.Item? = nil
+	for uid, item in data.Items do
+		if item.Kind == "Egg" and item.Loc == "Slot" then
+			if not worst or eggWorse(item, worst) or (not eggWorse(worst, item) and uid < (worstUid :: string)) then
+				worstUid, worst = uid, item
+			end
+		end
+	end
+	if worstUid and worst then
+		local name = itemName(worst)
+		PlotService.RemoveItemVisual(player, worstUid)
+		worst.HatchLeft = math.max(0, (worst.HatchAt or os.time()) - os.time())
+		worst.HatchAt = nil
+		worst.Loc = "Bag"
+		worst.Slot = nil
+		notify(player, "📦 " .. josa(name, "을", "를") .. " 가방에 넣었어요! 이제 새 알을 살 수 있어요", "good")
+		DataService.Sync(player)
+		return
+	end
+	local pets = DataService.GetItemsSorted(player, function(_, item)
+		return item.Kind == "Pet" and item.Loc == "Slot"
+	end)
+	local entry = pets[#pets]
+	if not entry then
+		notify(player, "집 받침대에 뺄 알이 없어요 🥚", "info")
+		return
+	end
+	local name = itemName(entry.Item)
+	PlotService.RemoveItemVisual(player, entry.Uid)
+	entry.Item.Loc = "Bag"
+	entry.Item.Slot = nil
+	notify(player, "📦 알이 없어서 가장 약한 " .. josa(name, "을", "를") .. " 가방에 넣었어요! 이제 알을 살 수 있어요", "good")
+	DataService.Sync(player)
+end
+
 ----------------------------------------------------------------------
 -- 펫 행동 (PetAction)
 ----------------------------------------------------------------------
@@ -1143,12 +1263,13 @@ local function fuse(player: Player, data: DataService.Data, uid: string, item: D
 		table.insert(consumed, others[i])
 	end
 	local newTier = tier + 1
-	-- 크기: 합친 펫 중 가장 큰 크기 + 0.02 (최대까지)
-	local maxSize = Config.PetSize.Min
+	-- 크기: 합친 펫 중 가장 큰 크기 + 0.02 (그 펫의 최대까지, ★v7 희귀 펫은 범위가 넓어요)
+	local sizeRange = Config.PetSizeRange(item.Id)
+	local maxSize = sizeRange.Min
 	for _, cuid in consumed do
 		maxSize = math.max(maxSize, Config.SizeOf(data.Items[cuid]))
 	end
-	local newSize = math.floor(math.min(maxSize + 0.02, Config.PetSize.Max) * 100 + 0.5) / 100
+	local newSize = math.floor(math.min(maxSize + 0.02, sizeRange.Max) * 100 + 0.5) / 100
 	-- 새 펫은 누른 펫 자리에 (따라옴 / 타기 / 들기 / 가방), 옷도 그대로
 	local wasLoc = item.Loc
 	local newItem: DataService.Item = { Kind = "Pet", Id = item.Id, Tier = newTier, Size = newSize, Acc = item.Acc, Loc = wasLoc }
@@ -1349,7 +1470,7 @@ local function hatch(player: Player, plot: Plot, uid: string, item: DataService.
 	local slot = item.Slot or 1
 	-- 환생 운: 가끔 브론즈~골드로 태어나요. 크기도 여기서 뽑아요
 	local tier = Config.RollHatchTier(DataService.GetRebirths(player), rng)
-	local size = Config.RollPetSize(rng)
+	local size = Config.RollPetSize(rng, petId) -- ★v7 희귀 펫은 더 넓은 범위에서
 	item.Kind = "Pet"
 	item.Id = petId
 	item.Tier = tier
@@ -1368,8 +1489,8 @@ local function hatch(player: Player, plot: Plot, uid: string, item: DataService.
 	PlotService.PlaceItem(player, uid)
 	local pet = Config.Pets[petId]
 	local rarityName = Config.Rarities[pet.Rarity].Name
-	local sizeLabel = Config.SizeLabel(size)
-	local bornName = (if sizeLabel ~= "" then sizeLabel .. " " else "") .. Config.PetDisplayName(petId, tier)
+	local sizeLabel = Config.SizeLabel(size, petId)
+	local bornName =(if sizeLabel ~= "" then sizeLabel .. " " else "") .. Config.PetDisplayName(petId, tier)
 	notify(player, (if isNew then "🆕 NEW! [" else "🎉 [") .. rarityName .. "] " .. josa(bornName, "이", "가") .. " 태어났어요!", "good")
 	DataService.Sync(player)
 end
@@ -1481,6 +1602,7 @@ function PlotService.Start()
 	connectSimple(Remotes.Rebirth, tryRebirth)
 	connectSimple(Remotes.AutoPlace, tryAutoPlace)
 	connectSimple(Remotes.ClearBase, tryClearBase)
+	connectSimple(Remotes.StashEgg, tryStashEgg) -- ★v7
 
 	-- 자동 수금 버튼을 누르면 수금 패드 글자를 바로 바꿔요 (코인은 다음 틱에)
 	DataService.OnSettingChanged(function(player, key)

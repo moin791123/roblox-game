@@ -169,7 +169,7 @@ end
 -- "⚖️ 3.2kg · 거대 🐘" 같은 크기 줄
 local function sizeLine(item: State.Item): string
 	local size = Config.SizeOf(item)
-	local tag = Config.SizeLabel(size)
+	local tag = Config.SizeLabel(size, item.Id) -- ★v7 희귀 펫은 그 펫 범위 기준
 	local text = string.format("⚖️ %.1fkg", Config.PetWeight(item.Id, size))
 	if tag == "거대" then
 		return text .. " · 거대 🐘"
@@ -905,7 +905,7 @@ local function renderPanel()
 	if item.Kind == "Pet" then
 		table.insert(lines, "💰 집에서 +" .. UiKit.IncomeText(State.RealIncome(item)) .. "/초")
 		local boost = math.floor(Config.PetBoost(item.Id, tier) * 100 + 0.5)
-		table.insert(lines, string.format("🍀 코인 +%d%% · 🏇 ×%.2f", boost, Config.RideSpeedMultiplier(item.Id, tier)))
+		table.insert(lines, string.format("🍀 코인 +%d%% · 🏇 ×%.2f", boost, Config.RideSpeedMultiplier(item.Id, tier, Config.SizeOf(item))))
 		table.insert(lines, sizeLine(item))
 		local acc = accOf(item)
 		table.insert(lines, if acc then "👕 " .. (UiKit.AccessoryName(acc) or acc) else "👕 옷 없음")

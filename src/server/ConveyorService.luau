@@ -316,17 +316,34 @@ end
 -- 좋은 알 알림 보내기 (그 사람에게만): 맨 위 칸은 언제나, 둘째 칸은 그 사람의 벨트마다 Gap 초에 한 번.
 -- 받는 조건: 그 지역이 열렸고, 그 지역이 내 열린 지역 중 위에서 ZoneWindow 개 안이거나 지금 그 지역에 있을 때
 -- (숲 마을은 모두의 집이 있는 곳이라 "거기 있음"으로 치지 않아요: 환생 많이 한 아이에게 숲 알 알림이 계속 오지 않게)
+-- ★v7 알림 단계 (Settings.AlertLevel, Config.AlertLevels) 가 먼저 걸러요: 희귀 알은 MinRare 보다 낮은 단계면 안 보내고
+-- (이터널은 언제나), 보통 알은 Normal "None" 이면 안 보내고 "Top" 이면 내 최종 테마(열린 가장 먼 지역) 벨트만.
+-- 걸러진 알은 Gap 시계를 건드리지 않아요 (다시 "모두 받기" 로 돌아와도 v6 그대로)
 local function sendEggAlert(player: Player, lane: Lane, eggId: string, now: number)
 	local kind = Config.EggAlertKind(eggId)
 	if not kind then
 		return
 	end
+	local level = Config.AlertLevelInfo(DataService.GetAlertLevel(player))
 	if kind == "Rare" then
+		local tier = Config.EggSpecial(eggId)
+		local info = if tier then Config.Rarities[tier] else nil
+		local min = Config.Rarities[level.MinRare]
+		if tier ~= "Eternal" and info and min and info.Order < min.Order then
+			return
+		end
 		-- ★v6 희귀 알: 그 지역이 열렸으면 언제나 (Gap 시계도 그대로 둬요)
 		if DataService.Get(player) and Config.ZoneUnlocked(lane.Zone, DataService.GetRebirths(player)) then
 			Remotes.EggAlert:FireClient(player, lane.Zone, eggId)
 		end
 		return
+	end
+	if level.Normal == "None" then
+		return
+	elseif level.Normal == "Top" then
+		if not DataService.Get(player) or lane.Zone ~= Config.MaxZoneFor(DataService.GetRebirths(player)) then
+			return
+		end
 	end
 	local rules = Config.EggAlert
 	if kind ~= "Top" and now - lane.LastAlert < rules.Gap then
@@ -570,7 +587,7 @@ local function onBuy(player: Player, uid: any)
 	-- 빈 받침대 먼저 확인하고 돈을 빼요 (반대 순서면 돈만 빠질 수 있어요)
 	local slot = PlotService.FreeSlot(player)
 	if not slot then
-		notify(player, "집에 빈 받침대가 없어요! 🏠", "warn")
+		notify(player, "집에 빈 받침대가 없어요! 🥚 나쁜 알 빼기를 눌러 보세요", "warn") -- ★v7 Hud 버튼 (Remotes.StashEgg)
 		return
 	end
 	if not DataService.TrySpend(player, def.Price) then

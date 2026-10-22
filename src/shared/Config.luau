@@ -11,17 +11,58 @@ Config.DataVersion = 3 -- v3: 등급 7단계 (예전 2→4, 3→5 로 옮겨요)
 Config.StartCoins = 200
 
 -- ★v5 켜고 끄는 버튼 (플레이어마다 저장, Remotes.SetSetting). 값은 기본값.
+-- ★v7 AlertLevel 만 숫자 (0 .. #AlertLevels - 1), 나머지는 모두 true/false (Config.SettingValue 로 검사)
 Config.Settings = {
 	HideHatch = false, -- 알 까는 화면 숨기기 (작은 알림만)
 	AutoCollect = false, -- 집에 모인 돈 자동으로 먹기
 	Magnet = false, -- 맵 돈 자석 (넓은 범위 자동으로 먹기)
 	SuperMagnet = false, -- ★v6 슈퍼 자석 (지금 있는 지역 코인 대부분, 환생해야 열려요)
+	AlertLevel = 0, -- ★v7 알 알림 단계 (Config.AlertLevels, 0 = 모두 받기)
 }
+
+-- ★v7 알 알림 단계: 한 칸 내려갈수록 더 꺼요 ("어디까지 받을지"). [n + 1] = 단계 n
+-- Normal: 보통 좋은 알 알림 ("All" = v6 규칙, "Top" = 내 최종 테마(열린 가장 먼 지역)만, "None" = 안 받기)
+-- MinRare: 받는 희귀 알의 가장 낮은 단계 (Hidden < Celestial < Eternal). 이터널 알 알림은 언제나 와요
+-- 걸러 내는 곳은 서버 ConveyorService.sendEggAlert (희귀 알 자체·빛기둥·지도 알약은 그대로 나와요)
+Config.AlertLevels = {
+	{ Name = "모두 받기", Short = "모두", Emoji = "🔔", Normal = "All", MinRare = "Hidden",
+		Desc = "좋은 알이 나오면 다 알려 줘요", Toast = "🔔 이제 좋은 알을 모두 알려 줘요" },
+	{ Name = "최종 테마 좋은 알만 받기", Short = "최종만", Emoji = "🎯", Normal = "Top", MinRare = "Hidden",
+		Desc = "가장 먼 지역 좋은 알 + 희귀 알", Toast = "🎯 이제 최종 테마 좋은 알만 알려 줘요" },
+	{ Name = "최종 테마도 안 받기", Short = "희귀만", Emoji = "🌟", Normal = "None", MinRare = "Hidden",
+		Desc = "시크릿·천상·이터널 알만", Toast = "🌟 이제 희귀 알만 알려 줘요" },
+	{ Name = "시크릿 안 받기", Short = "천상+", Emoji = "💛", Normal = "None", MinRare = "Celestial",
+		Desc = "천상·이터널 알만", Toast = "💛 이제 천상·이터널 알만 알려 줘요" },
+	{ Name = "천상 안 받기", Short = "이터널", Emoji = "💜", Normal = "None", MinRare = "Eternal",
+		Desc = "이터널 알만", Toast = "💜 이제 이터널 알만 알려 줘요" },
+}
+
+-- ★v7 설정 값 검사: 맞는 값이면 그 값, 아니면 nil (AlertLevel = 0..#AlertLevels-1 정수, 나머지 키 = true/false)
+function Config.SettingValue(key: any, value: any): any
+	local default = if type(key) == "string" then (Config.Settings :: any)[key] else nil
+	if default == nil then
+		return nil
+	end
+	if type(default) == "number" then
+		if type(value) == "number" and value == math.floor(value) and value >= 0 and value <= #Config.AlertLevels - 1 then
+			return value
+		end
+		return nil
+	end
+	return if type(value) == "boolean" then value else nil
+end
+
+-- ★v7 알림 단계 정보 (이상한 값이면 0 단계 "모두 받기")
+function Config.AlertLevelInfo(level: any): { [string]: any }
+	local n = Config.SettingValue("AlertLevel", level) or 0
+	return Config.AlertLevels[n + 1]
+end
 Config.MaxFollow = 3 -- 데리고 다닐 수 있는 펫 수
 Config.MaxBagItems = 150 -- 가방 최대 칸 (Loc == "Bag" 인 아이템 수)
 Config.BaseWalkSpeed = 18
 Config.WalkSpeedPerFollower = 0.5
 Config.MaxWalkSpeed = 64 -- FollowService.UpdateSpeed 가 이 값으로 잘라요
+Config.MaxRareRideWalkSpeed = 80 -- ★v7 희귀 펫(시크릿/천상/이터널)을 탈 때만: 64 위로는 이 값까지 부드럽게 (Config.SoftSpeedCap)
 
 -- 희귀도 (Order: 낮을수록 흔함). Income/Boost = 지역 1 기준 비율 (실제 값은 펫마다 적혀 있어요)
 Config.Rarities = {
@@ -33,9 +74,10 @@ Config.Rarities = {
 	Mythic = { Name = "신화", Color = RGB(255, 80, 160), Order = 6, Boost = 0.25 },
 	Secret = { Name = "비밀", Color = RGB(120, 240, 255), Order = 7, Boost = 0.4 }, -- 지역마다 1마리
 	-- ★v6 아주 희귀한 알(시크릿/천상/이터널 알)에서만 나오는 3단계. 지역마다 1마리씩, Special = 단계 키
-	Hidden = { Name = "시크릿", Color = RGB(60, 230, 170), Order = 8, Boost = 0.5, Special = true },
-	Celestial = { Name = "천상", Color = RGB(255, 214, 60), Order = 9, Boost = 0.6, Special = true },
-	Eternal = { Name = "이터널", Color = RGB(215, 105, 255), Order = 10, Boost = 0.8, Special = true, Rainbow = true },
+	-- ★v7 ModelScale: 월드 모델이 크기(Size) × 이만큼 커요 (Config.PetDisplayScale. 없으면 1)
+	Hidden = { Name = "시크릿", Color = RGB(60, 230, 170), Order = 8, Boost = 0.5, Special = true, ModelScale = 1.2 },
+	Celestial = { Name = "천상", Color = RGB(255, 214, 60), Order = 9, Boost = 0.6, Special = true, ModelScale = 1.4 },
+	Eternal = { Name = "이터널", Color = RGB(215, 105, 255), Order = 10, Boost = 0.8, Special = true, Rainbow = true, ModelScale = 1.6 },
 }
 Config.RarityOrder = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret", "Hidden", "Celestial", "Eternal" }
 
@@ -247,7 +289,8 @@ Config.MaxZone = #Config.Zones
 -- 펫. Zone = 지역 번호. Income = 집 받침대 위에서 1초마다 버는 코인 (지역마다 ×5 정도라서
 -- 다음 지역의 보통 펫이 이전 지역의 전설 펫보다 세요). Boost 는 아래에서 희귀도·지역으로 채워요.
 -- Color 는 UI 강조색 (모델 색은 PetModels 가 정함). ★ = v3 새 펫
--- ★v6 = 아주 희귀한 알에서만 나오는 펫 (시크릿 / 천상 / 이터널, 지역마다 3마리, 수익 ≈ 그 지역 비밀 펫 × 2.5 / 6 / 15)
+-- ★v6 = 아주 희귀한 알에서만 나오는 펫 (시크릿 / 천상 / 이터널, 지역마다 3마리)
+-- ★v7 수익 = 그 지역 신화 펫 × 25 / 60 / 150 (🥇 골드 ×20 · 🌈 레인보우 ×50 · 💎 다이아 ×120 신화보다 세요). 크기도 더 커요 (PetSize.Special)
 ----------------------------------------------------------------------
 Config.Pets = {
 	-- 1. 숲 마을
@@ -261,9 +304,9 @@ Config.Pets = {
 	Fox = { Name = "여우", Rarity = "Legendary", Zone = 1, Income = 9, Color = RGB(245, 120, 45) },
 	RainbowCat = { Name = "무지개 냥이", Rarity = "Mythic", Zone = 1, Income = 14, Color = RGB(255, 120, 220) },
 	SpiritDeer = { Name = "정령 사슴", Rarity = "Secret", Zone = 1, Income = 25, Color = RGB(170, 255, 210) }, -- ★
-	CloverFox = { Name = "네잎클로버 여우", Rarity = "Hidden", Zone = 1, Income = 62, Color = RGB(255, 150, 70) }, -- ★v6
-	BlossomFawn = { Name = "꽃사슴 요정", Rarity = "Celestial", Zone = 1, Income = 150, Color = RGB(255, 190, 215) }, -- ★v6
-	WorldTreeDragon = { Name = "세계수 용", Rarity = "Eternal", Zone = 1, Income = 375, Color = RGB(120, 210, 110) }, -- ★v6
+	CloverFox = { Name = "네잎클로버 여우", Rarity = "Hidden", Zone = 1, Income = 350, Color = RGB(255, 150, 70) }, -- ★v6 ★v7 신화 ×25
+	BlossomFawn = { Name = "꽃사슴 요정", Rarity = "Celestial", Zone = 1, Income = 840, Color = RGB(255, 190, 215) }, -- ★v6 ★v7 신화 ×60
+	WorldTreeDragon = { Name = "세계수 용", Rarity = "Eternal", Zone = 1, Income = 2100, Color = RGB(120, 210, 110) }, -- ★v6 ★v7 신화 ×150
 
 	-- 2. 호수
 	Duck = { Name = "오리", Rarity = "Common", Zone = 2, Income = 10, Color = RGB(255, 240, 150) },
@@ -274,9 +317,9 @@ Config.Pets = {
 	Turtle = { Name = "거북이", Rarity = "Legendary", Zone = 2, Income = 45, Color = RGB(110, 190, 120) },
 	Axolotl = { Name = "우파루파", Rarity = "Mythic", Zone = 2, Income = 70, Color = RGB(255, 160, 200) },
 	MoonKoi = { Name = "달빛 잉어", Rarity = "Secret", Zone = 2, Income = 120, Color = RGB(255, 245, 200) }, -- ★
-	PearlOtter = { Name = "진주 수달", Rarity = "Hidden", Zone = 2, Income = 300, Color = RGB(175, 125, 90) }, -- ★v6
-	MoonSwan = { Name = "달빛 백조", Rarity = "Celestial", Zone = 2, Income = 720, Color = RGB(235, 240, 255) }, -- ★v6
-	RainbowKoiDragon = { Name = "무지개 잉어 용", Rarity = "Eternal", Zone = 2, Income = 1800, Color = RGB(255, 140, 110) }, -- ★v6
+	PearlOtter = { Name = "진주 수달", Rarity = "Hidden", Zone = 2, Income = 1750, Color = RGB(175, 125, 90) }, -- ★v6 ★v7 신화 ×25
+	MoonSwan = { Name = "달빛 백조", Rarity = "Celestial", Zone = 2, Income = 4200, Color = RGB(235, 240, 255) }, -- ★v6 ★v7 신화 ×60
+	RainbowKoiDragon = { Name = "무지개 잉어 용", Rarity = "Eternal", Zone = 2, Income = 10500, Color = RGB(255, 140, 110) }, -- ★v6 ★v7 신화 ×150
 
 	-- 3. 정글
 	Monkey = { Name = "원숭이", Rarity = "Common", Zone = 3, Income = 50, Color = RGB(170, 120, 80) },
@@ -287,9 +330,9 @@ Config.Pets = {
 	Panda = { Name = "판다", Rarity = "Legendary", Zone = 3, Income = 225, Color = RGB(245, 245, 245) },
 	Peacock = { Name = "공작새", Rarity = "Mythic", Zone = 3, Income = 350, Color = RGB(60, 170, 220) }, -- ★
 	WhiteTiger = { Name = "백호", Rarity = "Secret", Zone = 3, Income = 600, Color = RGB(235, 245, 255) }, -- ★
-	RainbowChameleon = { Name = "무지개 카멜레온", Rarity = "Hidden", Zone = 3, Income = 1500, Color = RGB(130, 225, 110) }, -- ★v6
-	GoldenJaguar = { Name = "황금 재규어", Rarity = "Celestial", Zone = 3, Income = 3600, Color = RGB(255, 200, 70) }, -- ★v6
-	EmeraldDragon = { Name = "에메랄드 용", Rarity = "Eternal", Zone = 3, Income = 9000, Color = RGB(40, 200, 120) }, -- ★v6
+	RainbowChameleon = { Name = "무지개 카멜레온", Rarity = "Hidden", Zone = 3, Income = 8750, Color = RGB(130, 225, 110) }, -- ★v6 ★v7 신화 ×25
+	GoldenJaguar = { Name = "황금 재규어", Rarity = "Celestial", Zone = 3, Income = 21000, Color = RGB(255, 200, 70) }, -- ★v6 ★v7 신화 ×60
+	EmeraldDragon = { Name = "에메랄드 용", Rarity = "Eternal", Zone = 3, Income = 52500, Color = RGB(40, 200, 120) }, -- ★v6 ★v7 신화 ×150
 
 	-- 4. 겨울 산
 	Penguin = { Name = "펭귄", Rarity = "Common", Zone = 4, Income = 240, Color = RGB(70, 90, 130) },
@@ -300,9 +343,9 @@ Config.Pets = {
 	Reindeer = { Name = "순록", Rarity = "Legendary", Zone = 4, Income = 1080, Color = RGB(180, 130, 90) },
 	FrostFox = { Name = "눈꽃 여우", Rarity = "Mythic", Zone = 4, Income = 1700, Color = RGB(170, 220, 255) }, -- ★
 	Yeti = { Name = "예티", Rarity = "Secret", Zone = 4, Income = 2900, Color = RGB(200, 230, 255) }, -- ★
-	CrystalPenguin = { Name = "수정 펭귄", Rarity = "Hidden", Zone = 4, Income = 7200, Color = RGB(150, 215, 255) }, -- ★v6
-	AuroraWolf = { Name = "오로라 늑대", Rarity = "Celestial", Zone = 4, Income = 17500, Color = RGB(140, 240, 210) }, -- ★v6
-	IcePhoenix = { Name = "얼음 불사조", Rarity = "Eternal", Zone = 4, Income = 43500, Color = RGB(130, 210, 255) }, -- ★v6
+	CrystalPenguin = { Name = "수정 펭귄", Rarity = "Hidden", Zone = 4, Income = 42500, Color = RGB(150, 215, 255) }, -- ★v6 ★v7 신화 ×25
+	AuroraWolf = { Name = "오로라 늑대", Rarity = "Celestial", Zone = 4, Income = 102000, Color = RGB(140, 240, 210) }, -- ★v6 ★v7 신화 ×60
+	IcePhoenix = { Name = "얼음 불사조", Rarity = "Eternal", Zone = 4, Income = 255000, Color = RGB(130, 210, 255) }, -- ★v6 ★v7 신화 ×150
 
 	-- 5. 바다
 	Crab = { Name = "게", Rarity = "Common", Zone = 5, Income = 1200, Color = RGB(255, 120, 90) },
@@ -313,9 +356,9 @@ Config.Pets = {
 	Narwhal = { Name = "일각고래", Rarity = "Legendary", Zone = 5, Income = 5400, Color = RGB(150, 200, 240) }, -- ★
 	MermaidCat = { Name = "인어 냥이", Rarity = "Mythic", Zone = 5, Income = 8400, Color = RGB(100, 220, 210) }, -- ★
 	DragonKing = { Name = "용왕", Rarity = "Secret", Zone = 5, Income = 14500, Color = RGB(60, 200, 170) }, -- ★
-	RainbowJelly = { Name = "무지개 해파리", Rarity = "Hidden", Zone = 5, Income = 36000, Color = RGB(255, 170, 230) }, -- ★v6
-	PearlSeahorse = { Name = "진주 해마", Rarity = "Celestial", Zone = 5, Income = 87000, Color = RGB(255, 200, 225) }, -- ★v6
-	BabyKraken = { Name = "아기 크라켄", Rarity = "Eternal", Zone = 5, Income = 218000, Color = RGB(150, 90, 210) }, -- ★v6
+	RainbowJelly = { Name = "무지개 해파리", Rarity = "Hidden", Zone = 5, Income = 210000, Color = RGB(255, 170, 230) }, -- ★v6 ★v7 신화 ×25
+	PearlSeahorse = { Name = "진주 해마", Rarity = "Celestial", Zone = 5, Income = 504000, Color = RGB(255, 200, 225) }, -- ★v6 ★v7 신화 ×60
+	BabyKraken = { Name = "아기 크라켄", Rarity = "Eternal", Zone = 5, Income = 1260000, Color = RGB(150, 90, 210) }, -- ★v6 ★v7 신화 ×150
 
 	-- 6. 캔디 랜드
 	CottonSheep = { Name = "솜사탕 양", Rarity = "Common", Zone = 6, Income = 6000, Color = RGB(255, 190, 230) },
@@ -326,9 +369,9 @@ Config.Pets = {
 	GummyDragon = { Name = "젤리 용", Rarity = "Legendary", Zone = 6, Income = 27000, Color = RGB(255, 120, 80) }, -- ★
 	CandyUnicorn = { Name = "사탕 유니콘", Rarity = "Mythic", Zone = 6, Income = 42000, Color = RGB(255, 175, 215) }, -- ★
 	CookieKing = { Name = "쿠키 왕", Rarity = "Secret", Zone = 6, Income = 72000, Color = RGB(205, 140, 80) }, -- ★
-	LollipopPanda = { Name = "막대사탕 판다", Rarity = "Hidden", Zone = 6, Income = 180000, Color = RGB(255, 150, 200) }, -- ★v6
-	MarshmallowBear = { Name = "마시멜로 곰", Rarity = "Celestial", Zone = 6, Income = 432000, Color = RGB(255, 240, 225) }, -- ★v6
-	SweetQueenCat = { Name = "사탕 여왕 냥이", Rarity = "Eternal", Zone = 6, Income = 1080000, Color = RGB(255, 120, 190) }, -- ★v6
+	LollipopPanda = { Name = "막대사탕 판다", Rarity = "Hidden", Zone = 6, Income = 1050000, Color = RGB(255, 150, 200) }, -- ★v6 ★v7 신화 ×25
+	MarshmallowBear = { Name = "마시멜로 곰", Rarity = "Celestial", Zone = 6, Income = 2520000, Color = RGB(255, 240, 225) }, -- ★v6 ★v7 신화 ×60
+	SweetQueenCat = { Name = "사탕 여왕 냥이", Rarity = "Eternal", Zone = 6, Income = 6300000, Color = RGB(255, 120, 190) }, -- ★v6 ★v7 신화 ×150
 
 	-- 7. 구름 왕국
 	Sheep = { Name = "양", Rarity = "Common", Zone = 7, Income = 30000, Color = RGB(250, 245, 235) },
@@ -339,9 +382,9 @@ Config.Pets = {
 	Pegasus = { Name = "페가수스", Rarity = "Legendary", Zone = 7, Income = 135000, Color = RGB(240, 248, 255) }, -- ★
 	Phoenix = { Name = "불사조", Rarity = "Mythic", Zone = 7, Income = 210000, Color = RGB(255, 110, 50) },
 	AngelBunny = { Name = "천사 토끼", Rarity = "Secret", Zone = 7, Income = 360000, Color = RGB(255, 240, 170) }, -- ★
-	ThunderPup = { Name = "번개 강아지", Rarity = "Hidden", Zone = 7, Income = 900000, Color = RGB(150, 175, 215) }, -- ★v6
-	SunGriffin = { Name = "해님 그리핀", Rarity = "Celestial", Zone = 7, Income = 2160000, Color = RGB(255, 205, 80) }, -- ★v6
-	NineTailFox = { Name = "구미호", Rarity = "Eternal", Zone = 7, Income = 5400000, Color = RGB(250, 245, 255) }, -- ★v6
+	ThunderPup = { Name = "번개 강아지", Rarity = "Hidden", Zone = 7, Income = 5250000, Color = RGB(150, 175, 215) }, -- ★v6 ★v7 신화 ×25
+	SunGriffin = { Name = "해님 그리핀", Rarity = "Celestial", Zone = 7, Income = 12600000, Color = RGB(255, 205, 80) }, -- ★v6 ★v7 신화 ×60
+	NineTailFox = { Name = "구미호", Rarity = "Eternal", Zone = 7, Income = 31500000, Color = RGB(250, 245, 255) }, -- ★v6 ★v7 신화 ×150
 
 	-- 8. 우주
 	Alien = { Name = "외계인", Rarity = "Common", Zone = 8, Income = 150000, Color = RGB(140, 240, 150) },
@@ -353,9 +396,9 @@ Config.Pets = {
 	StarSlime = { Name = "별 슬라임", Rarity = "Mythic", Zone = 8, Income = 1050000, Color = RGB(150, 230, 255) },
 	-- 마지막 비밀 펫: 우주의 별빛 알에서만 0.1%
 	CosmicWhale = { Name = "우주 고래", Rarity = "Secret", Zone = 8, Income = 2000000, Color = RGB(120, 200, 255) },
-	MeteorHamster = { Name = "운석 햄스터", Rarity = "Hidden", Zone = 8, Income = 5000000, Color = RGB(255, 160, 80) }, -- ★v6
-	GalaxyUnicorn = { Name = "은하 유니콘", Rarity = "Celestial", Zone = 8, Income = 12000000, Color = RGB(80, 90, 200) }, -- ★v6
-	CosmoDragon = { Name = "은하 용", Rarity = "Eternal", Zone = 8, Income = 30000000, Color = RGB(40, 50, 130) }, -- ★v6
+	MeteorHamster = { Name = "운석 햄스터", Rarity = "Hidden", Zone = 8, Income = 26250000, Color = RGB(255, 160, 80) }, -- ★v6 ★v7 신화 ×25
+	GalaxyUnicorn = { Name = "은하 유니콘", Rarity = "Celestial", Zone = 8, Income = 63000000, Color = RGB(80, 90, 200) }, -- ★v6 ★v7 신화 ×60
+	CosmoDragon = { Name = "은하 용", Rarity = "Eternal", Zone = 8, Income = 157500000, Color = RGB(40, 50, 130) }, -- ★v6 ★v7 신화 ×150
 }
 
 -- Boost (데리고 다닐 때 들판 코인 보너스, 0.1 = +10%) = 희귀도 Boost × (1 + 0.15 × (지역 - 1))
@@ -391,6 +434,7 @@ Config.PetOrder = {
 -- 가격·확률은 scratchpad 의 v4/sim4.py (eggs4.py) 로 맞췄어요.
 -- ★v6 맨 아래 24개 = 아주 희귀한 알 (Special = "Hidden" | "Celestial" | "Eternal", 지역마다 3개). 사다리 밖이라
 -- SpawnWeight = 0, Rung = 0, Premium = false. 벨트에 따로 굴려서 나와요 (Config.SpecialEggs, v6/sim6.py 로 맞춤).
+-- ★v7 펫 수익이 세져서 가격도 올렸어요 (v7/sim7.py: 시크릿 ×1.5 (숲 마을은 그대로) · 천상 ×1.5 · 이터널 ×1.2 쯤).
 ----------------------------------------------------------------------
 Config.Eggs = {
 	-- 1. 숲 마을
@@ -599,124 +643,124 @@ Config.Eggs = {
 		Look = { Base = RGB(30, 75, 50), Accent = RGB(120, 255, 170), Accent2 = RGB(255, 210, 80), Pattern = "Gems", Shine = true, Glow = true },
 	},
 	ForestCelestial = {
-		Name = "숲 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 1, Price = 60000, HatchTime = 60, SpawnWeight = 0,
+		Name = "숲 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 1, Price = 100000, HatchTime = 60, SpawnWeight = 0,
 		Pet = "BlossomFawn", Pets = { BlossomFawn = 100 },
 		Look = { Base = RGB(255, 230, 240), Accent = RGB(255, 210, 80), Accent2 = RGB(120, 220, 150), Pattern = "Crown", Shine = true, Glow = true },
 	},
 	ForestEternal = {
-		Name = "숲 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 1, Price = 300000, HatchTime = 80, SpawnWeight = 0,
+		Name = "숲 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 1, Price = 400000, HatchTime = 80, SpawnWeight = 0,
 		Pet = "WorldTreeDragon", Pets = { WorldTreeDragon = 100 },
 		Look = { Base = RGB(40, 120, 60), Accent = RGB(255, 215, 80), Accent2 = RGB(170, 255, 140), Pattern = "Flames", Shine = true, Glow = true },
 	},
 	-- 2. 호수
 	LakeHidden = {
-		Name = "호수 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 2, Price = 150000, HatchTime = 45, SpawnWeight = 0,
+		Name = "호수 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 2, Price = 250000, HatchTime = 45, SpawnWeight = 0,
 		Pet = "PearlOtter", Pets = { PearlOtter = 100 },
 		Look = { Base = RGB(25, 50, 95), Accent = RGB(130, 220, 255), Accent2 = RGB(235, 240, 255), Pattern = "Gems", Shine = true, Glow = true },
 	},
 	LakeCelestial = {
-		Name = "호수 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 2, Price = 1500000, HatchTime = 60, SpawnWeight = 0,
+		Name = "호수 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 2, Price = 2500000, HatchTime = 60, SpawnWeight = 0,
 		Pet = "MoonSwan", Pets = { MoonSwan = 100 },
 		Look = { Base = RGB(240, 245, 255), Accent = RGB(215, 225, 245), Accent2 = RGB(140, 200, 255), Pattern = "Crown", Shine = true, Glow = true },
 	},
 	LakeEternal = {
-		Name = "호수 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 2, Price = 5000000, HatchTime = 80, SpawnWeight = 0,
+		Name = "호수 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 2, Price = 6000000, HatchTime = 80, SpawnWeight = 0,
 		Pet = "RainbowKoiDragon", Pets = { RainbowKoiDragon = 100 },
 		Look = { Base = RGB(30, 90, 170), Accent = RGB(255, 140, 60), Accent2 = RGB(120, 230, 255), Pattern = "Flames", Shine = true, Glow = true },
 	},
 	-- 3. 정글
 	JungleHidden = {
-		Name = "정글 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 3, Price = 2500000, HatchTime = 55, SpawnWeight = 0,
+		Name = "정글 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 3, Price = 4000000, HatchTime = 55, SpawnWeight = 0,
 		Pet = "RainbowChameleon", Pets = { RainbowChameleon = 100 },
 		Look = { Base = RGB(45, 70, 30), Accent = RGB(255, 170, 60), Accent2 = RGB(60, 200, 110), Pattern = "Gems", Shine = true, Glow = true },
 	},
 	JungleCelestial = {
-		Name = "정글 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 3, Price = 25000000, HatchTime = 70, SpawnWeight = 0,
+		Name = "정글 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 3, Price = 40000000, HatchTime = 70, SpawnWeight = 0,
 		Pet = "GoldenJaguar", Pets = { GoldenJaguar = 100 },
 		Look = { Base = RGB(255, 240, 200), Accent = RGB(255, 200, 50), Accent2 = RGB(40, 180, 110), Pattern = "Crown", Shine = true, Glow = true },
 	},
 	JungleEternal = {
-		Name = "정글 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 3, Price = 100000000, HatchTime = 100, SpawnWeight = 0,
+		Name = "정글 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 3, Price = 120000000, HatchTime = 100, SpawnWeight = 0,
 		Pet = "EmeraldDragon", Pets = { EmeraldDragon = 100 },
 		Look = { Base = RGB(20, 110, 70), Accent = RGB(60, 255, 150), Accent2 = RGB(255, 230, 100), Pattern = "Flames", Shine = true, Glow = true },
 	},
 	-- 4. 겨울
 	SnowHidden = {
-		Name = "겨울 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 4, Price = 40000000, HatchTime = 70, SpawnWeight = 0,
+		Name = "겨울 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 4, Price = 60000000, HatchTime = 70, SpawnWeight = 0,
 		Pet = "CrystalPenguin", Pets = { CrystalPenguin = 100 },
 		Look = { Base = RGB(35, 55, 100), Accent = RGB(170, 235, 255), Accent2 = RGB(235, 245, 255), Pattern = "Gems", Shine = true, Glow = true },
 	},
 	SnowCelestial = {
-		Name = "겨울 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 4, Price = 400000000, HatchTime = 85, SpawnWeight = 0,
+		Name = "겨울 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 4, Price = 600000000, HatchTime = 85, SpawnWeight = 0,
 		Pet = "AuroraWolf", Pets = { AuroraWolf = 100 },
 		Look = { Base = RGB(230, 245, 255), Accent = RGB(220, 230, 250), Accent2 = RGB(120, 255, 200), Pattern = "Crown", Shine = true, Glow = true },
 	},
 	SnowEternal = {
-		Name = "겨울 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 4, Price = 1.5e9, HatchTime = 120, SpawnWeight = 0,
+		Name = "겨울 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 4, Price = 2e9, HatchTime = 120, SpawnWeight = 0,
 		Pet = "IcePhoenix", Pets = { IcePhoenix = 100 },
 		Look = { Base = RGB(40, 90, 160), Accent = RGB(140, 230, 255), Accent2 = RGB(255, 255, 255), Pattern = "Flames", Shine = true, Glow = true },
 	},
 	-- 5. 바다
 	OceanHidden = {
-		Name = "바다 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 5, Price = 750000000, HatchTime = 80, SpawnWeight = 0,
+		Name = "바다 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 5, Price = 1.2e9, HatchTime = 80, SpawnWeight = 0,
 		Pet = "RainbowJelly", Pets = { RainbowJelly = 100 },
 		Look = { Base = RGB(15, 70, 95), Accent = RGB(255, 240, 250), Accent2 = RGB(255, 200, 90), Pattern = "Gems", Shine = true, Glow = true },
 	},
 	OceanCelestial = {
-		Name = "바다 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 5, Price = 7.5e9, HatchTime = 105, SpawnWeight = 0,
+		Name = "바다 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 5, Price = 1.2e10, HatchTime = 105, SpawnWeight = 0,
 		Pet = "PearlSeahorse", Pets = { PearlSeahorse = 100 },
 		Look = { Base = RGB(220, 250, 245), Accent = RGB(255, 215, 90), Accent2 = RGB(255, 170, 200), Pattern = "Crown", Shine = true, Glow = true },
 	},
 	OceanEternal = {
-		Name = "바다 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 5, Price = 3e10, HatchTime = 145, SpawnWeight = 0,
+		Name = "바다 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 5, Price = 4e10, HatchTime = 145, SpawnWeight = 0,
 		Pet = "BabyKraken", Pets = { BabyKraken = 100 },
 		Look = { Base = RGB(70, 40, 120), Accent = RGB(110, 220, 255), Accent2 = RGB(255, 210, 90), Pattern = "Flames", Shine = true, Glow = true },
 	},
 	-- 6. 캔디
 	CandyHidden = {
-		Name = "캔디 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 6, Price = 1.5e10, HatchTime = 100, SpawnWeight = 0,
+		Name = "캔디 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 6, Price = 2.5e10, HatchTime = 100, SpawnWeight = 0,
 		Pet = "LollipopPanda", Pets = { LollipopPanda = 100 },
 		Look = { Base = RGB(120, 40, 90), Accent = RGB(255, 150, 220), Accent2 = RGB(150, 240, 210), Pattern = "Gems", Shine = true, Glow = true },
 	},
 	CandyCelestial = {
-		Name = "캔디 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 6, Price = 1.5e11, HatchTime = 125, SpawnWeight = 0,
+		Name = "캔디 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 6, Price = 2.5e11, HatchTime = 125, SpawnWeight = 0,
 		Pet = "MarshmallowBear", Pets = { MarshmallowBear = 100 },
 		Look = { Base = RGB(255, 250, 240), Accent = RGB(255, 200, 100), Accent2 = RGB(255, 120, 180), Pattern = "Crown", Shine = true, Glow = true },
 	},
 	CandyEternal = {
-		Name = "캔디 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 6, Price = 6e11, HatchTime = 170, SpawnWeight = 0,
+		Name = "캔디 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 6, Price = 7.5e11, HatchTime = 170, SpawnWeight = 0,
 		Pet = "SweetQueenCat", Pets = { SweetQueenCat = 100 },
 		Look = { Base = RGB(200, 60, 140), Accent = RGB(255, 220, 90), Accent2 = RGB(255, 180, 230), Pattern = "Flames", Shine = true, Glow = true },
 	},
 	-- 7. 구름
 	CloudHidden = {
-		Name = "구름 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 7, Price = 3e11, HatchTime = 110, SpawnWeight = 0,
+		Name = "구름 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 7, Price = 5e11, HatchTime = 110, SpawnWeight = 0,
 		Pet = "ThunderPup", Pets = { ThunderPup = 100 },
 		Look = { Base = RGB(70, 75, 120), Accent = RGB(255, 235, 90), Accent2 = RGB(230, 235, 255), Pattern = "Gems", Shine = true, Glow = true },
 	},
 	CloudCelestial = {
-		Name = "구름 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 7, Price = 3e12, HatchTime = 145, SpawnWeight = 0,
+		Name = "구름 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 7, Price = 5e12, HatchTime = 145, SpawnWeight = 0,
 		Pet = "SunGriffin", Pets = { SunGriffin = 100 },
 		Look = { Base = RGB(255, 248, 220), Accent = RGB(255, 200, 60), Accent2 = RGB(255, 150, 60), Pattern = "Crown", Shine = true, Glow = true },
 	},
 	CloudEternal = {
-		Name = "구름 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 7, Price = 1.2e13, HatchTime = 200, SpawnWeight = 0,
+		Name = "구름 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 7, Price = 1.5e13, HatchTime = 200, SpawnWeight = 0,
 		Pet = "NineTailFox", Pets = { NineTailFox = 100 },
 		Look = { Base = RGB(40, 35, 90), Accent = RGB(245, 240, 255), Accent2 = RGB(170, 130, 255), Pattern = "Flames", Shine = true, Glow = true },
 	},
 	-- 8. 우주
 	SpaceHidden = {
-		Name = "우주 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 8, Price = 5e12, HatchTime = 130, SpawnWeight = 0,
+		Name = "우주 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 8, Price = 7.5e12, HatchTime = 130, SpawnWeight = 0,
 		Pet = "MeteorHamster", Pets = { MeteorHamster = 100 },
 		Look = { Base = RGB(25, 20, 55), Accent = RGB(255, 150, 70), Accent2 = RGB(170, 180, 210), Pattern = "Gems", Shine = true, Glow = true },
 	},
 	SpaceCelestial = {
-		Name = "우주 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 8, Price = 4e13, HatchTime = 170, SpawnWeight = 0,
+		Name = "우주 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 8, Price = 6e13, HatchTime = 170, SpawnWeight = 0,
 		Pet = "GalaxyUnicorn", Pets = { GalaxyUnicorn = 100 },
 		Look = { Base = RGB(215, 210, 255), Accent = RGB(255, 210, 80), Accent2 = RGB(120, 240, 255), Pattern = "Crown", Shine = true, Glow = true },
 	},
 	SpaceEternal = {
-		Name = "우주 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 8, Price = 1.5e14, HatchTime = 230, SpawnWeight = 0,
+		Name = "우주 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 8, Price = 2e14, HatchTime = 230, SpawnWeight = 0,
 		Pet = "CosmoDragon", Pets = { CosmoDragon = 100 },
 		Look = { Base = RGB(15, 15, 45), Accent = RGB(180, 110, 255), Accent2 = RGB(120, 240, 255), Pattern = "Flames", Shine = true, Glow = true },
 	},
@@ -814,6 +858,13 @@ Config.PetSize = {
 	HugeFrom = 1.22, -- 이 이상이면 "거대" 표시
 	TinyUntil = 0.86, -- 이 이하이면 "꼬마" 표시
 	BaseWeight = 4, -- 종에 따라 Config.Pets[*].Weight 가 있으면 그걸 씀 (kg, Size 1 기준)
+	-- ★v7 아주 희귀한 펫 (희귀도 키) 은 더 넓게 뽑아요 → 더 크고 더 많이 벌어요. 거대 = 위쪽 ~15%, 꼬마 = 아래쪽 ~3%
+	-- 위에 없는 펫은 Min..Max 그대로 (Config.PetSizeRange)
+	Special = {
+		Hidden = { Min = 0.8, Max = 1.5, HugeFrom = 1.31, TinyUntil = 0.88 },
+		Celestial = { Min = 0.8, Max = 1.7, HugeFrom = 1.46, TinyUntil = 0.91 },
+		Eternal = { Min = 0.8, Max = 2.0, HugeFrom = 1.67, TinyUntil = 0.94 },
+	},
 }
 
 -- 들고 다니기(자랑): 펫 1마리를 머리 위에 올려요. 보너스는 따라다니는 펫과 같음
@@ -874,6 +925,7 @@ Config.Ride = {
 	BaseMultiplier = 1.2,
 	PerRarityOrder = 0.1,
 	PerTier = 0.06,
+	SizePower = 0.5, -- ★v7 희귀 펫만: × (Size / 범위 Min) ^ 이만큼 (제일 작으면 v6 그대로, 이터널 2.0 이면 ×1.58)
 	Scale = 1.45, -- 탈 때 펫 모델 크기 배율
 	HipHeightAdd = 2.2, -- 캐릭터가 펫 위에 올라앉은 것처럼 보이게 HipHeight 추가
 	MaxStandHeight = 8.5, -- 문/천장 설계용 (탄 채로 머리 꼭대기 높이 대략)
@@ -1473,28 +1525,107 @@ function Config.RollHatchTier(rebirths: number, rng: Random?): number
 	return 1
 end
 
--- 펫 크기 뽑기 (보통 크기 근처가 많이 나오게 두 번 뽑아 평균)
-function Config.RollPetSize(rng: Random?): number
+-- ★v7 이 펫의 크기 범위 { Min, Max, HugeFrom, TinyUntil } (희귀 펫은 PetSize.Special, 나머지·모르는 펫은 PetSize)
+function Config.PetSizeRange(petId: any): any
+	local def = if type(petId) == "string" then Config.Pets[petId] else nil
+	local special = if def then Config.PetSize.Special[def.Rarity] else nil
+	return special or Config.PetSize
+end
+
+-- 펫 크기 뽑기 (보통 크기 근처가 많이 나오게 두 번 뽑아 평균). ★v7 petId 를 주면 그 펫의 범위로 (없으면 보통 범위)
+function Config.RollPetSize(rng: Random?, petId: string?): number
 	local r = rng or Random.new()
-	local a = r:NextNumber(Config.PetSize.Min, Config.PetSize.Max)
-	local b = r:NextNumber(Config.PetSize.Min, Config.PetSize.Max)
+	local range = Config.PetSizeRange(petId)
+	local a = r:NextNumber(range.Min, range.Max)
+	local b = r:NextNumber(range.Min, range.Max)
 	return math.floor((a + b) / 2 * 100 + 0.5) / 100
 end
 
--- 크기 정리 (없으면 1)
+-- 크기 정리 (없으면 1). ★v7 그 펫의 범위로 잘라요 (희귀 펫은 최대 1.5 / 1.7 / 2.0)
 function Config.SizeOf(item: any): number
 	local v = if type(item) == "table" then tonumber(item.Size) else nil
 	if not v or v ~= v then
 		return 1
 	end
-	return math.clamp(v, Config.PetSize.Min, Config.PetSize.Max)
+	local range = Config.PetSizeRange(if type(item) == "table" then item.Id else nil)
+	return math.clamp(v, range.Min, range.Max)
 end
 
--- "거대" / "꼬마" / "" 표시
-function Config.SizeLabel(size: number): string
-	if size >= Config.PetSize.HugeFrom then
+-- ★v7 월드에 보이는 펫 크기 (모델 배율) ---------------------------------
+-- 크기(Size) × 희귀도 ModelScale (시크릿 1.2 · 천상 1.4 · 이터널 1.6) × 희귀 펫만 등급마다 조금 (TierStep).
+-- 자리(where)마다 상한이 있어요: 집 천장(층 사이 11)·문(14)·받침대 간격에 맞춰요. 보통 펫은 v6 그대로 (Size 배율).
+-- 상한 근처에서는 부드럽게 다가가서 (넘지 않아요) 같은 펫이라도 Size 가 크면 조금이라도 더 커요.
+Config.PetDisplay = {
+	TierStep = 0.04, -- 희귀 펫 (ModelScale > 1) 등급 1단계마다 +4% (갤럭시 ×1.24)
+	-- 자리마다 최대 모델 배율. Ride/Hold 는 Ride.Scale / Hold.Scale 을 곱한 뒤의 값
+	Caps = {
+		Slot = 2.2, -- 받침대 (PlotService 가 이웃·벽·천장에 맞춘 fit 도 같이 줘요)
+		Follow = 2.2, -- 따라오기: 모자 쓴 제일 큰 펫도 천장(11) 아래 (0.4 뜸 + 0.7 흔들림 포함)
+		Ride = 2.4, -- 타기: 펫 꼭대기 ≤ 10.4, 탄 키 ≈ 6.3 + 3.64 ≈ 9.9 (층 사이 11, 문 14 아래)
+		Hold = 1.2, -- 들기 (머리 위)
+	},
+}
+
+-- 부드러운 상한: knee 까지는 그대로, 그 위는 cap 에 천천히 다가가요 (넘지 않고, 계속 조금씩 커져요)
+local function softCap(s: number, knee: number, cap: number): number
+	if s <= knee then
+		return s
+	end
+	local room = cap - knee
+	if room <= 1e-6 then
+		return math.min(s, cap)
+	end
+	return cap - room * math.exp(-(s - knee) / room)
+end
+
+-- 펫 모델 배율. where = "Slot" | "Follow" | "Ride" | "Hold" | nil (상한 없음).
+-- fit = 부르는 쪽이 잰 자리 상한 (받침대: 이웃 받침대 간격의 절반·벽·계단 유리·천장). v6 크기보다 작게는 안 해요
+function Config.PetDisplayScale(item: any, where: string?, fit: number?): number
+	local size = Config.SizeOf(item)
+	local def = if type(item) == "table" then Config.Pets[item.Id] else nil
+	local info = if def then Config.Rarities[def.Rarity] else nil
+	local ms = if info and type(info.ModelScale) == "number" then math.max(info.ModelScale, 1) else 1
+	local s = size * ms
+	if ms > 1 then
+		local tier = math.clamp(math.floor(tonumber(item.Tier) or 1), 1, Config.MaxTier)
+		s *= 1 + Config.PetDisplay.TierStep * (tier - 1)
+	end
+	local mult = if where == "Ride" then Config.Ride.Scale elseif where == "Hold" then Config.Hold.Scale else 1
+	s *= mult
+	local cap = if where then Config.PetDisplay.Caps[where] else nil
+	if not cap then
+		return s
+	end
+	-- v6 크기 (보통 펫 최대 크기까지) 는 그대로 두고, 그 위만 상한에 맞춰요
+	local base = math.min(size, Config.PetSize.Max) * mult
+	local limit = cap
+	if type(fit) == "number" and fit == fit then
+		limit = math.min(limit, fit)
+	end
+	limit = math.max(limit, base)
+	local knee = math.min(Config.PetSize.Max * mult, limit)
+	return softCap(s, knee, limit)
+end
+
+-- ★v7 탈 때 HipHeight 추가: 희귀 펫이 Ride.Scale 보다 크게 보이면 그만큼 등 높이도 올라가요 (보통 펫은 v6 그대로).
+-- rideScale = 실제로 쓴 타기 배율 (없으면 PetDisplayScale(item, "Ride"))
+function Config.RideHipAdd(item: any, rideScale: number?): number
+	local def = if type(item) == "table" then Config.Pets[item.Id] else nil
+	local info = if def then Config.Rarities[def.Rarity] else nil
+	local add = Config.Ride.HipHeightAdd
+	if info and type(info.ModelScale) == "number" and info.ModelScale > 1 then
+		local k = if type(rideScale) == "number" then rideScale else Config.PetDisplayScale(item, "Ride")
+		add *= math.max(1, k / Config.Ride.Scale)
+	end
+	return add
+end
+
+-- "거대" / "꼬마" / "" 표시. ★v7 petId 를 주면 그 펫의 범위 기준 (희귀 펫은 더 커야 "거대")
+function Config.SizeLabel(size: number, petId: string?): string
+	local range = Config.PetSizeRange(petId)
+	if size >= range.HugeFrom then
 		return "거대"
-	elseif size <= Config.PetSize.TinyUntil then
+	elseif size <= range.TinyUntil then
 		return "꼬마"
 	end
 	return ""
@@ -1603,12 +1734,46 @@ function Config.CanFuseLoc(loc: any): boolean
 	return type(loc) == "string" and Config.FuseLocs[loc] == true
 end
 
--- 펫 타기 속도 배율
-function Config.RideSpeedMultiplier(petId: string, tier: number?): number
+-- ★v7 아주 희귀한 펫인가 (시크릿 / 천상 / 이터널)
+function Config.IsRarePet(petId: any): boolean
+	local def = if type(petId) == "string" then Config.Pets[petId] else nil
+	local info = if def then Config.Rarities[def.Rarity] else nil
+	return info ~= nil and info.Special == true
+end
+
+-- 펫 타기 속도 배율. ★v7 희귀 펫은 크기만큼 더 빨라요: × (Size / 범위 Min) ^ Ride.SizePower
+-- (size 를 안 주면 1). 보통 펫은 v6 그대로 (size 를 봐도 안 바뀌어요)
+function Config.RideSpeedMultiplier(petId: string, tier: number?, size: number?): number
 	local def = Config.Pets[petId]
 	local order = if def and Config.Rarities[def.Rarity] then Config.Rarities[def.Rarity].Order else 1
 	local t = math.clamp(math.floor(tonumber(tier) or 1), 1, Config.MaxTier)
-	return Config.Ride.BaseMultiplier + Config.Ride.PerRarityOrder * (order - 1) + Config.Ride.PerTier * (t - 1)
+	local mult = Config.Ride.BaseMultiplier + Config.Ride.PerRarityOrder * (order - 1) + Config.Ride.PerTier * (t - 1)
+	if Config.IsRarePet(petId) then
+		local range = Config.PetSizeRange(petId)
+		local s = tonumber(size) or 1
+		if s ~= s then
+			s = 1
+		end
+		s = math.clamp(s, range.Min, range.Max)
+		mult *= (s / range.Min) ^ Config.Ride.SizePower
+	end
+	return mult
+end
+
+-- ★v7 속도 상한: knee 까지는 그대로, 그 위는 cap 에 부드럽게 다가가요 (넘지 않고, 빠를수록 조금이라도 더 빨라요).
+-- cap 이 knee 이하이면 knee 에서 딱 잘라요 (보통 펫 = v6 그대로). FollowService.UpdateSpeed 가 걷기·날기에 써요
+function Config.SoftSpeedCap(speed: number, knee: number, cap: number?): number
+	if speed ~= speed then
+		return 0
+	end
+	if not cap or cap <= knee then
+		return math.min(speed, knee)
+	end
+	if speed <= knee then
+		return speed
+	end
+	local room = cap - knee
+	return cap - room * math.exp(-(speed - knee) / room)
 end
 
 -- 펫 판매 가격

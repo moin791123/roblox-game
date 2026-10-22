@@ -41,6 +41,14 @@ local SNAP_DISTANCE = 60 -- 이보다 멀어지면 순간이동
 local EFFECT_MIN_ORDER = 5 -- 타기/들기 펫 희귀도 효과: 전설 이상
 local FLY_SPEED_MULT = 1.2 -- 날 때 속도 = 탈 때 속도 × 이만큼
 local FLY_MAX_SPEED = 72 -- 나는 속도 최대
+local FLY_RARE_MAX_SPEED = 96 -- ★v7 희귀 펫을 타면: 72 위로는 이 값까지 부드럽게 (Config.SoftSpeedCap)
+-- ★v7 v6 최대 크기(PetSize.Max)보다 크게 보이는 펫 (희귀 펫, Config.PetDisplayScale) 은 모델을 재서 간격을 정해요.
+-- 옆 펫과는 옆 끝 사이 FOLLOW_GAP, 앞쪽 끝은 플레이어 등(PLAYER_BACK) 뒤에. 보통 펫은 v6 그대로 (SPACING / BACK)
+local FOLLOW_GAP = 0.4
+local PLAYER_BACK = 1.3 -- HRP 가운데 → 플레이어 등 (팔·옷 포함 여유)
+-- ★v7 집 층 사이 11 (문 14): 옷까지 잰 펫 꼭대기가 이 아래로 오게 배율을 잘라요
+local RIDE_TOP = Config.House.FloorHeight - 1 - 0.4 -- 타는 펫 (땅에 붙어요)
+local FOLLOW_TOP = Config.House.FloorHeight - 1 - HOVER - BOB - 0.1 -- 따라오는 펫 (뜸 + 흔들림)
 
 local function getFolder(): Folder
 	if folder and folder.Parent then
@@ -81,6 +89,19 @@ local function entryOf(uid: string, item: any): PetEntry
 		boost = Config.ItemBoost(item),
 		acc = accOf(item.Acc),
 	}
+end
+
+-- ★v7 보이는 크기 (크기 × 희귀도 배율, 자리마다 상한: "Follow" | "Ride" | "Hold").
+-- top = 펫 꼭대기 상한 (스터드): 배율 1 모델(옷 포함)을 재서 그 아래로
+local function scaleOf(entry: PetEntry, where: string, model: Model?, top: number?): number
+	local fit: number? = nil
+	if model and top then
+		local _, hi = PetModels.PivotBounds(model)
+		if hi.Y > 0.05 then
+			fit = top / hi.Y
+		end
+	end
+	return Config.PetDisplayScale({ Kind = "Pet", Id = entry.id, Tier = entry.tier, Size = entry.size }, where, fit)
 end
 
 -- 희귀도 효과 (전설 이상)
@@ -332,8 +353,9 @@ local function mountRide(player: Player, st: State, hrp: BasePart, hum: Humanoid
 	end
 	local m = model :: Model
 	local b = body :: BasePart
+	local rideScale = scaleOf(entry, "Ride", m, RIDE_TOP)
 	pcall(function()
-		m:ScaleTo(entry.size * Config.Ride.Scale)
+		m:ScaleTo(rideScale)
 	end)
 	setPhysicsFlags(m, b, true)
 	addRarityEffects(m, entry.id)
@@ -342,7 +364,8 @@ local function mountRide(player: Player, st: State, hrp: BasePart, hum: Humanoid
 	local hipBase = hum.HipHeight
 	st.rideHumanoid = hum
 	st.hipBase = hipBase
-	st.hipAdded = Config.Ride.HipHeightAdd
+	-- ★v7 큰 희귀 펫은 등이 높아서 더 올려요 (보통 펫은 Ride.HipHeightAdd 그대로)
+	st.hipAdded = Config.RideHipAdd({ Kind = "Pet", Id = entry.id, Tier = entry.tier, Size = entry.size }, rideScale)
 	hum.HipHeight = hipBase + st.hipAdded
 
 	-- 펫 바닥(피벗)이 땅에 닿게: HRP 아래 (올라간 HipHeight + HRP 절반)
@@ -375,14 +398,16 @@ local function mountHold(player: Player, st: State, head: BasePart)
 	end
 	local m = model :: Model
 	local b = body :: BasePart
+	local holdScale = scaleOf(entry, "Hold")
 	pcall(function()
-		m:ScaleTo(entry.size * Config.Hold.Scale)
+		m:ScaleTo(holdScale)
 	end)
 	setPhysicsFlags(m, b, true)
 	addRarityEffects(m, entry.id)
 
-	-- 펫 바닥(피벗)이 머리 꼭대기에서 HeadOffset 만큼 위에 오게
-	local lift = head.Size.Y / 2 + Config.Hold.HeadOffset
+	-- 펫 바닥(피벗)이 머리 꼭대기에서 HeadOffset 만큼 위에 오게 (★v7 v6 최대보다 큰 펫은 그만큼 더 띄워요)
+	local holdRef = Config.Hold.Scale * Config.PetSize.Max
+	local lift = head.Size.Y / 2 + Config.Hold.HeadOffset * math.max(1, holdScale / holdRef)
 	m:PivotTo(head.CFrame * CFrame.new(0, lift, 0))
 
 	local weld = Instance.new("Weld")
@@ -436,7 +461,8 @@ end
 -- 이동 속도(WalkSpeed)와 HipHeight 를 정하는 유일한 곳 (타기 배율 × 환생 배율, 최대 Config.MaxWalkSpeed)
 function FollowService.UpdateSpeed(player: Player)
 	local ride = getRideItem(player)
-	local mult = if ride then Config.RideSpeedMultiplier(ride.id, ride.tier) else 1
+	-- ★v7 희귀 펫은 크기(Size)도 넘겨요 → 같은 펫이라도 크고 등급이 높을수록 빨라요
+	local mult = if ride then Config.RideSpeedMultiplier(ride.id, ride.tier, ride.size) else 1
 	if player.Parent then
 		player:SetAttribute("RideSpeedMult", mult)
 	end
@@ -447,9 +473,12 @@ function FollowService.UpdateSpeed(player: Player)
 	local count = FollowService.GetFollowerCount(player)
 	local rebirthMult = Config.RebirthSpeedMult(DataService.GetRebirths(player))
 	local speed = (Config.BaseWalkSpeed + Config.WalkSpeedPerFollower * count) * mult * rebirthMult
-	hum.WalkSpeed = math.min(speed, Config.MaxWalkSpeed)
+	-- 보통은 MaxWalkSpeed(64) / 72 에서 딱 잘라요 (v6 그대로). ★v7 희귀 펫을 타면 그 위로 80 / 96 까지 부드럽게
+	local rare = ride ~= nil and Config.IsRarePet(ride.id)
+	hum.WalkSpeed = Config.SoftSpeedCap(speed, Config.MaxWalkSpeed, if rare then Config.MaxRareRideWalkSpeed else nil)
 	-- 날 때 속도 (탈 때보다 조금 빠르게)
-	local fly = if ride then math.floor(math.min(hum.WalkSpeed * FLY_SPEED_MULT, FLY_MAX_SPEED) * 10 + 0.5) / 10 else 0
+	local flyRaw = Config.SoftSpeedCap(speed * FLY_SPEED_MULT, FLY_MAX_SPEED, if rare then FLY_RARE_MAX_SPEED else nil)
+	local fly = if ride then math.floor(flyRaw * 10 + 0.5) / 10 else 0
 	if player.Parent and player:GetAttribute("FlySpeed") ~= fly then
 		player:SetAttribute("FlySpeed", fly)
 	end
@@ -519,23 +548,47 @@ refreshInner = function(player: Player)
 
 	local parentFolder = getFolder()
 	local depth = groundDepth(player, hrp)
-	local n = #items
-
-	for i, entry in items do
+	-- ★v7 모델을 먼저 다 만들고 재요 (배율 1 상자 × 배율). 큰 펫은 옆으로 더 벌리고 더 뒤로
+	local built: { { entry: PetEntry, m: Model, b: BasePart, k: number, lo: Vector3, hi: Vector3, x: number } } = {}
+	for _, entry in items do
 		local model, body = buildPetModel(entry)
-		if not model or not body then
-			continue
+		if model and body then
+			local lo, hi = PetModels.PivotBounds(model)
+			table.insert(built, { entry = entry, m = model, b = body, k = scaleOf(entry, "Follow", model, FOLLOW_TOP), lo = lo, hi = hi, x = 0 })
 		end
-		local m = model :: Model
-		local b = body :: BasePart
+	end
+	local big = Config.PetSize.Max
+	for j = 2, #built do
+		local a, c = built[j - 1], built[j]
+		local gap = SPACING
+		if math.max(a.k, c.k) > big then
+			gap = math.max(gap, a.hi.X * a.k - c.lo.X * c.k + FOLLOW_GAP)
+		end
+		c.x = a.x + gap
+	end
+	local midX = if #built > 0 then (built[1].x + built[#built].x) / 2 else 0
+
+	for i, f in built do
+		local entry, m, b, k = f.entry, f.m, f.b, f.k
 		pcall(function()
-			m:ScaleTo(entry.size)
+			m:ScaleTo(k)
 		end)
 		setPhysicsFlags(m, b, false)
+		-- ★v7 시크릿/천상/이터널은 따라올 때도 반짝여요 (보통 펫은 v6 그대로 등급 효과만)
+		local pet = Config.Pets[entry.id]
+		local rinfo = if pet then Config.Rarities[pet.Rarity] else nil
+		if rinfo and rinfo.Special then
+			addRarityEffects(m, entry.id)
+		end
 
-		-- 부채꼴: 가운데 펫이 가장 뒤, 양옆 펫은 조금 앞
-		local sideX = (i - (n + 1) / 2) * SPACING
-		local offset = CFrame.new(sideX, -depth + HOVER, BACK - math.abs(sideX) * 0.3)
+		-- 부채꼴: 가운데 펫이 가장 뒤, 양옆 펫은 조금 앞 (★v7 큰 펫은 앞쪽 끝이 플레이어 등보다 앞으로 안 와요)
+		local sideX = f.x - midX
+		local backZ = BACK - math.abs(sideX) * 0.3
+		if k > big then
+			local clear = PLAYER_BACK - f.lo.Z * k
+			backZ = math.max(math.max(BACK, clear) - math.abs(sideX) * 0.3, clear)
+		end
+		local offset = CFrame.new(sideX, -depth + HOVER, backZ)
 
 		local target = Instance.new("Attachment")
 		target.Name = "FollowTarget_" .. entry.uid

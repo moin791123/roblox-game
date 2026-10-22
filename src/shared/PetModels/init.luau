@@ -2229,7 +2229,150 @@ function PetModels.CycleTierColors(model: Model, phase: number)
 	end
 end
 
--- Epic 이상: 반짝이 파티클 + 은은한 빛 (희귀도 색)
+-- ★v7 모델 상자 (피벗 기준, 지금 배율 그대로, 보이는 파트만): lo, hi. 받침대·따라오기 간격을 잴 때 써요
+function PetModels.PivotBounds(model: Model): (Vector3, Vector3)
+	local pivot = model:GetPivot()
+	local lo, hi = Vector3.zero, Vector3.zero
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") and d.Transparency < 0.95 then
+			local cf = pivot:ToObjectSpace(d.CFrame)
+			local s = d.Size * 0.5
+			local r, u, l = cf.RightVector, cf.UpVector, cf.LookVector
+			local ext = V(
+				math.abs(r.X) * s.X + math.abs(u.X) * s.Y + math.abs(l.X) * s.Z,
+				math.abs(r.Y) * s.X + math.abs(u.Y) * s.Y + math.abs(l.Y) * s.Z,
+				math.abs(r.Z) * s.X + math.abs(u.Z) * s.Y + math.abs(l.Z) * s.Z
+			)
+			local p = cf.Position
+			lo = V(math.min(lo.X, p.X - ext.X), math.min(lo.Y, p.Y - ext.Y), math.min(lo.Z, p.Z - ext.Z))
+			hi = V(math.max(hi.X, p.X + ext.X), math.max(hi.Y, p.Y + ext.Y), math.max(hi.Z, p.Z + ext.Z))
+		end
+	end
+	return lo, hi
+end
+
+-- ★v7 시크릿 < 천상 < 이터널: v6 보다 반짝이가 많고 크고 오래가요 (단계마다 더). 빛은 비밀(1.8 / 13)보다 밝지 않게.
+-- 효과 3종 (이름은 모두 RarityFx, 속성 RarityFx = 종류): Sparkle 작은 반짝이 · Twinkle 큰 별 반짝 · Aura 몸 뒤 은은한 빛무리.
+-- 반짝이 크기·퍼지는 속도는 모델 배율(GetScale)을 따라 조금 커져요 (√배율, 1~1.5). 빛 거리는 배율과 상관없이 그대로
+type SpecialFx = {
+	Light: number,
+	Range: number,
+	Rate: number,
+	Size: number,
+	Life: { number },
+	Speed: { number },
+	Twinkle: number,
+	TwinkleSize: number,
+	Aura: number,
+	AuraSize: number,
+}
+local SPECIAL_FX: { SpecialFx } = {
+	-- 시크릿
+	{ Light = 1.3, Range = 10, Rate = 8, Size = 0.48, Life = { 1.5, 2.3 }, Speed = { 0.6, 1.3 }, Twinkle = 1.5, TwinkleSize = 1.0, Aura = 0.5, AuraSize = 2.6 },
+	-- 천상
+	{ Light = 1.45, Range = 11, Rate = 12, Size = 0.56, Life = { 1.7, 2.6 }, Speed = { 0.7, 1.5 }, Twinkle = 2.5, TwinkleSize = 1.2, Aura = 0.8, AuraSize = 3.0 },
+	-- 이터널
+	{ Light = 1.6, Range = 12, Rate = 16, Size = 0.64, Life = { 1.9, 2.9 }, Speed = { 0.8, 1.7 }, Twinkle = 3.5, TwinkleSize = 1.4, Aura = 1.1, AuraSize = 3.4 },
+}
+PetModels.SPECIAL_FX = SPECIAL_FX
+
+local function fxEmitter(body: BasePart, kind: string): ParticleEmitter
+	local pe = Instance.new("ParticleEmitter")
+	pe.Name = "RarityFx"
+	pe:SetAttribute("RarityFx", kind)
+	pe.Texture = SPARKLE_TEX
+	pe.Shape = Enum.ParticleEmitterShape.Sphere
+	pe.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+	pe.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
+	pe.SpreadAngle = Vector2.new(180, 180)
+	pe.Parent = body
+	return pe
+end
+
+local function addSpecialEffects(model: Model, body: BasePart, info: RarityInfo)
+	local fx = SPECIAL_FX[math.clamp(info.Order - 7, 1, #SPECIAL_FX)]
+	local col = info.Color
+	local okScale, scale = pcall(function()
+		return model:GetScale()
+	end)
+	local k = math.clamp(math.sqrt(if okScale and type(scale) == "number" and scale > 0 then scale else 1), 1, 1.5)
+	local tint = if info.Rainbow then colorSeq(RAINBOW, col) else ColorSequence.new(col, WHITE)
+
+	local light = Instance.new("PointLight")
+	light.Name = "RarityFx"
+	light.Color = col
+	light.Brightness = fx.Light
+	light.Range = fx.Range
+	light.Shadows = false
+	light.Parent = body
+
+	-- 작은 반짝이: 몸 표면에서 천천히 떠올라요
+	local pe = fxEmitter(body, "Sparkle")
+	pe.Color = tint
+	pe.LightEmission = 0.7
+	pe.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, fx.Size * k),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	pe.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.15),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	pe.Lifetime = NumberRange.new(fx.Life[1], fx.Life[2])
+	pe.Rate = fx.Rate
+	pe.Speed = NumberRange.new(fx.Speed[1] * k, fx.Speed[2] * k)
+	pe.Rotation = NumberRange.new(0, 360)
+	pe.RotSpeed = NumberRange.new(-90, 90)
+	pe.Drag = 1
+
+	-- 큰 별 반짝: 몸에 붙어서 반짝 커졌다 사라져요
+	local tw = fxEmitter(body, "Twinkle")
+	tw.Color = if info.Rainbow then colorSeq(RAINBOW, col) else ColorSequence.new(WHITE, col)
+	tw.LightEmission = 0.6
+	tw.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0),
+		NumberSequenceKeypoint.new(0.4, fx.TwinkleSize * k),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	tw.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.1),
+		NumberSequenceKeypoint.new(0.7, 0.2),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	tw.Lifetime = NumberRange.new(0.45, 0.75)
+	tw.Rate = fx.Twinkle
+	tw.Speed = NumberRange.new(0, 0)
+	tw.LockedToPart = true
+	tw.ZOffset = 0.6 * k
+	tw.Rotation = NumberRange.new(30, 60)
+	tw.RotSpeed = NumberRange.new(-30, 30)
+
+	-- 은은한 빛무리: 몸 뒤에 크고 흐린 별빛 (카메라에서 먼 쪽으로 밀어서 얼굴을 가리지 않아요)
+	local au = fxEmitter(body, "Aura")
+	au.Shape = Enum.ParticleEmitterShape.Box
+	au.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+	au.Color = tint
+	au.LightEmission = 0.3
+	au.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, fx.AuraSize * k * 0.8),
+		NumberSequenceKeypoint.new(1, fx.AuraSize * k),
+	})
+	au.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(0.3, 0.8),
+		NumberSequenceKeypoint.new(0.7, 0.84),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	au.Lifetime = NumberRange.new(2.2, 3)
+	au.Rate = fx.Aura
+	au.Speed = NumberRange.new(0, 0)
+	au.LockedToPart = true
+	au.ZOffset = -(1.2 * k + 0.3)
+	au.Rotation = NumberRange.new(0, 360)
+	au.RotSpeed = NumberRange.new(-15, 15)
+end
+
+-- Epic 이상: 반짝이 파티클 + 은은한 빛 (희귀도 색). 다시 불러도 하나씩 (이전 RarityFx 는 지워요)
 function PetModels.AddRarityEffects(model: Model, rarity: string)
 	local rarities = Config.Rarities :: { [string]: RarityInfo }
 	local info = rarities[rarity]
@@ -2245,45 +2388,45 @@ function PetModels.AddRarityEffects(model: Model, rarity: string)
 			child:Destroy()
 		end
 	end
+	if info.Special == true then
+		addSpecialEffects(model, body, info)
+		return
+	end
 	local col = info.Color
 	local level = math.clamp(info.Order - 3, 1, 3) -- Epic 1, Legendary 2, Mythic 3 (비밀도 3)
-	-- ★v6 시크릿/천상/이터널 (Special): 비밀보다 밝지 않게. 빛은 한 단계 낮게, 반짝이는 단계 색으로 크고 느리게 떠올라요 (이터널만 무지개)
-	local special = info.Special == true
 
 	local light = Instance.new("PointLight")
 	light.Name = "RarityFx"
 	light.Color = col
-	light.Brightness = if special then 1.3 else 0.3 + 0.5 * level
-	light.Range = if special then 10 else 4 + 3 * level
+	light.Brightness = 0.3 + 0.5 * level
+	light.Range = 4 + 3 * level
 	light.Shadows = false
 	light.Parent = body
 
 	local pe = Instance.new("ParticleEmitter")
 	pe.Name = "RarityFx"
 	pe.Texture = SPARKLE_TEX
-	if special then
-		pe.Color = if info.Rainbow then colorSeq(RAINBOW, col) else ColorSequence.new(col, WHITE)
-	elseif level >= 3 then
+	if level >= 3 then
 		pe.Color = colorSeq(RAINBOW, col)
 	else
 		pe.Color = ColorSequence.new(col, WHITE)
 	end
-	pe.LightEmission = if special then 0.7 else 1
+	pe.LightEmission = 1
 	pe.Size = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, if special then 0.42 else 0.12 + 0.08 * level),
+		NumberSequenceKeypoint.new(0, 0.12 + 0.08 * level),
 		NumberSequenceKeypoint.new(1, 0),
 	})
 	pe.Transparency = NumberSequence.new({
 		NumberSequenceKeypoint.new(0, 0.15),
 		NumberSequenceKeypoint.new(1, 1),
 	})
-	pe.Lifetime = if special then NumberRange.new(1.4, 2.2) else NumberRange.new(0.8, 1.5)
-	pe.Rate = if special then 6 elseif level == 1 then 3 elseif level == 2 then 7 else 12
+	pe.Lifetime = NumberRange.new(0.8, 1.5)
+	pe.Rate = if level == 1 then 3 elseif level == 2 then 7 else 12
 	-- 몸 표면에서 바깥쪽으로 뿌려야 몸속에 가려지지 않음
 	pe.Shape = Enum.ParticleEmitterShape.Sphere
 	pe.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
 	pe.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
-	pe.Speed = if special then NumberRange.new(0.5, 1.2) else NumberRange.new(1, 2.5)
+	pe.Speed = NumberRange.new(1, 2.5)
 	pe.SpreadAngle = Vector2.new(180, 180)
 	pe.Rotation = NumberRange.new(0, 360)
 	pe.RotSpeed = NumberRange.new(-90, 90)

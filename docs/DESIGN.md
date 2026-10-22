@@ -19,8 +19,12 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 >    `ConveyorService.sendEggAlert`; DataService validates AlertLevel as an integer 0..#AlertLevels-1. Hud: a 🔔 button with the
 >    current step that opens a small picker (5 rows, tap = choose + toast). The rare egg itself still spawns and shows its beacon/map pill.
 > 2. **Rare pets stronger** (fusion-tier reading of "2~3단계 위 신화"): base Income = zone Mythic × **25** (시크릿, beats a 🥇 골드 Mythic ×20),
->    × **60** (천상, beats 🌈 레인보우 ×50), × **150** (이터널, beats 💎 다이아 ×120). Rare egg prices re-tuned by sim (report zone-8 time and
->    "affordable when the alert pops").
+>    × **60** (천상, beats 🌈 레인보우 ×50), × **150** (이터널, beats 💎 다이아 ×120): zone 1 350 / 840 / 2.1K … zone 8 26.25M / 63M / 157.5M.
+>    Rare egg prices (sim `v7/sim7.py`): zone 1 5K / 100K / 400K … zone 8 7.5T / 60T / 200T (시크릿 ×1.5 except zone 1, 천상 ×1.5, 이터널 ×1.2);
+>    affordable when the alert pops in the top zone 93 / 71 / 45 %; zone-8 time 19.6 → 15.6 h (no magnet), 10.1 → 8.3 h (🧲 + ⚡).
+>    Size ranges `Config.PetSize.Special` (+ `Config.PetSizeRange(petId)`): 시크릿 0.8–1.5 (거대 ≥ 1.31), 천상 0.8–1.7 (≥ 1.46),
+>    이터널 0.8–2.0 (≥ 1.67). Rare ride speed = v6 multiplier × (Size / 0.8)^0.5; rare rides use `Config.SoftSpeedCap` (unchanged under
+>    64 walk / 72 fly, then easing toward 80 / 96); normal rides keep the hard 64 / 72.
 > 3. **Bigger + sparklier, size/speed follow income**: rare pets roll Size from a wider range (`Config.PetSize.Special[rarity] = { Min, Max,
 >    HugeFrom }`, e.g. 시크릿 0.8–1.5, 천상 0.8–1.7, 이터널 0.8–2.0; income × Size as before, so a bigger one earns more). World model scale
 >    = Size × `Config.Rarities[r].ModelScale` (시크릿 1.2, 천상 1.4, 이터널 1.6; others 1) via `Config.PetDisplayScale(item)` (follow, ride,

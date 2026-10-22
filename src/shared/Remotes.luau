@@ -38,7 +38,8 @@ local NAMES = {
 	"PlaceFurniture", -- (furnId: string, floor: number, x: number, z: number, r: number) 가구 가방에서 꺼내 놓기 ★
 	"MoveFurniture", -- (fid: string, floor: number, x: number, z: number, r: number) 놓인 가구 옮기기/돌리기 ★
 	"PickupFurniture", -- (fid: string) 놓인 가구를 가구 가방으로 ★
-	"SetSetting", -- (key: string, value: boolean) 켜고 끄는 버튼 (Config.Settings 의 키만) ★v5
+	"SetSetting", -- (key: string, value: boolean | number) 켜고 끄는 버튼 (Config.Settings 의 키만) ★v5, ★v7 AlertLevel 은 0..4 숫자
+	"StashEgg", -- () ★v7 "🥚 나쁜 알 빼기": 받침대가 다 찼으면 가장 나쁜 알(없으면 가장 약한 펫) 하나를 가방으로
 }
 
 local Remotes: { [string]: RemoteEvent } = {}

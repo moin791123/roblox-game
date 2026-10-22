@@ -12,7 +12,7 @@ export type Item = {
 	Kind: string, -- "Egg" | "Pet"
 	Id: string,
 	Tier: number?, -- 펫만: 1..Config.MaxTier (알은 없음)
-	Size: number?, -- 펫만: Config.PetSize.Min..Max (부화 때 뽑음, 없으면 1)
+	Size: number?, -- 펫만: Config.PetSizeRange(Id) 의 Min..Max (부화 때 뽑음, 없으면 1. ★v7 희귀 펫은 최대 1.5 / 1.7 / 2.0)
 	Acc: string?, -- 펫만: 입은 옷 id (Config.Accessories 에 있고 옷장에 있어야 함). 없으면 nil
 	Loc: string, -- "Slot" | "Follow" | "Ride" | "Hold" | "Bag" (알은 Slot | Bag)
 	Slot: number?,
@@ -41,7 +41,7 @@ export type Data = {
 	Furniture: { [string]: Furniture }, -- 놓인 가구 (fid "f12" → 가구)
 	FurnitureInv: { [string]: number }, -- 가구 가방 (furnId → 개수, 0 이면 키 없음)
 	NextFid: number,
-	Settings: { [string]: boolean }, -- ★v5 켜고 끄는 버튼 (Config.Settings 키만)
+	Settings: { [string]: any }, -- ★v5 켜고 끄는 버튼 (Config.Settings 키만, ★v7 AlertLevel 은 숫자)
 }
 
 local DataService = {}
@@ -408,8 +408,9 @@ local function sanitize(raw: any): Data
 
 	if type(raw.Settings) == "table" then
 		for key in Config.Settings do
-			if type(raw.Settings[key]) == "boolean" then
-				data.Settings[key] = raw.Settings[key]
+			local v = Config.SettingValue(key, raw.Settings[key]) -- ★v7 AlertLevel 은 0..4 정수, 나머지는 true/false
+			if v ~= nil then
+				data.Settings[key] = v
 			end
 		end
 	end
@@ -639,31 +640,42 @@ function DataService.SaveAll()
 	end
 end
 
--- ★v5 켜고 끄는 버튼 값 (저장 안 된 키는 Config.Settings 기본값)
-function DataService.GetSetting(player: Player, key: string): boolean
+-- ★v5 켜고 끄는 버튼 값 (저장 안 된 키는 Config.Settings 기본값). ★v7 AlertLevel 은 숫자, 나머지는 true/false
+function DataService.GetSetting(player: Player, key: string): any
 	local data = cache[player]
-	local v = if data then data.Settings[key] else nil
+	local v = Config.SettingValue(key, if data then data.Settings[key] else nil)
 	if v == nil then
-		v = Config.Settings[key]
+		v = Config.SettingValue(key, (Config.Settings :: any)[key])
+	end
+	if type(v) == "number" then
+		return v
 	end
 	return v == true
 end
 
-local settingListeners: { (Player, string, boolean) -> () } = {}
+-- ★v7 알 알림 단계 (0 = 모두 받기 .. #Config.AlertLevels - 1)
+function DataService.GetAlertLevel(player: Player): number
+	local v = DataService.GetSetting(player, "AlertLevel")
+	return if type(v) == "number" then v else 0
+end
+
+local settingListeners: { (Player, string, any) -> () } = {}
 
 -- 버튼 값이 바뀔 때 (다른 서비스가 바로 반응하고 싶을 때)
-function DataService.OnSettingChanged(fn: (Player, string, boolean) -> ())
+function DataService.OnSettingChanged(fn: (Player, string, any) -> ())
 	table.insert(settingListeners, fn)
 end
 
-function DataService.SetSetting(player: Player, key: string, value: boolean): boolean
+-- 값 검사는 Config.SettingValue (모르는 키 / 맞지 않는 값이면 false)
+function DataService.SetSetting(player: Player, key: string, value: any): boolean
 	local data = cache[player]
-	if not data or Config.Settings[key] == nil or type(value) ~= "boolean" then
+	local v = Config.SettingValue(key, value)
+	if not data or v == nil then
 		return false
 	end
-	data.Settings[key] = value
+	data.Settings[key] = v
 	for _, fn in settingListeners do
-		task.spawn(fn, player, key, value)
+		task.spawn(fn, player, key, v)
 	end
 	DataService.Sync(player)
 	return true
@@ -671,8 +683,8 @@ end
 
 function DataService.Start()
 	Remotes.SetSetting.OnServerEvent:Connect(function(player, key, value)
-		if type(key) == "string" and type(value) == "boolean" then
-			DataService.SetSetting(player, key, value)
+		if type(key) == "string" then
+			DataService.SetSetting(player, key, value) -- ★v7 값 검사는 SetSetting 안에서 (AlertLevel 은 숫자)
 		end
 	end)
 	task.spawn(function()
