@@ -23,7 +23,7 @@ local Make, C = UiKit.Make, UiKit.Colors
 
 local HatchFx = {}
 
-type Job = { PetId: string, EggId: string, IsNew: boolean, Tier: number, Mode: string }
+type Job = { PetId: string, EggId: string, IsNew: boolean, Tier: number, Mode: string, Size: number? } -- ★v7 Size = 펫 크기 (없으면 1)
 type Layout = { S: number, W: number, H: number, TitleH: number, CardH: number, HintH: number, X: number, Y: number, Small: boolean }
 
 local gui: ScreenGui
@@ -605,9 +605,12 @@ local function showOne(job: Job)
 	local rarityText = if special
 		then "🌟 " .. UiKit.SpecialStars(special) .. " " .. rname
 		else "⭐ " .. (if rarity then rarity.Name else "")
+	-- ★v7 수익은 크기까지 곱해서 (희귀 펫은 크기도 보여 줘요: 클수록 더 벌고 더 빨라요)
+	local petSize = job.Size or 1
+	local sizeText = if special and job.Size then string.format("  📏 ×%.1f", petSize) else ""
 	UiKit.Label({
 		Name = "Info",
-		Text = tierText .. rarityText .. "   💰 " .. Config.FormatNumber(Config.PetIncome(job.PetId, tier)) .. "/초",
+		Text = tierText .. rarityText .. "   💰 " .. Config.FormatNumber(Config.PetIncome(job.PetId, tier) * petSize) .. "/초" .. sizeText,
 		Position = UDim2.fromScale(0.05, 0.6),
 		Size = UDim2.fromScale(0.9, 0.32),
 		ZIndex = 10,
@@ -757,7 +760,7 @@ local function runQueue()
 end
 
 -- mode: "Hatch"(기본) 또는 "Fuse". tier: 새 펫의 등급 1..7 (없으면 1)
-function HatchFx.Play(petId: any, position: any, isNew: any, tier: any, mode: any)
+function HatchFx.Play(petId: any, position: any, isNew: any, tier: any, mode: any, size: any)
 	if type(petId) ~= "string" or not Config.Pets[petId] then
 		return
 	end
@@ -787,6 +790,7 @@ function HatchFx.Play(petId: any, position: any, isNew: any, tier: any, mode: an
 		IsNew = isNew == true,
 		Tier = t,
 		Mode = m,
+		Size = if type(size) == "number" then Config.SizeOf({ Kind = "Pet", Id = petId, Size = size }) else nil,
 	})
 	if not running then
 		task.spawn(runQueue)

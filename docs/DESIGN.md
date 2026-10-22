@@ -45,7 +45,10 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 >    모두 / 최종만 / 희귀만 / 천상+ / 이터널; a filtered alert returns before the Gap clock. 🔔 "알 알림" is the last toggle cell (picker: 5 rows,
 >    ✖ / outside / Esc / bell closes). Quick buttons: PC/tablet continue the toggle column (≥ 44 px); phones use a 3×2 toggle grid and
 >    48 px squares in the top-right corner beside the coin bar (on 800×302 the hatch panel shifts ~100 px left during a hatch).
-> 6. **Different alert sounds** for 시크릿 / 천상 / 이터널 (`UiKit.PlayRareSound`): different built-in sound files + melodies per tier.
+> 6. **Different alert sounds** for 시크릿 / 천상 / 이터널 (`UiKit.PlayRareSound`): Config.Sounds RareHidden 9116395089 (magic chime),
+>    RareCelestial 1848271884 (APM harp waltz tag), RareEternal 1842335078 (APM cartoon fanfare) — Roblox's free libraries, public domain.
+>    `UiKit.PreloadRareSounds` (init.client) preloads them; a tier plays its asset only after a successful preload, else the v6 tune.
+> 7. **Hatch card shows the real income** (× Size) and, for rare pets, "📏 ×n": `Remotes.HatchFx` gains a 6th arg `size` (hatch + fuse).
 >
 > **v6 changes (this round)** — "조금 진행하니까 루즈해지네": a reason to rush to every map, plus a stronger magnet. ★v6 marks v6 below.
 > 1. **Three ultra-rare eggs per zone** (24 eggs): 시크릿 알 → 천상 알 → 이터널 알, each rarer than the last. They are NOT in the normal

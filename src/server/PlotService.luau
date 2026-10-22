@@ -1286,7 +1286,7 @@ local function fuse(player: Player, data: DataService.Data, uid: string, item: D
 	if needFollow then
 		refreshFollow(player)
 	end
-	Remotes.HatchFx:FireClient(player, item.Id, effectPosition(player), isNew, newTier, "Fuse")
+	Remotes.HatchFx:FireClient(player, item.Id, effectPosition(player), isNew, newTier, "Fuse", newSize)
 	local newName = Config.PetDisplayName(item.Id, newTier)
 	-- 🆕 = 도감에 처음 (부화 화면을 숨긴 아이도 알 수 있게 말풍선에도 적어요)
 	notify(player, (if isNew then "🆕 NEW! " else "") .. "✨ 합성 성공! " .. josa(newName, "이", "가") .. " 되었어요!", "good")
@@ -1485,7 +1485,7 @@ local function hatch(player: Player, plot: Plot, uid: string, item: DataService.
 		data.Stats.Hatched += 1
 	end
 	local pos = slotCFrameOf(plot, slot).Position + Vector3.new(0, 2, 0)
-	Remotes.HatchFx:FireClient(player, petId, pos, isNew, tier, "Hatch")
+	Remotes.HatchFx:FireClient(player, petId, pos, isNew, tier, "Hatch", size)
 	PlotService.PlaceItem(player, uid)
 	local pet = Config.Pets[petId]
 	local rarityName = Config.Rarities[pet.Rarity].Name

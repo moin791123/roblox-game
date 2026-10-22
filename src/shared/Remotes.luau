@@ -9,7 +9,7 @@ local NAMES = {
 	"DataSync", -- (snapshot) 내 데이터 전체 (DataService.Sync, 최대 초당 5번)
 	"CoinSync", -- (coins: number, pending: number, income: number) 코인만 바뀌었을 때 가벼운 갱신 ★
 	"Notify", -- (text: string, kind: "info" | "good" | "warn" | "alert")
-	"HatchFx", -- (petId: string, position: Vector3, isNew: boolean, tier: number?, mode: "Hatch" | "Fuse" | nil)
+	"HatchFx", -- (petId: string, position: Vector3, isNew: boolean, tier: number?, mode: "Hatch" | "Fuse" | nil, size: number?) ★v7 size = 펫 크기
 	"CoinFx", -- (amount: number, position: Vector3, silent: boolean?) silent 면 소리 없이 숫자만
 	"CoinField", -- (op: "Reset" | "Add" | "Remove", payload) 내 들판 코인 (CoinFieldService 참고, 코인마다 Zone 있음)
 	"LeaderboardSync", -- (board: { Income: {Row}, Rebirths: {Row}, Global: boolean, UpdatedAt: number }) ★

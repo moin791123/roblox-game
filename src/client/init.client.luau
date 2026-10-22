@@ -294,8 +294,8 @@ Remotes.Notify.OnClientEvent:Connect(function(text, kind)
 	Toasts.Show(text, kind)
 end)
 
-Remotes.HatchFx.OnClientEvent:Connect(function(petId, position, isNew, tier, mode)
-	HatchFx.Play(petId, position, isNew, tier, mode)
+Remotes.HatchFx.OnClientEvent:Connect(function(petId, position, isNew, tier, mode, size)
+	HatchFx.Play(petId, position, isNew, tier, mode, size)
 end)
 
 Remotes.CoinFx.OnClientEvent:Connect(function(amount, position, silent)
