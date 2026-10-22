@@ -323,8 +323,14 @@ function State.BagCount(): number
 	return if snap then snap.BagCount else 0
 end
 
+-- ★v7.1 가방 칸 수 (♾ 가방 무한이 켜져 있으면 Config.InfiniteBagItems, 방금 누른 값도 바로 따라가요)
+function State.BagCapacity(): number
+	return Config.BagCapacity(State.GetSetting("InfiniteBag"))
+end
+
+-- 남은 칸 (무한을 끈 뒤 칸을 넘었으면 0)
 function State.BagSpace(): number
-	return math.max(0, Config.MaxBagItems - State.BagCount())
+	return math.max(0, State.BagCapacity() - State.BagCount())
 end
 
 -- 집 받침대 위 펫 수 (알 제외)

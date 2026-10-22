@@ -12,12 +12,17 @@ Config.StartCoins = 200
 
 -- ★v5 켜고 끄는 버튼 (플레이어마다 저장, Remotes.SetSetting). 값은 기본값.
 -- ★v7 AlertLevel 만 숫자 (0 .. #AlertLevels - 1), 나머지는 모두 true/false (Config.SettingValue 로 검사)
+-- ★v7.1 숫자 설정 더: SellZoneMax (테마 1..MaxZone), SellRarityMax (등급 1..SellRarityTop). 범위는 Config.SettingRange
 Config.Settings = {
 	HideHatch = false, -- 알 까는 화면 숨기기 (작은 알림만)
 	AutoCollect = false, -- 집에 모인 돈 자동으로 먹기
 	Magnet = false, -- 맵 돈 자석 (넓은 범위 자동으로 먹기)
 	SuperMagnet = false, -- ★v6 슈퍼 자석 (지금 있는 지역 코인 대부분, 환생해야 열려요)
 	AlertLevel = 0, -- ★v7 알 알림 단계 (Config.AlertLevels, 0 = 모두 받기)
+	InfiniteBag = false, -- ★v7.1 ♾ 가방 무한 (가방 칸 = Config.InfiniteBagItems)
+	AutoSell = false, -- ★v7.1 🤖 자동 판매 (새로 태어난 펫이 아래 조건이면 바로 팔아요)
+	SellZoneMax = 1, -- ★v7.1 💰 한꺼번에 팔기·자동 판매: 이 테마(지역 번호) 이하 펫만
+	SellRarityMax = 2, -- ★v7.1 이 등급(희귀도 Order, 2 = 고급) 이하 펫만
 }
 
 -- ★v7 알 알림 단계: 한 칸 내려갈수록 더 꺼요 ("어디까지 받을지"). [n + 1] = 단계 n
@@ -37,14 +42,27 @@ Config.AlertLevels = {
 		Desc = "이터널 알만", Toast = "💜 이제 이터널 알만 알려 줘요" },
 }
 
--- ★v7 설정 값 검사: 맞는 값이면 그 값, 아니면 nil (AlertLevel = 0..#AlertLevels-1 정수, 나머지 키 = true/false)
+-- ★v7.1 숫자 설정의 범위 (정수 min..max). 숫자 설정이 아니면 nil
+function Config.SettingRange(key: any): (number?, number?)
+	if key == "AlertLevel" then
+		return 0, #Config.AlertLevels - 1
+	elseif key == "SellZoneMax" then
+		return 1, Config.MaxZone
+	elseif key == "SellRarityMax" then
+		return 1, Config.SellRarityTop
+	end
+	return nil, nil
+end
+
+-- ★v7 설정 값 검사: 맞는 값이면 그 값, 아니면 nil (숫자 설정 = Config.SettingRange 안 정수, 나머지 키 = true/false)
 function Config.SettingValue(key: any, value: any): any
 	local default = if type(key) == "string" then (Config.Settings :: any)[key] else nil
 	if default == nil then
 		return nil
 	end
 	if type(default) == "number" then
-		if type(value) == "number" and value == math.floor(value) and value >= 0 and value <= #Config.AlertLevels - 1 then
+		local lo, hi = Config.SettingRange(key)
+		if type(value) == "number" and value == math.floor(value) and lo and hi and value >= lo and value <= hi then
 			return value
 		end
 		return nil
@@ -59,6 +77,16 @@ function Config.AlertLevelInfo(level: any): { [string]: any }
 end
 Config.MaxFollow = 3 -- 데리고 다닐 수 있는 펫 수
 Config.MaxBagItems = 150 -- 가방 최대 칸 (Loc == "Bag" 인 아이템 수)
+-- ★v7.1 ♾ 가방 무한 (Settings.InfiniteBag) 일 때 칸. 진짜 무한은 안 돼요: 저장과 DataSync 스냅샷이 아이템을 다 보내요.
+-- 재어 보니 (긴 id + 옷 + 갤럭시, 받침대 120 + 데리고 다니는 5) 가방 1마리 ≈ 115 B: 150 → 저장/스냅샷 42 KB,
+-- 500 → 82 KB (DataStore 4 MB 의 2 %, 스냅샷은 지금 가방 150 의 2 배), 1000 → 139 KB. 스냅샷이 초당 5번까지 가서 500 으로 해요.
+-- 끄면 아무것도 안 지워요: 150 마리 넘게 있으면 150 아래로 줄 때까지 "가득" 이에요
+Config.InfiniteBagItems = 500
+
+-- ★v7.1 지금 가방 칸 수 (infinite = Settings.InfiniteBag)
+function Config.BagCapacity(infinite: any): number
+	return if infinite == true then Config.InfiniteBagItems else Config.MaxBagItems
+end
 Config.BaseWalkSpeed = 18
 Config.WalkSpeedPerFollower = 0.5
 Config.MaxWalkSpeed = 64 -- FollowService.UpdateSpeed 가 이 값으로 잘라요
@@ -80,6 +108,15 @@ Config.Rarities = {
 	Eternal = { Name = "이터널", Color = RGB(215, 105, 255), Order = 10, Boost = 0.8, Special = true, Rainbow = true, ModelScale = 1.6 },
 }
 Config.RarityOrder = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret", "Hidden", "Celestial", "Eternal" }
+
+-- ★v7.1 💰 한꺼번에 팔기 / 🤖 자동 판매 (Config.SellMatch 로 같이 검사해요)
+Config.SellRarityTop = 7 -- 고를 수 있는 가장 높은 등급 (7 = 비밀). 시크릿·천상·이터널 (Special) 은 절대 안 팔아요
+Config.BulkSell = {
+	KeepTier = 4, -- 이 등급(🥇 골드) 이상은 지켜요
+	Gap = 1, -- 한꺼번에 팔기 사이 최소 초 (연타 막기)
+	ConfirmCount = 20, -- 이만큼 이상이면 "팔기" 를 한 번 더 눌러야 해요
+	ConfirmCoins = 1e6, -- 또는 합계가 이 이상이면
+}
 
 ----------------------------------------------------------------------
 -- 지역 (맵). v4: 숲 마을(집 6채 + 로비 + 컨베이어)이 가운데 있고, 지역 2~8 은 그 둘레의 섬이에요.
@@ -1779,6 +1816,27 @@ end
 -- 펫 판매 가격
 function Config.SellPrice(petId: string, tier: number?): number
 	return Config.PetIncome(petId, tier) * 20
+end
+
+-- ★v7.1 한꺼번에 팔기 / 자동 판매 조건 (위치는 안 봐요: 한꺼번에 팔기는 부르는 쪽이 Loc == "Bag" 만).
+-- 펫만, 옷 안 입음, 🥇 골드 미만, 시크릿·천상·이터널 아님, 테마(지역) ≤ zoneMax, 등급(희귀도 Order) ≤ rarityMax
+function Config.SellMatch(item: any, zoneMax: any, rarityMax: any): boolean
+	if type(item) ~= "table" or item.Kind ~= "Pet" or item.Acc ~= nil then
+		return false
+	end
+	local pet = Config.Pets[item.Id]
+	local rarity = if pet then Config.Rarities[pet.Rarity] else nil
+	if not rarity or rarity.Special then
+		return false
+	end
+	local tier = tonumber(item.Tier) or 1
+	if tier >= Config.BulkSell.KeepTier then
+		return false
+	end
+	return type(zoneMax) == "number"
+		and type(rarityMax) == "number"
+		and Config.ZoneOf(item.Id) <= zoneMax
+		and rarity.Order <= math.min(rarityMax, Config.SellRarityTop)
 end
 
 -- 집 도우미 ------------------------------------------------------------

@@ -1,6 +1,7 @@
 -- 집(플롯): 외형(바닥/벽/받침대/층/계단/엘리베이터/간판/수금 패드)은 HouseBuilder 가 짓고, 여기서는 배정·수입/부화 틱·수금·
 -- 구매(받침대/층/테마)·환생·펫 행동(PetAction)·자동 배치(AutoPlace)·집 비우기(ClearBase)·★v7 나쁜 펫 빼기(StashEgg)를 처리해요.
 -- 🏦 자동 수금 버튼(설정 "AutoCollect")이 켜져 있으면 어디에 있든 몇 초마다 집 금고 코인을 조용히 받아요.
+-- ★v7.1 💰 한꺼번에 팔기(SellBulk)와 🤖 자동 판매(설정 "AutoSell", 부화 때)도 여기서 해요.
 -- (설계: docs/DESIGN.md "PlotService", §7)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -1464,6 +1465,95 @@ handlePetAction = function(player: Player, uid: any, action: any)
 end
 
 ----------------------------------------------------------------------
+-- ★v7.1 💰 한꺼번에 팔기 (Remotes.SellBulk) / 🤖 자동 판매 (Settings.AutoSell, 부화 때)
+-- 조건은 Config.SellMatch 하나: 펫만, 옷 안 입음, 🥇 골드 미만, 시크릿·천상·이터널 아님, 테마 ≤ zoneMax, 등급 ≤ rarityMax
+----------------------------------------------------------------------
+local lastBulk: { [Player]: number } = {}
+type AutoSold = { Count: number, Name: string, Coins: number }
+local autoSold: { [Player]: AutoSold } = {} -- 같은 틱에 판 펫은 알림 하나로 모아요
+
+-- min..max 정수면 그 값, 아니면 nil (NaN·무한대·소수·문자 거절)
+local function intIn(v: any, min: number, max: number): number?
+	if type(v) ~= "number" or v ~= math.floor(v) or v < min or v > max then
+		return nil
+	end
+	return v
+end
+
+-- 가방 펫 중 조건에 맞는 것을 모두 팔아요 (받침대·따라옴·타기·들기·알은 절대 안 팔아요). 코인은 한 번에 더해요
+local function trySellBulk(player: Player, zoneArg: any, rarityArg: any)
+	local zoneMax = intIn(zoneArg, 1, Config.MaxZone)
+	local rarityMax = intIn(rarityArg, 1, Config.SellRarityTop)
+	local data = DataService.Get(player)
+	if not zoneMax or not rarityMax or not data then
+		return
+	end
+	local t = os.clock()
+	if t - (lastBulk[player] or -math.huge) < Config.BulkSell.Gap then
+		return
+	end
+	lastBulk[player] = t
+	local uids: { string } = {}
+	local total = 0
+	for uid, item in data.Items do
+		if item.Loc == "Bag" and Config.SellMatch(item, zoneMax, rarityMax) then
+			table.insert(uids, uid)
+			total += Config.SellPrice(item.Id, item.Tier)
+		end
+	end
+	if #uids == 0 then
+		notify(player, "가방에 이 조건 펫이 없어요 🐾", "info")
+		return
+	end
+	for _, uid in uids do
+		DataService.RemoveItem(player, uid)
+	end
+	DataService.AddCoins(player, total)
+	local hrp = rootPart(player)
+	if hrp then
+		Remotes.CoinFx:FireClient(player, total, hrp.Position + Vector3.new(0, 3, 0))
+	end
+	notify(player, "💰 " .. #uids .. "마리를 팔았어요! +" .. Config.FormatNumber(total), "good")
+	DataService.Sync(player)
+end
+
+-- 방금 태어난 펫을 바로 팔까? 처음 본 펫(isNew)·브론즈 이상은 지켜요
+local function shouldAutoSell(player: Player, item: DataService.Item, isNew: boolean): boolean
+	if isNew or (item.Tier or 1) >= 2 or DataService.GetSetting(player, "AutoSell") ~= true then
+		return false
+	end
+	return Config.SellMatch(item, DataService.GetSetting(player, "SellZoneMax"), DataService.GetSetting(player, "SellRarityMax"))
+end
+
+local function flushAutoSold(player: Player)
+	local sold = autoSold[player]
+	autoSold[player] = nil
+	if not sold then
+		return
+	end
+	local who = if sold.Count > 1 then sold.Name .. " 외 " .. (sold.Count - 1) .. "마리" else sold.Name
+	notify(player, "🤖 자동 판매: " .. who .. " +💰" .. Config.FormatNumber(sold.Coins), "info")
+end
+
+-- 알 모델을 치우고 (받침대가 비어요) 펫 대신 코인. 부화 화면(HatchFx)은 안 띄워요 (조용하게, 작은 알림만)
+local function autoSell(player: Player, uid: string, item: DataService.Item)
+	local price = Config.SellPrice(item.Id, item.Tier)
+	local name = itemName(item)
+	PlotService.RemoveItemVisual(player, uid)
+	DataService.RemoveItem(player, uid)
+	DataService.AddCoins(player, price)
+	local sold = autoSold[player]
+	if sold then
+		sold.Count += 1
+		sold.Coins += price
+	else
+		autoSold[player] = { Count = 1, Name = name, Coins = price }
+		task.defer(flushAutoSold, player)
+	end
+	DataService.Sync(player)
+end
+
+----------------------------------------------------------------------
 -- 부화 / 수입 틱
 ----------------------------------------------------------------------
 local function hatch(player: Player, plot: Plot, uid: string, item: DataService.Item)
@@ -1485,6 +1575,10 @@ local function hatch(player: Player, plot: Plot, uid: string, item: DataService.
 	local data = DataService.Get(player)
 	if data then
 		data.Stats.Hatched += 1
+	end
+	if shouldAutoSell(player, item, isNew) then
+		autoSell(player, uid, item) -- ★v7.1 🤖 자동 판매
+		return
 	end
 	local pos = slotCFrameOf(plot, slot).Position + Vector3.new(0, 2, 0)
 	Remotes.HatchFx:FireClient(player, petId, pos, isNew, tier, "Hatch", size)
@@ -1605,6 +1699,12 @@ function PlotService.Start()
 	connectSimple(Remotes.AutoPlace, tryAutoPlace)
 	connectSimple(Remotes.ClearBase, tryClearBase)
 	connectSimple(Remotes.StashEgg, tryStashEgg) -- ★v7
+	Remotes.SellBulk.OnServerEvent:Connect(function(player, zoneMax, rarityMax)
+		if throttled(player) then
+			return
+		end
+		trySellBulk(player, zoneMax, rarityMax) -- ★v7.1
+	end)
 
 	-- 자동 수금 버튼을 누르면 수금 패드 글자를 바로 바꿔요 (코인은 다음 틱에)
 	DataService.OnSettingChanged(function(player, key)
@@ -1616,6 +1716,8 @@ function PlotService.Start()
 
 	Players.PlayerRemoving:Connect(function(player)
 		lastAction[player] = nil
+		lastBulk[player] = nil
+		autoSold[player] = nil
 	end)
 
 	task.spawn(function()

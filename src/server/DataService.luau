@@ -810,12 +810,19 @@ function DataService.BagCount(player: Player): number
 	return if data then countBag(data) else 0
 end
 
+-- ★v7.1 가방 칸 수: ♾ 가방 무한이 켜져 있으면 Config.InfiniteBagItems, 아니면 Config.MaxBagItems
+function DataService.BagCapacity(player: Player): number
+	local data = cache[player]
+	return Config.BagCapacity(data ~= nil and data.Settings.InfiniteBag == true)
+end
+
+-- 남은 칸 (★v7.1 무한을 끄면 칸을 넘은 만큼은 그대로 두고 0: 칸 아래로 줄 때까지 "가득")
 function DataService.BagSpace(player: Player): number
 	local data = cache[player]
 	if not data then
 		return 0
 	end
-	return math.max(0, Config.MaxBagItems - countBag(data))
+	return math.max(0, DataService.BagCapacity(player) - countBag(data))
 end
 
 -- 받침대 번호 → uid (알·펫 모두)
