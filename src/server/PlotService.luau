@@ -1,7 +1,7 @@
 -- 집(플롯): 외형(바닥/벽/받침대/층/계단/엘리베이터/간판/수금 패드)은 HouseBuilder 가 짓고, 여기서는 배정·수입/부화 틱·수금·
 -- 구매(받침대/층/테마)·환생·펫 행동(PetAction)·자동 배치(AutoPlace)·집 비우기(ClearBase)·★v7.2 하위 펫 한 개 가방으로(StashEgg)를 처리해요.
 -- 🏦 자동 수금 버튼(설정 "AutoCollect")이 켜져 있으면 어디에 있든 몇 초마다 집 금고 코인을 조용히 받아요
--- (★v7.2 환생 Plot.AutoCollectMinRebirth 번부터. 그 전에는 켜 둬도 금색 판을 밟아야 해요).
+-- (★v7.2 게임 패스가 있어야 해요: PassService.Has. 없으면 켜 둬도 금색 판을 밟아야 해요).
 -- ★v7.1 💰 한꺼번에 팔기(SellBulk)와 🤖 자동 판매(설정 "AutoSell", 부화 때)도 여기서 해요.
 -- (설계: docs/DESIGN.md "PlotService", §7)
 local Players = game:GetService("Players")
@@ -12,6 +12,7 @@ local Remotes = require(ReplicatedStorage.Shared.Remotes)
 local PetModels = require(ReplicatedStorage.Shared.PetModels)
 local DataService = require(script.Parent.DataService)
 local FollowService = require(script.Parent.FollowService)
+local PassService = require(script.Parent.PassService) -- ★v7.2 🏦 자동 수금 게임 패스
 local HouseBuilder = require(script.Parent.HouseBuilder)
 local HouseLayout = require(ReplicatedStorage.Shared.HouseLayout)
 
@@ -243,11 +244,9 @@ local function updatePedestals(plot: Plot)
 	HouseBuilder.UpdatePedestals(plot.Handles, unlocked, floors)
 end
 
--- 자동 수금 버튼이 켜져 있고 열려 있나 (★v7.2 환생 조건까지)
+-- 자동 수금 버튼이 켜져 있고 쓸 수 있나 (★v7.2 게임 패스)
 local function autoOn(player: Player?): boolean
-	return player ~= nil
-		and DataService.GetSetting(player, "AutoCollect") == true
-		and Config.SettingUnlocked("AutoCollect", DataService.GetRebirths(player))
+	return player ~= nil and DataService.GetSetting(player, "AutoCollect") == true and PassService.Has(player, "AutoCollect")
 end
 
 local function updateCollector(plot: Plot)
@@ -995,17 +994,6 @@ local function tryRebirth(player: Player)
 			notify(player, "🏗 이제 " .. f .. "층까지 올릴 수 있어요!", "good")
 		end
 	end
-	-- ★v7.2 이번 환생으로 열린 버튼 (🧲 1 · ⚡ 2 · 🏦 3): 하나에 말풍선 하나. 이미 켜 두었으면 "이제 작동해요"
-	for _, info in Config.SettingUnlocks do
-		if Config.SettingMinRebirth(info.Key) == r then
-			local head = info.Emoji .. " " .. josa(info.Name, "이", "가") .. " 열렸어요! "
-			notify(
-				player,
-				head .. (if DataService.GetSetting(player, info.Key) == true then "켜 둔 버튼이 이제 작동해요 ✨" else "버튼을 눌러 켜 보세요"),
-				"good"
-			)
-		end
-	end
 	DataService.Sync(player)
 end
 
@@ -1720,8 +1708,14 @@ function PlotService.Start()
 		trySellBulk(player, zoneMax, rarityMax) -- ★v7.1
 	end)
 
-	-- 자동 수금 버튼을 누르면 수금 패드 글자를 바로 바꿔요 (코인은 다음 틱에)
+	-- 자동 수금 버튼을 누르면 수금 패드 글자를 바로 바꿔요 (코인은 다음 틱에). ★v7.2 패스를 사도 그래요
 	DataService.OnSettingChanged(function(player, key)
+		local plot = plotByPlayer[player]
+		if key == "AutoCollect" and plot then
+			updateCollector(plot)
+		end
+	end)
+	PassService.OnChanged(function(player, key)
 		local plot = plotByPlayer[player]
 		if key == "AutoCollect" and plot then
 			updateCollector(plot)

@@ -5,12 +5,15 @@
 --   (색 + ON/OFF 스위치), 서버로 Remotes.SetSetting, 스냅샷 Settings 를 따라가요 (State.GetSetting). PC·태블릿은 이름이 보이는
 --   가로 버튼, 폰은 작은 네모. 자리: 큰 버튼 칸 바로 오른쪽 세로 (위 → 아래 맞춤) → 왼쪽 위 가로 줄 → 왼쪽 위 2×2
 --   → 큰 버튼 칸 오른쪽 2×2 → 오른쪽 위 (세로 / 2×2). 코인 줄·점프·조이스틱은 피해요. 꾸미기 모드 동안은 큰 버튼과 같이 숨어요.
---   ★v7.2 셋 다 환생해야 열려요 (Config.SettingMinRebirth: 🧲 1 · ⚡ 2 · 🏦 3). 그 전에는 회색 "🔒 환생 N회", 누르면 설명만.
---   켜 둔 값은 그대로 저장돼요 (열리면 바로 작동). 열렸다는 말풍선은 서버가 그 환생 때 보내요 (PlotService), 여기서는 버튼만 통통.
+--   ★v7.2 셋 다 게임 패스 (Config.Passes: 🧲 R$50 · ⚡ R$100 · 🏦 R$150, Id = 0 이면 공짜라 보통 버튼).
+--   패스가 없으면 회색 "🔒 R$50", 누르면 MarketplaceService:PromptGamePassPurchase (서버가 사면 속성 Pass_<키> 를 켜요
+--   → 바로 보통 버튼으로 바뀌고 통통). 켜 둔 값은 그대로 저장돼요 (패스가 생기면 바로 작동). 환생 잠금은 없어요.
 -- ★v7.2 ⚙️ 옵션 버튼 (켜고 끄는 버튼 줄 마지막 칸): 누르면 ⚙️ 게임 옵션 창 (OptionsWindow: 🙈 부화 숨기기 · 🔔 알 알림).
 -- ★v7 빠른 버튼 2개 (가방 밖): "🐾 하위 펫 한 개 가방으로" (★v7.2 이름, Remotes.StashEgg) · "✨ 자동 배치" (Remotes.AutoPlace).
 --   폰은 작은 네모 (이모지 + 두 줄 글씨) 를 코인 줄 오른쪽 위 구석에 (알림 줄은 코인 줄 때문에 원래 거기까지 못 올라가요),
 --   PC·태블릿은 이름 버튼을 켜고 끄는 버튼 아래에. 알림 줄 띠·팁 줄·점프·조이스틱은 피하고, 꾸미기 동안은 숨어요.
+local MarketplaceService = game:GetService("MarketplaceService")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 
@@ -47,7 +50,7 @@ local coinValue = Instance.new("NumberValue")
 local targetCoins = -1
 local lastPets = -1
 
--- 켜고 끄는 버튼 (Config.Settings 키)
+-- 켜고 끄는 버튼 (Config.Settings 키 = ★v7.2 Config.Passes 키)
 type ToggleDef = {
 	Key: string,
 	Emoji: string,
@@ -55,13 +58,8 @@ type ToggleDef = {
 	Color: Color3,
 	OnText: string,
 	OffText: string,
-	MinRebirth: number?, -- 이 환생 수 전에는 잠겨 있어요
-	LockText: string?, -- 잠겼을 때 누르면 나오는 말
+	What: string, -- ★v7.2 패스가 없을 때 누르면 나오는 한 줄 설명
 }
--- ★v7.2 잠금 숫자는 Config 에서 (🧲 자석 1 · ⚡ 슈퍼 자석 2 · 🏦 자동 수금 3)
-local function lockText(key: string, emoji: string, name: string, what: string): string
-	return "🔒 환생을 " .. Config.SettingMinRebirth(key) .. "번 하면 " .. emoji .. " " .. UiKit.Josa(name, "이", "가") .. " 열려요! " .. what
-end
 local TOGGLES: { ToggleDef } = {
 	{
 		Key = "AutoCollect",
@@ -70,8 +68,7 @@ local TOGGLES: { ToggleDef } = {
 		Color = C.Orange,
 		OnText = "🏦 자동 수금 켜짐! 집 금고 코인이 저절로 들어와요",
 		OffText = "🏦 자동 수금 꺼짐! 집의 금색 판을 밟으면 받아요",
-		MinRebirth = Config.SettingMinRebirth("AutoCollect"),
-		LockText = lockText("AutoCollect", "🏦", "자동 수금", "집 금고 코인이 저절로 들어와요"),
+		What = "집 금고 코인이 저절로 들어와요",
 	},
 	{
 		Key = "Magnet",
@@ -80,8 +77,7 @@ local TOGGLES: { ToggleDef } = {
 		Color = C.Sky,
 		OnText = "🧲 자석 켜짐! 주변 코인이 저절로 끌려와요",
 		OffText = "🧲 자석 꺼짐!",
-		MinRebirth = Config.SettingMinRebirth("Magnet"),
-		LockText = lockText("Magnet", "🧲", "자석", "주변 코인을 저절로 끌어와요"),
+		What = "주변 코인을 저절로 끌어와요",
 	},
 	{
 		Key = "SuperMagnet",
@@ -90,10 +86,15 @@ local TOGGLES: { ToggleDef } = {
 		Color = C.Pink,
 		OnText = "⚡ 슈퍼 자석 켜짐! 이 지역 코인이 몽땅 날아와요",
 		OffText = "⚡ 슈퍼 자석 꺼짐!",
-		MinRebirth = Config.SettingMinRebirth("SuperMagnet"),
-		LockText = lockText("SuperMagnet", "⚡", "슈퍼 자석", "지금 있는 지역 코인을 몽땅 모아 줘요"),
+		What = "지금 있는 지역 코인을 몽땅 모아 줘요",
 	},
 }
+
+-- ★v7.2 게임 패스 가격 글자 "R$50" (Config.Passes, 보여 주기만)
+local function priceText(key: string): string
+	local pass = (Config.Passes :: any)[key]
+	return "R$" .. tostring(if pass then pass.Price else "?")
+end
 local OFF_FACE = Color3.fromRGB(190, 190, 206)
 local OFF_TRACK = Color3.fromRGB(125, 125, 145)
 
@@ -110,13 +111,12 @@ type Toggle = {
 	KnobOn: number,
 	Shown: boolean?,
 	LastTap: number,
-	Lock: TextLabel, -- ★v6 잠겼을 때 스위치 자리에 "🔒 환생 1회" (네모 버튼은 "환생 1회")
+	Lock: TextLabel, -- ★v7.2 패스가 없을 때 스위치 자리에 "🔒 R$50" (네모 버튼은 "R$50")
 	LockIcon: TextLabel, -- 네모 버튼 오른쪽 위 🔒
 	Locked: boolean,
 	Chip: boolean,
 }
 local toggleFrame: Frame? = nil
-local lockSeen = false -- 스냅샷을 한 번이라도 봤나 (잠금 풀림 말풍선은 그 뒤에만)
 local toggles: { Toggle } = {}
 local toggleByKey: { [string]: Toggle } = {}
 local topBarFrame: Frame? = nil
@@ -238,8 +238,8 @@ local function updatePending()
 		pending = tonumber(State.Snapshot.Pending) or 0
 	end
 	pending = math.floor(pending)
-	if State.GetSetting("AutoCollect") then
-		pending = 0 -- 자동 수금 중에는 금고 알약이 깜빡이지 않게 숨겨요
+	if State.GetSetting("AutoCollect") and State.HasPass("AutoCollect") then
+		pending = 0 -- 자동 수금 중에는 금고 알약이 깜빡이지 않게 숨겨요 (★v7.2 패스가 있을 때만 진짜 자동 수금)
 	end
 	if pending == lastPending then
 		return
@@ -276,16 +276,15 @@ local function refreshRebirth()
 end
 
 ----------------------------------------------------------------------
--- 켜고 끄는 버튼 (🙈 / 🏦 / 🧲)
+-- 켜고 끄는 버튼 (🏦 / 🧲 / ⚡)
 ----------------------------------------------------------------------
 local function strokeOf(label: TextLabel): UIStroke?
 	return label:FindFirstChildOfClass("UIStroke")
 end
 
--- ★v6 잠긴 버튼인가 (환생이 모자라요)
-local function lockedNow(def: ToggleDef, rebirths: number?): boolean
-	local need = def.MinRebirth
-	return need ~= nil and (rebirths or State.Rebirths()) < need
+-- ★v7.2 잠긴 버튼인가 (게임 패스가 아직 없어요. Id = 0 이면 공짜라 안 잠겨요)
+local function lockedNow(def: ToggleDef): boolean
+	return not State.HasPass(def.Key)
 end
 
 -- 켜짐/꺼짐 모양 (animate = 누른 직후면 통통 + 스위치가 미끄러져요). 잠겼으면 회색 + 🔒 (켜져 있어도)
@@ -330,10 +329,17 @@ local function onToggleTap(t: Toggle)
 	end
 	t.LastTap = now
 	if t.Locked then
-		-- 잠겨 있어요: 설명만 (서버로 안 보내요)
+		-- ★v7.2 패스가 없어요: 설명 + 사기 창 (설정은 서버로 안 보내요. 사면 서버가 Pass_<키> 를 켜요)
 		UiKit.PlaySound("Click")
-		UiKit.Shake(t.Button, 6, 6)
-		Toasts.Show(t.Def.LockText or "🔒 아직 잠겨 있어요!", "info")
+		local def = t.Def
+		Toasts.Show("🛒 " .. def.Emoji .. " " .. def.Caption .. " (" .. priceText(def.Key) .. "): " .. def.What, "info")
+		local ok = pcall(function()
+			MarketplaceService:PromptGamePassPurchase(Players.LocalPlayer, Config.PassId(def.Key))
+		end)
+		if not ok then
+			UiKit.Shake(t.Button, 6, 6)
+			Toasts.Show("지금은 살 수 없어요 😢 잠시 뒤에 다시 해 봐요", "warn")
+		end
 		return
 	end
 	local key = t.Def.Key
@@ -398,11 +404,10 @@ local function makeToggle(parent: Instance, def: ToggleDef, order: number): Togg
 	})
 	Make("UIAspectRatioConstraint", { AspectRatio = 1, DominantAxis = Enum.DominantAxis.Height, Parent = knob })
 	UiKit.Corner(knob, UDim.new(0.5, 0))
-	-- ★v6 잠금 글씨 (스위치 자리) + 네모 버튼용 작은 자물쇠
-	local need = def.MinRebirth or 0
+	-- ★v7.2 잠금 글씨 "🔒 R$50" (스위치 자리) + 네모 버튼용 작은 자물쇠
 	local lock = UiKit.Label({
 		Name = "Lock",
-		Text = "🔒 환생 " .. need .. "회",
+		Text = "🔒 " .. priceText(def.Key),
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Visible = false,
 		ZIndex = 3,
@@ -458,17 +463,16 @@ local function styleToggle(t: Toggle, w: number, h: number, chip: boolean)
 	t.Button.Size = UDim2.fromOffset(w, h)
 	t.Caption.Visible = chip
 	t.Chip = chip
-	local need = t.Def.MinRebirth or 0
 	if chip then
-		-- 스위치 자리 (이름 아래) 에 "🔒 환생 1회"
-		t.Lock.Text = "🔒 환생 " .. need .. "회"
+		-- 스위치 자리 (이름 아래) 에 "🔒 R$50"
+		t.Lock.Text = "🔒 " .. priceText(t.Def.Key)
 		t.Lock.TextXAlignment = Enum.TextXAlignment.Left
 		t.Lock.AnchorPoint = Vector2.new(0, 0)
 		t.Lock.Position = UDim2.fromOffset(math.floor(h * 0.98), math.floor(h * 0.52))
 		t.Lock.Size = UDim2.fromOffset(w - math.floor(h * 0.98) - 8, math.floor(h * 0.4))
 	else
-		-- 네모: 아래 줄에 "환생 1회", 자물쇠는 오른쪽 위
-		t.Lock.Text = "환생 " .. need .. "회"
+		-- 네모: 아래 줄에 "R$50", 자물쇠는 오른쪽 위
+		t.Lock.Text = priceText(t.Def.Key)
 		t.Lock.TextXAlignment = Enum.TextXAlignment.Center
 		t.Lock.AnchorPoint = Vector2.new(0.5, 0.5)
 		t.Lock.Position = UDim2.fromOffset(math.floor(w * 0.5), math.floor(h * 0.8))
@@ -609,24 +613,33 @@ local function makeQuick(parent: Instance, def: QuickDef): Quick
 	return q
 end
 
--- chip (PC·태블릿) = [이모지 | 나쁜 펫 빼기], 네모 (폰) = [이모지 / 펫 빼기]
+-- chip (PC·태블릿) = [이모지 | 하위 펫 한 개 / 가방으로], 네모 (폰) = [이모지 / 하위 펫 / 1개 가방].
+-- ★v7.2 글씨에 줄바꿈이 있으면 두 줄 자리 (네모는 이모지를 조금 작게 위로)
 local function styleQuick(q: Quick, w: number, h: number, chip: boolean)
 	q.Button.Size = UDim2.fromOffset(w, h)
 	local icon, cap = q.Icon, q.Caption
 	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	local text = if chip then q.Def.Caption else q.Def.Short
+	local twoLines = string.find(text, "\n", 1, true) ~= nil
+	cap.Text = text
 	if chip then
 		local left = math.floor(h * 0.98)
 		icon.Position = UDim2.fromOffset(math.floor(h * 0.5) + 2, math.floor(h * 0.5))
 		icon.Size = UDim2.fromOffset(math.floor(h * 0.72), math.floor(h * 0.72))
-		cap.Text = q.Def.Caption
 		cap.TextXAlignment = Enum.TextXAlignment.Left
 		cap.AnchorPoint = Vector2.new(0, 0.5)
 		cap.Position = UDim2.fromOffset(left, math.floor(h * 0.5))
-		cap.Size = UDim2.fromOffset(w - left - 8, math.floor(h * 0.5))
+		cap.Size = UDim2.fromOffset(w - left - 8, math.floor(h * (if twoLines then 0.84 else 0.5)))
+	elseif twoLines then
+		icon.Position = UDim2.fromOffset(math.floor(w * 0.5), math.floor(h * 0.25))
+		icon.Size = UDim2.fromOffset(math.floor(w * 0.5), math.floor(h * 0.38))
+		cap.TextXAlignment = Enum.TextXAlignment.Center
+		cap.AnchorPoint = Vector2.new(0.5, 0.5)
+		cap.Position = UDim2.fromOffset(math.floor(w * 0.5), math.floor(h * 0.71))
+		cap.Size = UDim2.fromOffset(math.floor(w * 0.96), math.floor(h * 0.52))
 	else
 		icon.Position = UDim2.fromOffset(math.floor(w * 0.5), math.floor(h * 0.36))
 		icon.Size = UDim2.fromOffset(math.floor(w * 0.62), math.floor(h * 0.5))
-		cap.Text = q.Def.Short
 		cap.TextXAlignment = Enum.TextXAlignment.Center
 		cap.AnchorPoint = Vector2.new(0.5, 0.5)
 		cap.Position = UDim2.fromOffset(math.floor(w * 0.5), math.floor(h * 0.8))
@@ -728,7 +741,7 @@ local function layoutQuick(gui: ScreenGui, avoid: { UiKit.Rect }, box: UiKit.Rec
 	end
 end
 
--- 버튼 4개 자리: 큰 버튼 칸 오른쪽 위에 세로로 (안 되면 왼쪽 위 가로 → 큰 버튼 칸 오른쪽 아래 → 왼쪽 위 2×2
+-- 버튼 4개 (켜고 끄는 버튼 3 + ★v7.2 ⚙️) 자리: 큰 버튼 칸 오른쪽 위에 세로로 (안 되면 왼쪽 위 가로 → 큰 버튼 칸 오른쪽 아래 → 왼쪽 위 2×2
 -- → 큰 버튼 칸 오른쪽 2×2 (위 / 아래 맞춤) → 오른쪽 위 세로 → 오른쪽 위 2×2). 아무것도 안 가리는 첫 자리,
 -- 없으면 가장 덜 가리는 자리. (오른쪽은 되도록 아래 알림 줄 자리로 비워 둬요)
 -- 위 코인 줄(+초당/금고 알약 줄), 큰 버튼 칸(+환생 알약), 폰 점프 버튼·조이스틱 자리는 피해요
@@ -739,7 +752,7 @@ local function layoutToggles(gui: ScreenGui, column: Frame, cell: number, gap: n
 	end
 	local size = gui.AbsoluteSize
 	local gw, gh = size.X, size.Y
-	local n = #toggles + (if alertButton then 1 else 0) -- ★v7 🔔 알 알림 버튼이 마지막 칸
+	local n = #toggles + (if optionsButton then 1 else 0) -- ★v7.2 ⚙️ 옵션 버튼이 마지막 칸
 	-- 큰 버튼이 크면 (PC·태블릿) 이름이 보이는 가로 버튼, 아니면 (폰) 작은 네모
 	local chip = cell >= 70 and gw >= 700
 	local bh = if chip then math.clamp(math.floor(cell * 0.56), 44, 54) else math.clamp(math.floor(cell * 0.62), 42, 58)
@@ -829,23 +842,17 @@ local function layoutToggles(gui: ScreenGui, column: Frame, cell: number, gap: n
 		tg.Button.Position = UDim2.fromOffset(col * (bw + tgap), row * (bh + tgap))
 		styleToggle(tg, bw, bh, chip)
 	end
-	-- ★v7 🔔 (마지막 칸) → 빠른 버튼 2개 → 열려 있으면 고르는 창
+	-- ★v7.2 ⚙️ (마지막 칸) → 빠른 버튼 2개
 	local bx, by = math.floor(spot.X), math.floor(spot.Y)
-	toggleRect = { X0 = bx, Y0 = by, X1 = bx + fw, Y1 = by + fh }
-	local a = alertButton
-	if a then
+	local o = optionsButton
+	if o then
 		local i = #toggles + 1
 		local col = (i - 1) % spot.Cols
 		local row = math.floor((i - 1) / spot.Cols)
-		local ax, ay = col * (bw + tgap), row * (bh + tgap)
-		a.Button.Position = UDim2.fromOffset(ax, ay)
-		styleAlert(a, bw, bh, chip)
-		alertRect = { X0 = bx + ax, Y0 = by + ay, X1 = bx + ax + bw, Y1 = by + ay + bh }
+		o.Button.Position = UDim2.fromOffset(col * (bw + tgap), row * (bh + tgap))
+		styleOptions(o, bw, bh, chip)
 	end
-	layoutQuick(gui, avoid, toggleRect :: UiKit.Rect, chip, bw, bh, tgap)
-	if pickerOpen then
-		layoutPicker(gui)
-	end
+	layoutQuick(gui, avoid, { X0 = bx, Y0 = by, X1 = bx + fw, Y1 = by + fh }, chip, bw, bh, tgap)
 end
 
 function Hud.Init(gui: ScreenGui, actions: Actions)
@@ -986,7 +993,7 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 	end
 	local count = #defs
 
-	-- 켜고 끄는 버튼 4개 (자리는 layout 이 정해요, 버튼 하나하나 Position 으로)
+	-- 켜고 끄는 버튼 3개 + ⚙️ (자리는 layout 이 정해요, 버튼 하나하나 Position 으로)
 	local toggleBox: Frame = Make("Frame", {
 		Name = "Toggles",
 		BackgroundTransparency = 1,
@@ -999,24 +1006,23 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 		toggleByKey[def.Key] = t
 		paintToggle(t, State.GetSetting(def.Key), false)
 	end
-	-- ★v7 🔔 알 알림 단계 (마지막 칸) + 고르는 창, 빠른 버튼 2개 (가방 밖)
-	buildPicker(gui)
-	local bell = makeAlertButton(toggleBox, function()
-		local a = alertButton
+	-- ★v7.2 ⚙️ 옵션 (마지막 칸, 🙈 부화 숨기기 · 🔔 알 알림은 OptionsWindow 안에), 빠른 버튼 2개 (가방 밖)
+	local gear = makeOptionsButton(toggleBox, function()
+		local o = optionsButton
 		local now = os.clock()
-		if not a or now - a.LastTap < 0.25 then
+		if not o or now - o.LastTap < 0.25 then
 			return
 		end
-		a.LastTap = now
-		if pickerOpen then
-			closePicker()
+		o.LastTap = now
+		local open = actions.ToggleOptions
+		if open then
+			open()
 		else
-			openPicker(gui)
+			Toasts.Show("⚙️ 옵션은 곧 열려요!", "info")
 		end
 	end)
-	bell.Button.LayoutOrder = #TOGGLES + 1
-	alertButton = bell
-	paintAlert(bell, alertLevelNow(), false)
+	gear.Button.LayoutOrder = #TOGGLES + 1
+	optionsButton = gear
 	local quickBox: Frame = Make("Frame", {
 		Name = "Quick",
 		BackgroundTransparency = 1,
@@ -1026,11 +1032,6 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 	for _, def in QUICK do
 		table.insert(quicks, makeQuick(quickBox, def))
 	end
-	UserInputService.InputBegan:Connect(function(input: InputObject)
-		if pickerOpen and input.KeyCode == Enum.KeyCode.Escape then
-			closePicker()
-		end
-	end)
 	State.OnSetting(function(key: string, value: any)
 		local t = toggleByKey[key]
 		if t and t.Shown ~= value then
@@ -1040,12 +1041,20 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 			lastPending = -1
 			updatePending()
 		end
-		local a = alertButton
-		if key == "AlertLevel" and a and type(value) == "number" then
-			paintAlert(a, value, a.Shown ~= value)
-			if pickerOpen then
-				paintPicker()
+	end)
+	-- ★v7.2 게임 패스가 생기면 (서버가 Pass_<키> 를 켜요) 바로 보통 버튼으로 + 통통 (산 말풍선은 서버가 보내요)
+	State.OnPass(function(key: string, has: boolean)
+		local t = toggleByKey[key]
+		if t and t.Locked ~= not has then
+			t.Locked = not has
+			paintToggle(t, State.GetSetting(key), false)
+			if has then
+				UiKit.Pop(t.Button, 0.35)
 			end
+		end
+		if key == "AutoCollect" then
+			lastPending = -1
+			updatePending()
 		end
 	end)
 
@@ -1186,13 +1195,10 @@ function Hud.SetSideVisible(visible: boolean)
 	if box then
 		box.Visible = visible -- 켜고 끄는 버튼도 같이
 	end
-	-- ★v7 빠른 버튼도 같이 숨고, 🔔 고르는 창은 닫아요
+	-- ★v7 빠른 버튼도 같이 숨어요 (⚙️ 옵션 창은 꾸미기를 시작할 때 init.client 가 다른 창처럼 닫아요)
 	local quick = quickFrame
 	if quick then
 		quick.Visible = visible
-	end
-	if not visible then
-		closePicker()
 	end
 	local column = sideColumn
 	if not column or column.Visible == visible then
@@ -1216,14 +1222,10 @@ function Hud.ToggleButton(key: string): TextButton?
 	return if t then t.Button else nil
 end
 
--- ★v7 검사용: 🔔 버튼, 고르는 창 (열려 있으면), 빠른 버튼 ("StashEgg" | "AutoPlace")
-function Hud.AlertButton(): TextButton?
-	local a = alertButton
-	return if a then a.Button else nil
-end
-
-function Hud.AlertPicker(): Frame?
-	return if pickerOpen then pickerPanel else nil
+-- ★v7.2 검사용: ⚙️ 옵션 버튼, 빠른 버튼 ("StashEgg" | "AutoPlace")
+function Hud.OptionsButton(): TextButton?
+	local o = optionsButton
+	return if o then o.Button else nil
 end
 
 function Hud.QuickButton(name: string): TextButton?
@@ -1249,20 +1251,6 @@ function Hud.Update(snap: State.Snapshot)
 	end
 	lastPets = pets
 	refreshRebirth()
-	-- ★v6 환생해서 잠금이 풀렸나 (⚡ 슈퍼 자석). 들어올 때 첫 스냅샷은 조용히, 노는 중에 딱 그 환생으로 풀리면 말풍선
-	local rebirths = tonumber(snap.Rebirths) or 0
-	for _, t in toggles do
-		local locked = lockedNow(t.Def, rebirths)
-		if locked ~= t.Locked then
-			t.Locked = locked
-			paintToggle(t, State.GetSetting(t.Def.Key), false)
-			if not locked and lockSeen and rebirths == t.Def.MinRebirth then
-				UiKit.Pop(t.Button, 0.35)
-				Toasts.Show(t.Def.Emoji .. " " .. UiKit.Josa(t.Def.Caption, "이", "가") .. " 열렸어요! 눌러서 켜 보세요", "good")
-			end
-		end
-	end
-	lockSeen = true
 end
 
 return Hud

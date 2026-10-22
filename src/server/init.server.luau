@@ -7,6 +7,7 @@ local Remotes = require(ReplicatedStorage.Shared.Remotes)
 
 -- 핵심 모듈 (없으면 게임이 안 돼요)
 local DataService = require(script.DataService)
+local PassService = require(script.PassService) -- ★v7.2 게임 패스 (🧲 / ⚡ / 🏦)
 local PlotService = require(script.PlotService)
 local FollowService = require(script.FollowService)
 
@@ -44,9 +45,10 @@ local function start(name: string, fn: (() -> ())?)
 	end
 end
 
--- 순서: 월드 → 데이터 → 집 → 따라오는 펫 → 컨베이어 → 들판 코인 → 지역 → 상점 → 순위표
+-- 순서: 월드 → 데이터 → 게임 패스 → 집 → 따라오는 펫 → 컨베이어 → 들판 코인 → 지역 → 상점 → 순위표
 start("WorldBuilder.Build", WorldBuilder and WorldBuilder.Build)
 start("DataService", DataService.Start)
+start("PassService", PassService.Start)
 start("PlotService", PlotService.Start)
 start("FollowService", FollowService.Start)
 start("ConveyorService", ConveyorService and ConveyorService.Start)

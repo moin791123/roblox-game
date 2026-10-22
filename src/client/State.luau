@@ -224,6 +224,27 @@ local function settleSettings()
 	end
 end
 
+-- ★v7.2 게임 패스 (Config.Passes: Magnet / SuperMagnet / AutoCollect): 쓸 수 있나.
+-- Id = 0 (아직 안 만듦) 이면 공짜, 아니면 서버 PassService 가 켜는 플레이어 속성 Pass_<키> == true
+function State.HasPass(key: string): boolean
+	if Config.PassId(key) <= 0 then
+		return true
+	end
+	return player ~= nil and player:GetAttribute(Config.PassAttribute(key)) == true
+end
+
+-- ★v7.2 패스 속성이 바뀌면 (key, 쓸 수 있나)
+function State.OnPass(fn: (string, boolean) -> ())
+	if not player then
+		return
+	end
+	for _, key in Config.PassOrder do
+		player:GetAttributeChangedSignal(Config.PassAttribute(key)):Connect(function()
+			fn(key, State.HasPass(key))
+		end)
+	end
+end
+
 -- 버튼을 누르면 바로 바꿔 보여 줘요 (서버로 보내는 건 부르는 쪽: Remotes.SetSetting)
 function State.SetSettingLocal(key: string, value: any)
 	if Config.SettingValue(key, value) == nil then

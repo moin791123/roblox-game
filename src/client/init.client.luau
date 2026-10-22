@@ -46,6 +46,7 @@ local LeaderboardWindow = optionalRequire("LeaderboardWindow") -- Init(gui), Ope
 local DecorateMode = optionalRequire("DecorateMode") -- Init(gui?), Enter(floor?, furnId?), Exit, IsActive, OnSync, OnChanged(fn), SetShopOpener(fn)
 local ZoneClient = optionalRequire("ZoneClient") -- Init()
 local RideFly = optionalRequire("RideFly") -- Init(gui): 펫 타고 날기 ✈
+local OptionsWindow = optionalRequire("OptionsWindow") -- ★v7.2 Init(gui), Open, Close, IsOpen: ⚙️ 게임 옵션 (🙈 부화 숨기기 · 🔔 알 알림)
 
 -- 모듈 함수 안전하게 부르기 (없으면 nil, 오류는 경고만)
 local function safeCall(mod: any, fnName: string, ...: any): any
@@ -124,7 +125,8 @@ local Rebirth = windowOf(RebirthWindow, "🔄 환생 창을 준비 중이에요!
 local Shop = windowOf(ShopWindow, "🛍 상점은 곧 열려요!")
 local Map = windowOf(MapWindow, "🗺 지도는 곧 열려요!")
 local Board = windowOf(LeaderboardWindow, "🏆 순위표는 곧 열려요!")
-local windows: { WindowApi } = { Bag, Index, House, Rebirth, Shop, Map, Board }
+local Options = windowOf(OptionsWindow, "⚙️ 옵션은 곧 열려요!")
+local windows: { WindowApi } = { Bag, Index, House, Rebirth, Shop, Map, Board, Options }
 
 local function decorating(): boolean
 	return safeCall(DecorateMode, "IsActive") == true
@@ -184,6 +186,9 @@ Hud.Init(gui, {
 	ToggleLeaderboard = function()
 		toggle(Board)
 	end,
+	ToggleOptions = function()
+		toggle(Options) -- ★v7.2 ⚙️ 옵션 버튼
+	end,
 })
 BagWindow.Init(gui, { OpenShop = openShop })
 IndexWindow.Init(gui)
@@ -208,6 +213,7 @@ end
 safeCall(ShopWindow, "Init", gui)
 safeCall(MapWindow, "Init", gui)
 safeCall(LeaderboardWindow, "Init", gui)
+safeCall(OptionsWindow, "Init", gui)
 safeCall(DecorateMode, "Init", gui)
 Tips.Init(gui)
 HatchFx.Init(playerGui)

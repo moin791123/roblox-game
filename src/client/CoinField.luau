@@ -3,9 +3,10 @@
 -- 파트는 workspace.ClientCoins 아래에 (나한테만 보임). 먹기는 PickupCoin 으로 서버에 요청해요.
 -- ★v5 자석 버튼 (State.OnSetting → 누르자마자, 스냅샷 Settings.Magnet, 또는 CoinField.SetMagnet): 기본 자석 밖 BigMagnetRadius 안 코인을
 -- 가까운 것부터 초당 BigMagnetRate 개씩 빨아들여요 (서버도 같은 규칙으로 검사해요).
--- ★v6 ⚡ 슈퍼 자석 (State.OnSetting "SuperMagnet", 환생 SuperMagnetMinRebirth 번부터): 지금 서 있는 지역 코인만
+-- ★v6 ⚡ 슈퍼 자석 (State.OnSetting "SuperMagnet"): 지금 서 있는 지역 코인만
 -- SuperMagnetRadius 안에서 초당 SuperMagnetRate 개씩, 꼬리 달고 포물선으로 날아와요. 둘 다 켜면 슈퍼가 이겨요
 -- (길 위처럼 지역 밖이면 🧲 자석만). 멀리서 날아오는 코인은 MAX_FAR_FLYING 개까지만 한꺼번에 그려요.
+-- ★v7.2 🧲 / ⚡ 는 게임 패스가 있어야 끌어와요 (State.HasPass, Config.Passes Id = 0 이면 공짜).
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -404,9 +405,13 @@ local function startFly(entry: Entry, flyTime: number?, super: boolean?)
 	end
 end
 
--- ★v6 슈퍼 자석이 정말 켜져 있나 (버튼 + 환생 조건, 서버도 똑같이 봐요)
+-- ★v6 슈퍼 자석 / 🧲 자석이 정말 켜져 있나 (버튼 + ★v7.2 게임 패스 State.HasPass, 서버도 똑같이 봐요)
 local function superActive(): boolean
-	return superOn and State.Rebirths() >= (FC.SuperMagnetMinRebirth or 1)
+	return superOn and State.HasPass("SuperMagnet")
+end
+
+local function magnetActive(): boolean
+	return magnetOn and State.HasPass("Magnet")
 end
 
 local function magnetCheck()
@@ -422,7 +427,7 @@ local function magnetCheck()
 	-- 어떤 자석? 지역 안 + 슈퍼 → 슈퍼 (내 지역 코인만), 아니면 🧲 자석
 	local here = if hrp then Config.ZoneAt(hrp.Position) else nil
 	local super = here ~= nil and superActive()
-	local pull = super or magnetOn
+	local pull = super or magnetActive()
 	local far = if super then FC.SuperMagnetRadius else FC.BigMagnetRadius
 	local far2 = far * far
 	local maxH = if super then SUPER_MAX_HEIGHT else FAR_MAX_HEIGHT
@@ -559,13 +564,18 @@ function CoinField.IsMagnetOn(): boolean
 	return magnetOn
 end
 
--- ★v6 슈퍼 자석 버튼 (켜도 환생 SuperMagnetMinRebirth 번 전에는 안 끌어와요)
+-- ★v7.2 🧲 자석이 정말 끌어오는 중인가 (버튼 + 게임 패스)
+function CoinField.IsMagnetActive(): boolean
+	return magnetActive()
+end
+
+-- ★v6 슈퍼 자석 버튼 (★v7.2 켜도 게임 패스가 없으면 안 끌어와요)
 function CoinField.SetSuperMagnet(on: boolean)
 	superOn = on == true
 	superHoldUntil = os.clock() + MAGNET_HOLD
 end
 
--- 버튼이 켜져 있나 / 정말 끌어오는 중인가 (환생 조건까지)
+-- 버튼이 켜져 있나 / 정말 끌어오는 중인가 (★v7.2 게임 패스까지)
 function CoinField.IsSuperMagnetOn(): boolean
 	return superOn
 end

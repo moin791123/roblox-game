@@ -1,4 +1,4 @@
-# 펫 월드 (v7.1): design contract
+# 펫 월드 (v7.2): design contract
 
 Kid-friendly **pet-collecting simulator**. Rojo project, Luau. All player-facing text is **Korean**, cute and short.
 Code comments: short Korean comments (match existing files). Tabs, `task.*` (never `wait`/`spawn`/`delay`).
@@ -59,6 +59,12 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 >    `Remotes.SellBulk(zoneMax, rarityMax)` sells BAG pets only — never Special (시크릿/천상/이터널), pets wearing an Acc, or tier ≥ 4 골드;
 >    one coin add / toast / CoinFx / Sync; 1 s gap. Auto sell: a freshly hatched pet matching the filter is sold at once (no HatchFx, one
 >    small toast "🤖 자동 판매: <펫>[ 외 n마리] +💰X", pedestal freed), except NEW pets (incl. a first-time tier) and tier ≥ 2; fusion never.
+> 9. ★v7.2 **⚙️ 게임 옵션** (src/client/OptionsWindow.luau): 🙈 부화 숨기기 switch + 🔔 알 알림 5 choices moved off the Hud; ⚙️ is the
+>    last toggle cell (🏦 🧲 ⚡ ⚙️). **Game passes** instead of any rebirth gate (v6 SuperMagnetMinRebirth removed): `Config.Passes`
+>    Magnet 50 / SuperMagnet 100 / AutoCollect 150 Robux (Price is display only). `Id = 0` → free for everyone; `Id > 0` → only owners
+>    (src/server/PassService.luau: UserOwnsGamePassAsync on join with retries, PromptGamePassPurchaseFinished, attributes `Pass_<Key>`,
+>    `PassService.Has` used by CoinFieldService and PlotService AutoCollect); locked Hud toggles show "🔒 R$50" and prompt the purchase.
+>    Quick button renamed "🐾 하위 펫 한 개 가방으로" (phone "하위 펫 / 1개 가방").
 > 7. **Hatch card shows the real income** (× Size) and, for rare pets, "📏 ×n": `Remotes.HatchFx` gains a 6th arg `size` (hatch + fuse).
 >
 > **v6 changes (this round)** — "조금 진행하니까 루즈해지네": a reason to rush to every map, plus a stronger magnet. ★v6 marks v6 below.
