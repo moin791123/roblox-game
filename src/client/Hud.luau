@@ -9,7 +9,7 @@
 -- ★v7 🔔 알 알림 버튼 (켜고 끄는 버튼 줄 마지막 칸, 지금 단계 짧은 이름 "모두"/"최종만"…): 누르면 작은 고르는 창
 --   (Config.AlertLevels 5줄, 지금 단계 ✔, 누르면 Remotes.SetSetting("AlertLevel", n) + 말풍선, 밖을 누르거나 ✖ / Esc 면 닫혀요).
 --   5칸이 안 들어가면 3×2 로 (왼쪽 위 / 큰 버튼 칸 오른쪽).
--- ★v7 빠른 버튼 2개 (가방 밖): "🥚 나쁜 알 빼기" (Remotes.StashEgg) · "✨ 자동 배치" (Remotes.AutoPlace).
+-- ★v7 빠른 버튼 2개 (가방 밖): "🐾 나쁜 펫 빼기" (Remotes.StashEgg) · "✨ 자동 배치" (Remotes.AutoPlace).
 --   폰은 작은 네모 (이모지 + 두 낱말) 를 코인 줄 오른쪽 위 구석에 (알림 줄은 코인 줄 때문에 원래 거기까지 못 올라가요),
 --   PC·태블릿은 이름 버튼을 켜고 끄는 버튼 아래에. 알림 줄 띠·팁 줄·점프·조이스틱은 피하고, 꾸미기 동안은 숨어요.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -144,7 +144,7 @@ local ALERT_FACE = C.Lemon
 -- ★v7 가방 밖 빠른 버튼 2개
 type QuickDef = { Name: string, Emoji: string, Caption: string, Short: string, Color: Color3 }
 local QUICK: { QuickDef } = {
-	{ Name = "StashEgg", Emoji = "🥚", Caption = "나쁜 알 빼기", Short = "알 빼기", Color = C.Peach },
+	{ Name = "StashEgg", Emoji = "🐾", Caption = "나쁜 펫 빼기", Short = "펫 빼기", Color = C.Peach },
 	{ Name = "AutoPlace", Emoji = "✨", Caption = "자동 배치", Short = "자동 배치", Color = C.Mint },
 }
 type Quick = { Def: QuickDef, Button: TextButton, Icon: TextLabel, Caption: TextLabel, LastTap: number }
@@ -818,7 +818,7 @@ local function buildPicker(gui: ScreenGui)
 end
 
 ----------------------------------------------------------------------
--- ★v7 가방 밖 빠른 버튼 (🥚 나쁜 알 빼기 / ✨ 자동 배치)
+-- ★v7 가방 밖 빠른 버튼 (🐾 나쁜 펫 빼기 / ✨ 자동 배치)
 ----------------------------------------------------------------------
 local function onQuickTap(q: Quick)
 	local now = os.clock()
@@ -857,7 +857,7 @@ local function makeQuick(parent: Instance, def: QuickDef): Quick
 	return q
 end
 
--- chip (PC·태블릿) = [이모지 | 나쁜 알 빼기], 네모 (폰) = [이모지 / 알 빼기]
+-- chip (PC·태블릿) = [이모지 | 나쁜 펫 빼기], 네모 (폰) = [이모지 / 펫 빼기]
 local function styleQuick(q: Quick, w: number, h: number, chip: boolean)
 	q.Button.Size = UDim2.fromOffset(w, h)
 	local icon, cap = q.Icon, q.Caption

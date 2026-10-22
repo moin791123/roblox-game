@@ -1,5 +1,5 @@
 -- 집(플롯): 외형(바닥/벽/받침대/층/계단/엘리베이터/간판/수금 패드)은 HouseBuilder 가 짓고, 여기서는 배정·수입/부화 틱·수금·
--- 구매(받침대/층/테마)·환생·펫 행동(PetAction)·자동 배치(AutoPlace)·집 비우기(ClearBase)·★v7 나쁜 알 빼기(StashEgg)를 처리해요.
+-- 구매(받침대/층/테마)·환생·펫 행동(PetAction)·자동 배치(AutoPlace)·집 비우기(ClearBase)·★v7 나쁜 펫 빼기(StashEgg)를 처리해요.
 -- 🏦 자동 수금 버튼(설정 "AutoCollect")이 켜져 있으면 어디에 있든 몇 초마다 집 금고 코인을 조용히 받아요.
 -- (설계: docs/DESIGN.md "PlotService", §7)
 local Players = game:GetService("Players")
@@ -1131,10 +1131,10 @@ local function tryClearBase(player: Player)
 	DataService.Sync(player)
 end
 
--- ★v7 "🥚 나쁜 알 빼기" (Remotes.StashEgg): 새 알을 살 자리 만들기. 빈 받침대가 있으면 말만 하고,
--- 없으면 받침대 위 가장 나쁜 알 하나를 가방으로 (부화 시간은 ToBag 처럼 멈춰요: HatchLeft).
+-- ★v7.1 "🐾 나쁜 펫 빼기" (Remotes.StashEgg): 새 알을 살 자리 만들기. 빈 받침대가 있으면 말만 하고,
+-- 없으면 받침대 위 가장 약한 펫 (Config.ItemIncome 작은 펫, CompareItems 맨 뒤) 하나를 가방으로. 알은 그대로 부화해요.
+-- 받침대에 펫이 하나도 없고 알만 있으면 가장 나쁜 알을 대신 빼요 (부화 시간은 ToBag 처럼 멈춰요: HatchLeft).
 -- 나쁜 알 순서: 보통 알 먼저 (희귀 알은 마지막) → 희귀도 낮은 알 → 싼 알 → 부화까지 오래 남은 알.
--- 받침대에 알이 없으면 가장 약한 펫 (Config.ItemIncome 작은 펫, CompareItems 맨 뒤) 을 빼요
 local function eggWorse(a: DataService.Item, b: DataService.Item): boolean
 	local sa, sb = Config.IsSpecialEgg(a.Id), Config.IsSpecialEgg(b.Id)
 	if sa ~= sb then
@@ -1169,6 +1169,21 @@ local function tryStashEgg(player: Player)
 		notify(player, "가방이 가득 찼어요! 🎒 가방을 조금 비워 주세요", "warn")
 		return
 	end
+	-- 1) 받침대 위 가장 약한 펫
+	local pets = DataService.GetItemsSorted(player, function(_, item)
+		return item.Kind == "Pet" and item.Loc == "Slot"
+	end)
+	local entry = pets[#pets]
+	if entry then
+		local name = itemName(entry.Item)
+		PlotService.RemoveItemVisual(player, entry.Uid)
+		entry.Item.Loc = "Bag"
+		entry.Item.Slot = nil
+		notify(player, "📦 가장 약한 " .. josa(name, "을", "를") .. " 가방에 넣었어요! 이제 새 알을 살 수 있어요", "good")
+		DataService.Sync(player)
+		return
+	end
+	-- 2) 펫이 없으면 가장 나쁜 알
 	local worstUid: string? = nil
 	local worst: DataService.Item? = nil
 	for uid, item in data.Items do
@@ -1185,24 +1200,11 @@ local function tryStashEgg(player: Player)
 		worst.HatchAt = nil
 		worst.Loc = "Bag"
 		worst.Slot = nil
-		notify(player, "📦 " .. josa(name, "을", "를") .. " 가방에 넣었어요! 이제 새 알을 살 수 있어요", "good")
+		notify(player, "📦 받침대에 펫이 없어서 " .. josa(name, "을", "를") .. " 가방에 넣었어요! 이제 새 알을 살 수 있어요", "good")
 		DataService.Sync(player)
 		return
 	end
-	local pets = DataService.GetItemsSorted(player, function(_, item)
-		return item.Kind == "Pet" and item.Loc == "Slot"
-	end)
-	local entry = pets[#pets]
-	if not entry then
-		notify(player, "집 받침대에 뺄 알이 없어요 🥚", "info")
-		return
-	end
-	local name = itemName(entry.Item)
-	PlotService.RemoveItemVisual(player, entry.Uid)
-	entry.Item.Loc = "Bag"
-	entry.Item.Slot = nil
-	notify(player, "📦 알이 없어서 가장 약한 " .. josa(name, "을", "를") .. " 가방에 넣었어요! 이제 알을 살 수 있어요", "good")
-	DataService.Sync(player)
+	notify(player, "집 받침대에 뺄 펫이 없어요 🐾", "info")
 end
 
 ----------------------------------------------------------------------

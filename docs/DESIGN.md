@@ -48,6 +48,9 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 > 6. **Different alert sounds** for 시크릿 / 천상 / 이터널 (`UiKit.PlayRareSound`): Config.Sounds RareHidden 9116395089 (magic chime),
 >    RareCelestial 1848271884 (APM harp waltz tag), RareEternal 1842335078 (APM cartoon fanfare) — Roblox's free libraries, public domain.
 >    `UiKit.PreloadRareSounds` (init.client) preloads them; a tier plays its asset only after a successful preload, else the v6 tune.
+> 4b. ★v7.1 the parent clarified item 4 ("펫중에 젤나쁜펫을 빼고 알먹으려고"): the button is **"🐾 나쁜 펫 빼기"** (phone "펫 빼기").
+>    Full pedestals → the WEAKEST pedestal pet (lowest income) goes to the bag; eggs stay and keep hatching. Only with no pet on any pedestal
+>    does the worst egg go (old egg order). BuyEgg hint "🐾 나쁜 펫 빼기를 눌러 보세요". Remote name stays `StashEgg`.
 > 7. **Hatch card shows the real income** (× Size) and, for rare pets, "📏 ×n": `Remotes.HatchFx` gains a 6th arg `size` (hatch + fuse).
 >
 > **v6 changes (this round)** — "조금 진행하니까 루즈해지네": a reason to rush to every map, plus a stronger magnet. ★v6 marks v6 below.
