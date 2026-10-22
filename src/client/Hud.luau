@@ -883,10 +883,9 @@ local function styleQuick(q: Quick, w: number, h: number, chip: boolean)
 end
 
 -- 빠른 버튼 2개 자리. 폰 (네모): 코인 줄 오른쪽 위 구석 (알림 줄은 코인 줄에 막혀 원래 거기까지 못 올라가요.
--- 그 아래 오른쪽 끝에 부화 칸 HatchFx 가 들어갈 만큼 남을 때만) → 켜고 끄는 버튼 오른쪽 세로 (그 버튼 칸 높이만큼, 캐릭터 비켜서)
--- → 그 아래 → 코인 줄 아래 가운데. PC·태블릿 (이름 버튼): 켜고 끄는 버튼 아래 세로 → 오른쪽 위 → 코인 줄 아래.
--- 켜고 끄는 버튼 자리에서 피한 것 + 그 버튼 줄 + 오른쪽 알림 줄 띠 (Toasts 와 같은 너비) + 아래 팁 줄 자리를 피해요.
--- 다 안 되면 (아주 작은 폰) 구석은 부화 칸 자리를 따지지 않고 다시 봐요
+-- 아주 낮은 폰 화면에선 부화 칸이 구석 대신 조금 왼쪽에 떠요) → 켜고 끄는 버튼 아래 → 그 오른쪽 → 코인 줄 아래 가운데.
+-- (켜고 끄는 버튼 옆·코인 줄 아래는 캐릭터를 가려서 나중에). PC·태블릿 (이름 버튼): 켜고 끄는 버튼 아래 세로 → 오른쪽 위 → 코인 줄 아래.
+-- 켜고 끄는 버튼 자리에서 피한 것 + 그 버튼 줄 + 오른쪽 알림 줄 띠 (Toasts 와 같은 너비) + 아래 팁 줄 자리를 피해요
 local function layoutQuick(gui: ScreenGui, avoid: { UiKit.Rect }, box: UiKit.Rect, chip: boolean, bw: number, bh: number, tgap: number)
 	local frame = quickFrame
 	local n = #quicks
@@ -915,54 +914,36 @@ local function layoutQuick(gui: ScreenGui, avoid: { UiKit.Rect }, box: UiKit.Rec
 			stripTop = tr.Y1
 		end
 	end
+	table.insert(list, { X0 = stripX0, Y0 = stripTop, X1 = gw, Y1 = gh })
 	local tipW = math.clamp(gw * 0.46, 260, 580)
 	table.insert(list, { X0 = (gw - tipW) / 2 - 4, Y0 = gh - 64, X1 = (gw + tipW) / 2 + 4, Y1 = gh })
-	local loose = table.clone(list)
-	table.insert(loose, { X0 = stripX0, Y0 = stripTop, X1 = gw, Y1 = gh })
 
-	-- 크기 k (네모 한 변, 이름 버튼이면 무시) 로 cols 열
-	local function shape(cols: number, k: number?): (number, number)
-		local cw = if chip then w else (k or w)
-		local ch = if chip then h else (k or h)
+	local function shape(cols: number): (number, number)
 		local rows = math.ceil(n / cols)
-		return cols * cw + (cols - 1) * gap, rows * ch + (rows - 1) * gap
+		return cols * w + (cols - 1) * gap, rows * h + (rows - 1) * gap
 	end
-	local rowW, rowH = shape(n)
-	-- 구석 아래 오른쪽 끝에 부화 칸(가장 작을 때 약 HATCH_W × HATCH_H)이 들어가나요? 안 되면 띠를 맨 위부터 막아요
-	local HATCH_W, HATCH_H = 180, 160
-	local floorY = gh
-	for _, r in avoid do
-		if r.X1 > gw - m - HATCH_W and r.Y0 >= topY + rowH then
-			floorY = math.min(floorY, r.Y0)
-		end
-	end
-	local hatchFits = floorY - (topY + rowH) - 8 >= HATCH_H
-	table.insert(list, { X0 = stripX0, Y0 = if hatchFits then stripTop else 0, X1 = gw, Y1 = gh })
+	local rowW = shape(n)
 	local subY = topY + 60
 	local sub = subRowFrame
 	if sub then
 		subY = sub.AbsolutePosition.Y + sub.AbsoluteSize.Y
 	end
-	type Spot = { X: number, Y: number, Cols: number, K: number? }
+	type Spot = { X: number, Y: number, Cols: number }
 	local below: Spot = { X = box.X0, Y = box.Y1 + gap + 3, Cols = if chip then 1 else n }
 	local corner: Spot = { X = gw - m - rowW, Y = topY, Cols = n }
 	local under: Spot = { X = math.floor((gw - rowW) / 2), Y = subY + 8, Cols = n }
 	local beside: Spot = { X = box.X1 + gap + 3, Y = box.Y0, Cols = 1 }
-	-- 폰: 켜고 끄는 버튼 칸 높이 안에 세로로 (조금 작게, 터치 44 이상)
-	local sideK = math.clamp(math.floor((box.Y1 - box.Y0 - (n - 1) * gap) / n), 44, w)
-	local besideFit: Spot = { X = box.X1 + gap + 3, Y = box.Y0, Cols = 1, K = sideK }
 	local belowCol: Spot = { X = box.X1 - w, Y = box.Y1 + gap + 3, Cols = 1 }
 	local leftCol: Spot = { X = box.X0 - gap - 3 - w, Y = box.Y0, Cols = 1 }
 	local spots: { Spot } = if chip
 		then { below, corner, under, beside, belowCol, leftCol }
-		else { corner, besideFit, below, under, beside, belowCol, leftCol }
-	-- 아무것도 안 가리는 첫 자리 → 코인 줄 옆 구석까지 쓰고 아무것도 안 가리는 첫 자리
-	-- → (세로 화면처럼 자리가 모자라면) HUD 만 안 가리는 첫 자리 → 가장 덜 가리는 자리
+		else { corner, below, beside, under, belowCol, leftCol }
+	-- 아무것도 안 가리는 첫 자리 → (세로 화면처럼 자리가 모자라면) HUD 만 안 가리는 첫 자리 → 가장 덜 가리는 자리
 	local function pick(against: { UiKit.Rect }): (Spot, number)
 		local best: Spot = spots[1]
 		local bestOv = math.huge
 		for _, spot in spots do
-			local sw, sh = shape(spot.Cols, spot.K)
+			local sw, sh = shape(spot.Cols)
 			local r: UiKit.Rect = { X0 = spot.X, Y0 = spot.Y, X1 = spot.X + sw, Y1 = spot.Y + sh }
 			local ov = UiKit.OverlapArea(r, against)
 			if r.X0 < 0 or r.Y0 < 0 or r.X1 > gw or r.Y1 > gh then
@@ -979,26 +960,19 @@ local function layoutQuick(gui: ScreenGui, avoid: { UiKit.Rect }, box: UiKit.Rec
 	end
 	local best, ov = pick(list)
 	if ov > 0 then
-		local looseBest, looseOv = pick(loose)
-		if looseOv == 0 then
-			best = looseBest
-		else
-			local hudBest, hudOv = pick(hud)
-			if hudOv == 0 then
-				best = hudBest
-			end
+		local hudBest, hudOv = pick(hud)
+		if hudOv == 0 then
+			best = hudBest
 		end
 	end
-	local fw, fh = shape(best.Cols, best.K)
-	local qw = if chip then w else (best.K or w)
-	local qh = if chip then h else qw
+	local fw, fh = shape(best.Cols)
 	frame.Position = UDim2.fromOffset(math.floor(best.X), math.floor(best.Y))
 	frame.Size = UDim2.fromOffset(fw, fh)
 	for i, q in quicks do
 		local col = (i - 1) % best.Cols
 		local row = math.floor((i - 1) / best.Cols)
-		q.Button.Position = UDim2.fromOffset(col * (qw + gap), row * (qh + gap))
-		styleQuick(q, qw, qh, chip)
+		q.Button.Position = UDim2.fromOffset(col * (w + gap), row * (h + gap))
+		styleQuick(q, w, h, chip)
 	end
 end
 

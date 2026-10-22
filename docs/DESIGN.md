@@ -41,6 +41,10 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 >    on a pedestal (normal before rare, lower rarity, then lower price, then most hatch time left) goes to the bag (hatch paused like
 >    ToBag); with no egg on pedestals the weakest pedestal pet goes instead. Bag full → warn. BuyEgg's "빈 받침대가 없어요" toast hints at it.
 > 5. **"✨ 자동 배치" button outside the bag** (existing `Remotes.AutoPlace`). Both quick buttons live on the Hud, hidden while decorating.
+>    Built (ALERT): `Config.SettingValue` validates settings (AlertLevel integer, others boolean) on load, remote and State; short labels
+>    모두 / 최종만 / 희귀만 / 천상+ / 이터널; a filtered alert returns before the Gap clock. 🔔 "알 알림" is the last toggle cell (picker: 5 rows,
+>    ✖ / outside / Esc / bell closes). Quick buttons: PC/tablet continue the toggle column (≥ 44 px); phones use a 3×2 toggle grid and
+>    48 px squares in the top-right corner beside the coin bar (on 800×302 the hatch panel shifts ~100 px left during a hatch).
 > 6. **Different alert sounds** for 시크릿 / 천상 / 이터널 (`UiKit.PlayRareSound`): different built-in sound files + melodies per tier.
 >
 > **v6 changes (this round)** — "조금 진행하니까 루즈해지네": a reason to rush to every map, plus a stronger magnet. ★v6 marks v6 below.
