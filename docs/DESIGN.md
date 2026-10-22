@@ -1,4 +1,4 @@
-# 펫 월드 (v6): design contract
+# 펫 월드 (v7): design contract
 
 Kid-friendly **pet-collecting simulator**. Rojo project, Luau. All player-facing text is **Korean**, cute and short.
 Code comments: short Korean comments (match existing files). Tabs, `task.*` (never `wait`/`spawn`/`delay`).
@@ -10,6 +10,29 @@ need is missing here, do the simplest thing that fits the contract and write it 
 file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/shared/Remotes.luau` and
 `src/server/DataService.luau` are **done** (read them; they are the source of truth for numbers and helpers).
 
+> **v7 changes (this round)** — six asks from the parent. ★v7 marks v7 below.
+> 1. **Alert level** (`Config.Settings.AlertLevel`, a NUMBER 0–4, default 0; every other setting stays boolean). It is a ladder, each
+>    step turns off more ("어디까지 받을지"): `Config.AlertLevels[n+1] = { Name, Short }`
+>    0 "모두 받기" (v6 rules) · 1 "최종 테마 좋은 알만 받기" (normal good-egg alerts only from my top unlocked zone
+>    `Config.MaxZoneFor(rebirths)`, no "here"/ZoneWindow rule) · 2 "최종 테마도 안 받기" (no normal good-egg alerts) · 3 "시크릿 안 받기"
+>    (no normal, no 시크릿) · 4 "천상 안 받기" (only 이터널). 이터널 alerts are always sent. Server-side filter in
+>    `ConveyorService.sendEggAlert`; DataService validates AlertLevel as an integer 0..#AlertLevels-1. Hud: a 🔔 button with the
+>    current step that opens a small picker (5 rows, tap = choose + toast). The rare egg itself still spawns and shows its beacon/map pill.
+> 2. **Rare pets stronger** (fusion-tier reading of "2~3단계 위 신화"): base Income = zone Mythic × **25** (시크릿, beats a 🥇 골드 Mythic ×20),
+>    × **60** (천상, beats 🌈 레인보우 ×50), × **150** (이터널, beats 💎 다이아 ×120). Rare egg prices re-tuned by sim (report zone-8 time and
+>    "affordable when the alert pops").
+> 3. **Bigger + sparklier, size/speed follow income**: rare pets roll Size from a wider range (`Config.PetSize.Special[rarity] = { Min, Max,
+>    HugeFrom }`, e.g. 시크릿 0.8–1.5, 천상 0.8–1.7, 이터널 0.8–2.0; income × Size as before, so a bigger one earns more). World model scale
+>    = Size × `Config.Rarities[r].ModelScale` (시크릿 1.2, 천상 1.4, 이터널 1.6; others 1) via `Config.PetDisplayScale(item)` (follow, ride,
+>    hold, pedestal; pedestal and ride capped so pets fit slots/doors/floors). Ride/fly speed of rare pets grows with Size (and tier):
+>    `Config.RideSpeedMultiplier(petId, tier, size)`; caps may rise for rare rides. Sparkle rises 시크릿 < 천상 < 이터널 (more/bigger
+>    sparkles than v6, light never brighter than Secret's); WorldFx pedestal dimming still applies.
+> 4. **"🥚 나쁜 알 빼기" button outside the bag** (`Remotes.StashEgg()`): if a pedestal is already free → info toast only; else the worst egg
+>    on a pedestal (normal before rare, lower rarity, then lower price, then most hatch time left) goes to the bag (hatch paused like
+>    ToBag); with no egg on pedestals the weakest pedestal pet goes instead. Bag full → warn. BuyEgg's "빈 받침대가 없어요" toast hints at it.
+> 5. **"✨ 자동 배치" button outside the bag** (existing `Remotes.AutoPlace`). Both quick buttons live on the Hud, hidden while decorating.
+> 6. **Different alert sounds** for 시크릿 / 천상 / 이터널 (`UiKit.PlayRareSound`): different built-in sound files + melodies per tier.
+>
 > **v6 changes (this round)** — "조금 진행하니까 루즈해지네": a reason to rush to every map, plus a stronger magnet. ★v6 marks v6 below.
 > 1. **Three ultra-rare eggs per zone** (24 eggs): 시크릿 알 → 천상 알 → 이터널 알, each rarer than the last. They are NOT in the normal
 >    spawn ladder: every normal belt spawn also rolls for them (rough target per belt: 시크릿 ~1 / 250 spawns, 천상 ~1 / 1000,
