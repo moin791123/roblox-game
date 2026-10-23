@@ -81,9 +81,9 @@ end
 -- Price 는 버튼에 보여 주기만 해요 (진짜 가격은 Roblox 에서 정해요). 켜 둔 설정 값은 언제나 저장되고,
 -- 패스가 없으면 아무 일도 안 해요. 확인은 서버 PassService (플레이어 속성 Pass_<키> = true 면 쓸 수 있음)
 Config.Passes = {
-	Magnet = { Id = 0, Price = 50, Emoji = "🧲", Name = "자석" },
-	SuperMagnet = { Id = 0, Price = 100, Emoji = "⚡", Name = "슈퍼 자석" },
-	AutoCollect = { Id = 0, Price = 150, Emoji = "🏦", Name = "자동 수금" },
+	Magnet = { Id = 2055622545, Price = 50, Emoji = "🧲", Name = "자석" }, -- ★v7.3
+	SuperMagnet = { Id = 2053366693, Price = 100, Emoji = "⚡", Name = "슈퍼 자석" }, -- ★v7.3
+	AutoCollect = { Id = 2052736713, Price = 150, Emoji = "🏦", Name = "자동 수금" }, -- ★v7.3
 }
 Config.PassOrder = { "Magnet", "SuperMagnet", "AutoCollect" }
 
@@ -1295,14 +1295,14 @@ Config.FieldCoins = {
 	-- ★v5 자석 버튼 (Settings.Magnet 켜짐): 기본 자석 밖 BigMagnetRadius 안 코인도 하나씩 빨아들여요.
 	-- 서 있기만 해도 너무 빨리 부자가 되지 않게 초당 BigMagnetRate 개까지만 (켜자마자는 BigMagnetBurst 개 한꺼번에)
 	-- ★v6 더 넓고 조금 더 빠르게: 반경 45 → 80, 초당 1.2 → 1.6, 한꺼번에 6 → 8
-	BigMagnetRadius = 80,
+	BigMagnetRadius = 100, -- ★v7.3 80 → 100
 	BigMagnetRate = 1.6,
 	BigMagnetBurst = 8,
 	-- ★v6 슈퍼 자석 (Settings.SuperMagnet): 지금 서 있는 지역 코인만
 	-- SuperMagnetRadius 안에서 초당 SuperMagnetRate 개씩 (다른 지역 코인은 절대 안 와요).
 	-- 둘 다 켜면 슈퍼 자석이 이겨요 (길 위처럼 지역 밖이면 🧲 자석만). 시뮬: 지역 8 까지 ~10 시간 (v6_magnet/sim4.py)
 	-- ★v7.2 환생 잠금 (예전 SuperMagnetMinRebirth = 1) 은 없어졌어요: 🧲 / ⚡ / 🏦 는 게임 패스 (Config.Passes)
-	SuperMagnetRadius = 150,
+	SuperMagnetRadius = 200, -- ★v7.3 150 → 200
 	SuperMagnetRate = 2,
 	SuperMagnetBurst = 12,
 	RenderDistance = 160, -- 클라이언트는 이 거리 안 코인만 그려요

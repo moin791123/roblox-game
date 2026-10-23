@@ -1,4 +1,4 @@
-# 펫 월드 (v7.2): design contract
+# 펫 월드 (v7.3): design contract
 
 Kid-friendly **pet-collecting simulator**. Rojo project, Luau. All player-facing text is **Korean**, cute and short.
 Code comments: short Korean comments (match existing files). Tabs, `task.*` (never `wait`/`spawn`/`delay`).
@@ -65,6 +65,9 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 >    (src/server/PassService.luau: UserOwnsGamePassAsync on join with retries, PromptGamePassPurchaseFinished, attributes `Pass_<Key>`,
 >    `PassService.Has` used by CoinFieldService and PlotService AutoCollect); locked Hud toggles show "🔒 R$50" and prompt the purchase.
 >    Quick button renamed "🐾 하위 펫 한 개 가방으로" (phone "하위 펫 / 1개 가방").
+> 10. ★v7.3 real pass IDs in `Config.Passes` (Magnet 2055622545, SuperMagnet 2053366693, AutoCollect 2052736713) → Robux payment is
+>    live: only owners can use 🧲 / ⚡ / 🏦. 🧲 `BigMagnetRadius` 80 → 100, ⚡ `SuperMagnetRadius` 150 → 200 (rates unchanged). Test harnesses
+>    reset the pass IDs to 0 at load (free path) except the pass tests, which set their own IDs.
 > 7. **Hatch card shows the real income** (× Size) and, for rare pets, "📏 ×n": `Remotes.HatchFx` gains a 6th arg `size` (hatch + fuse).
 >
 > **v6 changes (this round)** — "조금 진행하니까 루즈해지네": a reason to rush to every map, plus a stronger magnet. ★v6 marks v6 below.
