@@ -42,6 +42,7 @@ export type Data = {
 	FurnitureInv: { [string]: number }, -- 가구 가방 (furnId → 개수, 0 이면 키 없음)
 	NextFid: number,
 	Settings: { [string]: any }, -- ★v5 켜고 끄는 버튼 (Config.Settings 키만, ★v7 AlertLevel 은 숫자)
+	AdminGrants: { [string]: boolean }, -- ★v7.4 관리자가 공짜로 준 유료 기능 (Config.PassOrder 키 = true 만)
 }
 
 local DataService = {}
@@ -128,6 +129,7 @@ local function defaultData(): Data
 		FurnitureInv = {},
 		NextFid = 1,
 		Settings = {},
+		AdminGrants = {},
 	}
 end
 
@@ -411,6 +413,15 @@ local function sanitize(raw: any): Data
 			local v = Config.SettingValue(key, raw.Settings[key]) -- ★v7 AlertLevel 은 0..4 정수, 나머지는 true/false
 			if v ~= nil then
 				data.Settings[key] = v
+			end
+		end
+	end
+
+	-- ★v7.4 관리자 선물 (유료 기능 키 = true 만, 나머지는 버려요)
+	if type(raw.AdminGrants) == "table" then
+		for _, key in Config.PassOrder do
+			if raw.AdminGrants[key] == true then
+				data.AdminGrants[key] = true
 			end
 		end
 	end
@@ -710,6 +721,26 @@ function DataService.Start()
 			end
 		end
 	end)
+end
+
+-- ★v7.4 관리자가 준 유료 기능인가 (Config.PassOrder 키)
+function DataService.HasGrant(player: Player, key: string): boolean
+	local data = cache[player]
+	return data ~= nil and data.AdminGrants[key] == true
+end
+
+-- ★v7.4 관리자 선물 켜기/끄기 (모르는 키면 false). 저장은 다음 자동 저장 / 나갈 때
+function DataService.SetGrant(player: Player, key: string, on: boolean): boolean
+	local data = cache[player]
+	if not data or not table.find(Config.PassOrder, key) then
+		return false
+	end
+	if on then
+		data.AdminGrants[key] = true
+	else
+		data.AdminGrants[key] = nil
+	end
+	return true
 end
 
 -- 코인 더하기 (빼기는 TrySpend). 코인만 바뀌므로 가벼운 CoinSync 를 보내요

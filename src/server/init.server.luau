@@ -32,6 +32,7 @@ local CoinFieldService: typeof(require(script.CoinFieldService))? = tryRequire("
 local ZoneService: typeof(require(script.ZoneService))? = tryRequire("ZoneService")
 local ShopService: typeof(require(script.ShopService))? = tryRequire("ShopService")
 local LeaderboardService: typeof(require(script.LeaderboardService))? = tryRequire("LeaderboardService")
+local AdminService: typeof(require(script.AdminService))? = tryRequire("AdminService") -- ★v7.4 🛠 관리자 페이지
 
 -- 하나씩 켜요. 오류가 나면 경고만 하고 다음 모듈로
 local function start(name: string, fn: (() -> ())?)
@@ -45,7 +46,7 @@ local function start(name: string, fn: (() -> ())?)
 	end
 end
 
--- 순서: 월드 → 데이터 → 게임 패스 → 집 → 따라오는 펫 → 컨베이어 → 들판 코인 → 지역 → 상점 → 순위표
+-- 순서: 월드 → 데이터 → 게임 패스 → 집 → 따라오는 펫 → 컨베이어 → 들판 코인 → 지역 → 상점 → 순위표 → 관리자
 start("WorldBuilder.Build", WorldBuilder and WorldBuilder.Build)
 start("DataService", DataService.Start)
 start("PassService", PassService.Start)
@@ -56,6 +57,7 @@ start("CoinFieldService", CoinFieldService and CoinFieldService.Start)
 start("ZoneService", ZoneService and ZoneService.Start)
 start("ShopService", ShopService and ShopService.Start)
 start("LeaderboardService", LeaderboardService and LeaderboardService.Start)
+start("AdminService", AdminService and AdminService.Start)
 
 -- 오류가 나도 멈추지 않게 부르기
 local function safe(label: string, fn: (...any) -> ...any, ...: any)
@@ -96,6 +98,8 @@ local function onPlayerAdded(player: Player)
 	if not data or player.Parent == nil then
 		return
 	end
+	-- ★v7.4 저장된 관리자 선물 (AdminGrants) 을 게임 패스 속성에 바로 반영
+	safe("PassService.Refresh", PassService.Refresh, player)
 
 	-- 집 배정 (OnPlotChanged "Assign" → ShopService 가 가구를 검사하고 그려요)
 	safe("AssignPlot", PlotService.AssignPlot, player)

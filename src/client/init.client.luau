@@ -47,6 +47,7 @@ local DecorateMode = optionalRequire("DecorateMode") -- Init(gui?), Enter(floor?
 local ZoneClient = optionalRequire("ZoneClient") -- Init()
 local RideFly = optionalRequire("RideFly") -- Init(gui): 펫 타고 날기 ✈
 local OptionsWindow = optionalRequire("OptionsWindow") -- ★v7.2 Init(gui), Open, Close, IsOpen: ⚙️ 게임 옵션 (🙈 부화 숨기기 · 🔔 알 알림)
+local AdminWindow = optionalRequire("AdminWindow") -- ★v7.4 Init(gui, onToggle), Open, Close, IsOpen, SetHudVisible: 🛠 관리자 (IsAdmin 일 때만)
 
 -- 모듈 함수 안전하게 부르기 (없으면 nil, 오류는 경고만)
 local function safeCall(mod: any, fnName: string, ...: any): any
@@ -126,7 +127,8 @@ local Shop = windowOf(ShopWindow, "🛍 상점은 곧 열려요!")
 local Map = windowOf(MapWindow, "🗺 지도는 곧 열려요!")
 local Board = windowOf(LeaderboardWindow, "🏆 순위표는 곧 열려요!")
 local Options = windowOf(OptionsWindow, "⚙️ 옵션은 곧 열려요!")
-local windows: { WindowApi } = { Bag, Index, House, Rebirth, Shop, Map, Board, Options }
+local Admin = windowOf(AdminWindow, "🛠 관리자 창을 준비 중이에요!")
+local windows: { WindowApi } = { Bag, Index, House, Rebirth, Shop, Map, Board, Options, Admin }
 
 local function decorating(): boolean
 	return safeCall(DecorateMode, "IsActive") == true
@@ -214,6 +216,10 @@ safeCall(ShopWindow, "Init", gui)
 safeCall(MapWindow, "Init", gui)
 safeCall(LeaderboardWindow, "Init", gui)
 safeCall(OptionsWindow, "Init", gui)
+-- ★v7.4 🛠 관리자 버튼·창 (서버가 IsAdmin 속성을 준 사람만 버튼이 보여요. 누를 때마다 서버가 다시 봐요)
+safeCall(AdminWindow, "Init", gui, function()
+	toggle(Admin)
+end)
 safeCall(DecorateMode, "Init", gui)
 Tips.Init(gui)
 HatchFx.Init(playerGui)
@@ -245,6 +251,7 @@ safeCall(DecorateMode, "OnChanged", function(on: boolean)
 		closeAll()
 	end
 	Hud.SetSideVisible(not on)
+	safeCall(AdminWindow, "SetHudVisible", not on) -- ★v7.4 🛠 도 같이 숨어요
 	Tips.SetSuppressed(on)
 	Toasts.SetBannerSuppressed(on)
 end)

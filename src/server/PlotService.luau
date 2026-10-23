@@ -939,29 +939,9 @@ local function trySetTheme(player: Player, themeId: any)
 	DataService.Sync(player)
 end
 
--- 환생: 코인(수금 대기 포함)을 0으로 돌리고 영구 보너스. 펫·집·받침대·테마·옷·가구는 그대로. 새 지역/층이 열리면 알려요
-local function tryRebirth(player: Player)
-	local data = DataService.Get(player)
-	if not data then
-		return
-	end
-	local n = data.Rebirths
-	local cost = Config.RebirthCost(n)
-	if n >= Config.Rebirth.MaxRebirths then
-		notify(player, "환생은 최대 " .. Config.Rebirth.MaxRebirths .. "회까지예요! 🌟", "info")
-		return
-	end
-	if data.Coins < cost then
-		notify(
-			player,
-			"환생하려면 💰" .. Config.FormatNumber(cost) .. " 코인이 필요해요! (지금 💰" .. Config.FormatNumber(data.Coins) .. ")",
-			"warn"
-		)
-		return
-	end
-	data.Coins = 0
-	data.Pending = 0
-	data.Rebirths = n + 1
+-- 환생 수 +1 과 그 결과 (속도, 수금 패드, 말풍선, 새 지역/층, Sync). 코인은 부르는 쪽이 정해요
+local function applyRebirth(player: Player, data: DataService.Data)
+	data.Rebirths = math.min(data.Rebirths + 1, Config.Rebirth.MaxRebirths)
 	local plot = plotByPlayer[player]
 	if plot then
 		updateCollector(plot)
@@ -995,6 +975,42 @@ local function tryRebirth(player: Player)
 		end
 	end
 	DataService.Sync(player)
+end
+
+-- 환생: 코인(수금 대기 포함)을 0으로 돌리고 영구 보너스. 펫·집·받침대·테마·옷·가구는 그대로. 새 지역/층이 열리면 알려요
+local function tryRebirth(player: Player)
+	local data = DataService.Get(player)
+	if not data then
+		return
+	end
+	local n = data.Rebirths
+	local cost = Config.RebirthCost(n)
+	if n >= Config.Rebirth.MaxRebirths then
+		notify(player, "환생은 최대 " .. Config.Rebirth.MaxRebirths .. "회까지예요! 🌟", "info")
+		return
+	end
+	if data.Coins < cost then
+		notify(
+			player,
+			"환생하려면 💰" .. Config.FormatNumber(cost) .. " 코인이 필요해요! (지금 💰" .. Config.FormatNumber(data.Coins) .. ")",
+			"warn"
+		)
+		return
+	end
+	data.Coins = 0
+	data.Pending = 0
+	applyRebirth(player, data)
+end
+
+-- ★v7.4 🛠 관리자 선물: 환생 +1 을 공짜로 (코인·금고는 그대로, 보너스·새 지역/층 알림은 진짜 환생과 같아요).
+-- 이미 최대면 false
+function PlotService.GrantRebirth(player: Player): boolean
+	local data = DataService.Get(player)
+	if not data or data.Rebirths >= Config.Rebirth.MaxRebirths then
+		return false
+	end
+	applyRebirth(player, data)
+	return true
 end
 
 ----------------------------------------------------------------------

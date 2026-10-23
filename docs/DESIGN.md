@@ -1,4 +1,4 @@
-# 펫 월드 (v7.3): design contract
+# 펫 월드 (v7.4): design contract
 
 Kid-friendly **pet-collecting simulator**. Rojo project, Luau. All player-facing text is **Korean**, cute and short.
 Code comments: short Korean comments (match existing files). Tabs, `task.*` (never `wait`/`spawn`/`delay`).
@@ -68,6 +68,12 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 > 10. ★v7.3 real pass IDs in `Config.Passes` (Magnet 2055622545, SuperMagnet 2053366693, AutoCollect 2052736713) → Robux payment is
 >    live: only owners can use 🧲 / ⚡ / 🏦. 🧲 `BigMagnetRadius` 80 → 100, ⚡ `SuperMagnetRadius` 150 → 200 (rates unchanged). Test harnesses
 >    reset the pass IDs to 0 at load (free path) except the pass tests, which set their own IDs.
+> 11. ★v7.4 **🛠 관리자 페이지** (`AdminService` + `AdminWindow`): only `Config.AdminUserIds` ({981565959}) or the user-owned game's
+>    `game.CreatorId`, re-checked by UserId on every `Remotes.Admin(op, payload)` call (attribute `IsAdmin` only shows the button).
+>    Ops on any loaded player in the server: Coins (+fixed steps / ×10, cap 1e17), Pet (any id, tier 1–7, size in range → bag),
+>    Egg (→ bag, else free pedestal), RareEgg (SpawnSpecial in an unlocked zone), Grant (🧲 ⚡ 🏦 free, saved `Data.AdminGrants`),
+>    Rebirth +1 free (coins kept), Announce (≤ 60 chars, TextService filtered, dropped if filtering fails). Admins always have all
+>    paid features; `PassService.Has` = Id 0 or owns pass or grant or admin. Rate limits 0.2 s / op, 8 s / announce.
 > 7. **Hatch card shows the real income** (× Size) and, for rare pets, "📏 ×n": `Remotes.HatchFx` gains a 6th arg `size` (hatch + fuse).
 >
 > **v6 changes (this round)** — "조금 진행하니까 루즈해지네": a reason to rush to every map, plus a stronger magnet. ★v6 marks v6 below.

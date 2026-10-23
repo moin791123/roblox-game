@@ -115,6 +115,37 @@ function Config.PassAttribute(key: string): string
 	return "Pass_" .. key
 end
 
+-- ★v7.4 🛠 관리자 페이지: 이 UserId 들 + 이 게임을 만든 사람(개인 게임일 때 game.CreatorId) 만 써요.
+-- 서버가 UserId 로만 확인해요 (클라이언트가 보낸 건 안 믿어요). 관리자는 유료 기능 (🧲 ⚡ 🏦) 을 늘 쓸 수 있어요
+Config.AdminUserIds = { 981565959 } -- 게임 만든 사람 (beragom)
+Config.Admin = {
+	CoinCap = 1e17, -- 선물로 이만큼 넘게는 안 줘요 (환생 25회 비용 1.6e16 도 넉넉)
+	CoinAdds = { 1e3, 1e6, 1e9, 1e12, 1e15 }, -- 💰 버튼 (+1K / +1M / +1B / +1T / +1Qa). 서버는 이 값만 받아요
+	TimesMinAdd = 1e3, -- ×10 인데 코인이 거의 없으면 적어도 이만큼
+	Gap = 0.2, -- 관리자 버튼 사이 최소 초 (연타 막기)
+	RefreshGap = 0.5, -- 정보 다시 받기 사이 최소 초
+	AnnounceGap = 8, -- 📢 공지 사이 최소 초
+	AnnounceMax = 60, -- 📢 공지 글자 수 (최대)
+	WarnGap = 30, -- 관리자가 아닌 사람이 부르면 경고는 이 초마다 한 번만
+}
+
+-- ★v7.4 관리자인가 (AdminUserIds 에 있거나, 사람이 만든 게임의 주인). Studio 테스트에서도 진짜 계정 번호라 돼요
+function Config.IsAdminUserId(userId: any): boolean
+	if type(userId) ~= "number" or userId <= 0 or userId ~= math.floor(userId) then
+		return false
+	end
+	for _, id in Config.AdminUserIds do
+		if id == userId then
+			return true
+		end
+	end
+	local ok, creator = pcall(function(): boolean
+		local creatorId = (game :: any).CreatorId
+		return game.CreatorType == Enum.CreatorType.User and type(creatorId) == "number" and creatorId > 0 and creatorId == userId
+	end)
+	return ok and creator == true
+end
+
 Config.MaxFollow = 3 -- 데리고 다닐 수 있는 펫 수
 Config.MaxBagItems = 150 -- 가방 최대 칸 (Loc == "Bag" 인 아이템 수)
 -- ★v7.1 ♾ 가방 무한 (Settings.InfiniteBag) 일 때 칸. 진짜 무한은 안 돼요: 저장과 DataSync 스냅샷이 아이템을 다 보내요.

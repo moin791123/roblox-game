@@ -4,12 +4,15 @@
 -- 클라이언트(Hud·CoinField)에는 플레이어 속성 Pass_<키> (true = 쓸 수 있음) 로 알려요.
 -- 사면 (PromptGamePassPurchaseFinished, 정말 산 경우만) 바로 켜고 말풍선 "🧲 자석을 샀어요! 이제 켜고 끌 수 있어요".
 -- PassService.Has(player, key) 를 CoinFieldService (🧲 / ⚡) 와 PlotService (🏦) 가 써요. 켜 둔 설정 값은 그대로 저장돼요.
+-- ★v7.4 관리자 (Config.IsAdminUserId) 는 늘 다 쓸 수 있고, 관리자가 공짜로 준 기능 (DataService 의 AdminGrants) 도 쓸 수 있어요.
+-- 선물이 바뀌거나 데이터를 다 불러오면 PassService.Refresh(player) 로 속성을 다시 맞춰요.
 local Players = game:GetService("Players")
 local MarketplaceService = game:GetService("MarketplaceService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local Remotes = require(ReplicatedStorage.Shared.Remotes)
+local DataService = require(script.Parent.DataService) -- ★v7.4 관리자 선물 (AdminGrants)
 
 local PassService = {}
 
@@ -44,12 +47,22 @@ local function notify(player: Player, text: string, kind: string)
 end
 
 -- 이 사람이 이 기능을 쓸 수 있나 (패스가 없는 기능 / Id = 0 이면 언제나 true)
+-- ★v7.4 산 사람 · 관리자 선물을 받은 사람 · 관리자 (늘) 도 true
 function PassService.Has(player: Player, key: string): boolean
 	if Config.PassId(key) <= 0 then
 		return true
 	end
+	if Config.IsAdminUserId(player.UserId) or DataService.HasGrant(player, key) then
+		return true
+	end
 	local info = infos[player]
 	return info ~= nil and info.Owned[key] == true
+end
+
+-- ★v7.4 진짜로 산 패스인가 (관리자 화면에 보여 주기만. 공짜 Id = 0 은 false)
+function PassService.Bought(player: Player, key: string): boolean
+	local info = infos[player]
+	return Config.PassId(key) > 0 and info ~= nil and info.Owned[key] == true
 end
 
 -- 쓸 수 있게 되거나 못 쓰게 되면 (player, key, has). PlotService 가 수금 패드 글자를 바꿔요
@@ -70,6 +83,13 @@ local function publish(player: Player, key: string)
 	player:SetAttribute(attr, has)
 	for _, fn in listeners do
 		task.spawn(fn, player, key, has)
+	end
+end
+
+-- ★v7.4 속성 Pass_<키> 를 지금 값으로 다시 맞춰요 (관리자 선물이 바뀌었을 때, 데이터를 다 불러온 뒤)
+function PassService.Refresh(player: Player)
+	for _, key in Config.PassOrder do
+		publish(player, key)
 	end
 end
 
@@ -119,7 +139,7 @@ local function onPlayerAdded(player: Player)
 	end
 	infos[player] = { Owned = {}, Failed = {}, Checking = {} }
 	for _, key in Config.PassOrder do
-		publish(player, key) -- 공짜는 바로 true, 패스는 확인 전까지 false
+		publish(player, key) -- 공짜·관리자·선물은 바로 true, 패스는 확인 전까지 false
 		if Config.PassId(key) > 0 then
 			task.spawn(checkKey, player, key)
 		end
