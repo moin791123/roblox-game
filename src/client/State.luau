@@ -224,7 +224,7 @@ local function settleSettings()
 	end
 end
 
--- ★v7.2 게임 패스 (Config.Passes: Magnet / SuperMagnet / AutoCollect): 쓸 수 있나.
+-- ★v7.2 게임 패스 (Config.Passes: Magnet / SuperMagnet / AutoCollect / ★v7.5 InfiniteBag): 쓸 수 있나.
 -- Id = 0 (아직 안 만듦) 이면 공짜, 아니면 서버 PassService 가 켜는 플레이어 속성 Pass_<키> == true
 function State.HasPass(key: string): boolean
 	if Config.PassId(key) <= 0 then
@@ -344,9 +344,15 @@ function State.BagCount(): number
 	return if snap then snap.BagCount else 0
 end
 
+-- ★v7.5 ♾ 가방 무한이 정말 작동하나: 설정 ON + 게임 패스 (Pass_InfiniteBag, Id = 0 이면 공짜). 서버 DataService.InfiniteBagOn 과 같아요
+function State.InfiniteBagOn(): boolean
+	return State.GetSetting("InfiniteBag") == true and State.HasPass("InfiniteBag")
+end
+
 -- ★v7.1 가방 칸 수 (♾ 가방 무한이 켜져 있으면 Config.InfiniteBagItems, 방금 누른 값도 바로 따라가요)
+-- ★v7.5 패스가 없으면 켜 둔 값이 있어도 Config.MaxBagItems
 function State.BagCapacity(): number
-	return Config.BagCapacity(State.GetSetting("InfiniteBag"))
+	return Config.BagCapacity(State.InfiniteBagOn())
 end
 
 -- 남은 칸 (무한을 끈 뒤 칸을 넘었으면 0)

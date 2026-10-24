@@ -1,4 +1,4 @@
--- ★v7.2 게임 패스 (Config.Passes: 🧲 자석 · ⚡ 슈퍼 자석 · 🏦 자동 수금). Id = 0 (아직 안 만듦) 이면 모두에게 공짜예요.
+-- ★v7.2 게임 패스 (Config.Passes: 🧲 자석 · ⚡ 슈퍼 자석 · 🏦 자동 수금 · ★v7.5 ♾ 가방 무한 확장). Id = 0 (아직 안 만듦) 이면 모두에게 공짜예요.
 -- Id > 0 이면 서버가 확인해요: 들어올 때 MarketplaceService:UserOwnsGamePassAsync (pcall, 안 되면 조금 쉬고 2번 더).
 -- 그래도 안 되면 "없음" 으로 두고, 다음 구매 끝 이벤트 때나 다시 들어올 때 또 확인해요.
 -- 클라이언트(Hud·CoinField)에는 플레이어 속성 Pass_<키> (true = 쓸 수 있음) 로 알려요.
@@ -6,6 +6,8 @@
 -- PassService.Has(player, key) 를 CoinFieldService (🧲 / ⚡) 와 PlotService (🏦) 가 써요. 켜 둔 설정 값은 그대로 저장돼요.
 -- ★v7.4 관리자 (Config.IsAdminUserId) 는 늘 다 쓸 수 있고, 관리자가 공짜로 준 기능 (DataService 의 AdminGrants) 도 쓸 수 있어요.
 -- 선물이 바뀌거나 데이터를 다 불러오면 PassService.Refresh(player) 로 속성을 다시 맞춰요.
+-- ★v7.5 ♾ 가방 무한 확장: DataService 가 가방 칸·설정 켜기에 PassService.Has 를 써요 (DataService.SetPassCheck, 순환 require 없이).
+-- 새로 생기면 (산 직후 · 관리자 선물) PassService.AutoOn 이 설정을 바로 켜고 "♾ 가방 무한 확장! …" 말풍선 (산 말풍선 대신)
 local Players = game:GetService("Players")
 local MarketplaceService = game:GetService("MarketplaceService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -57,6 +59,28 @@ function PassService.Has(player: Player, key: string): boolean
 	end
 	local info = infos[player]
 	return info ~= nil and info.Owned[key] == true
+end
+
+-- ★v7.5 DataService 가 가방 칸 (♾) 을 셀 때 이 함수로 물어봐요 (DataService 는 PassService 를 require 못 해요: 순환)
+DataService.SetPassCheck(PassService.Has)
+
+-- ★v7.5 패스가 새로 생기면 (산 직후 · 관리자 선물) 바로 켜는 기능: 설정 키 → 말풍선 (지금은 ♾ 가방 무한 확장만)
+local AUTO_ON: { [string]: string } = {
+	InfiniteBag = "♾ 가방 무한 확장! 펫을 " .. tostring(Config.InfiniteBagItems) .. "마리까지 넣을 수 있어요 🎒",
+}
+
+-- ★v7.5 새로 생긴 패스 기능을 켜고 말풍선 (이미 켜져 있었어도 말풍선은 보내요: 칸이 지금 늘었어요).
+-- 바로 켜는 기능이 아니거나 아직 못 쓰면 false (부르는 쪽이 보통 말풍선을 보내요)
+function PassService.AutoOn(player: Player, key: string): boolean
+	local text = AUTO_ON[key]
+	if text == nil or player.Parent == nil or not PassService.Has(player, key) then
+		return false
+	end
+	if DataService.GetSetting(player, key) ~= true then
+		DataService.SetSetting(player, key, true)
+	end
+	notify(player, text, "good")
+	return true
 end
 
 -- ★v7.4 진짜로 산 패스인가 (관리자 화면에 보여 주기만. 공짜 Id = 0 은 false)
@@ -157,11 +181,15 @@ local function onPurchaseFinished(player: any, passId: any, purchased: any)
 	end
 	local key = Config.PassKeyOf(passId)
 	if key and purchased == true and not info.Owned[key] then
+		local had = PassService.Has(player, key) -- 관리자 선물로 이미 쓰고 있었나
 		info.Owned[key] = true
 		info.Failed[key] = nil
 		publish(player, key)
-		local pass = (Config.Passes :: any)[key]
-		notify(player, pass.Emoji .. " " .. josa(pass.Name, "을", "를") .. " 샀어요! 이제 켜고 끌 수 있어요", "good")
+		-- ★v7.5 ♾ 는 바로 켜고 그 말풍선만 (이미 쓰던 사람은 보통 산 말풍선)
+		if had or not PassService.AutoOn(player, key) then
+			local pass = (Config.Passes :: any)[key]
+			notify(player, pass.Emoji .. " " .. josa(pass.Name, "을", "를") .. " 샀어요! 이제 켜고 끌 수 있어요", "good")
+		end
 	end
 	local again: { string } = {}
 	for k, failed in info.Failed do

@@ -3,6 +3,11 @@
 -- ★v7.1 창 머리줄 오른쪽: "가방 n/150" 알약 + ♾ 가방 무한 스위치. 💰 한꺼번에 팔기 창: 테마·등급 고르기 (설정으로 저장),
 -- 미리 보기 "n마리 · 💰 X", 팔기 (많으면 두 번), 🤖 자동 판매 스위치 (같은 조건, 서버 PlotService 가 부화 때 팔아요).
 -- 카드의 3D 뷰포트는 화면 근처에 보이는 카드에만 만들고 재활용해요 (가방 150 (♾ 500) + 집 120 칸이라 다 만들면 무거워요).
+-- ★v7.5 ♾ 가방 무한은 게임 패스 (Config.Passes.InfiniteBag R$150): 없으면 Hud 잠긴 버튼처럼 회색 "🔒 R$150",
+-- 누르면 설명 말풍선 + MarketplaceService:PromptGamePassPurchase (설정은 안 보내요). 사면/선물이면 서버가 Pass_InfiniteBag 을 켜고
+-- 설정도 켜 줘요 → State.OnPass 로 바로 보통 스위치. 알약 "가방 n/∞" 과 빨강은 State.BagCapacity (설정 + 패스) 를 따라가요.
+local MarketplaceService = game:GetService("MarketplaceService")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
@@ -1021,6 +1026,8 @@ type Switch = {
 	StateLabel: TextLabel,
 	Color: Color3,
 	Shown: boolean?,
+	Lock: TextLabel?, -- ★v7.5 게임 패스가 없을 때 스위치 자리에 "🔒 R$150" (패스 기능 스위치만)
+	Locked: boolean,
 }
 
 type Stepper = { Frame: Frame, Down: TextButton, Up: TextButton, Face: Frame, Caption: TextLabel, Value: TextLabel }
@@ -1094,19 +1101,29 @@ local function rarityText(r: number): string
 	return if info then info.Name .. " 이하" else "?"
 end
 
--- 가방 칸 알약: "가방 n/150" (♾ 켜면 "가방 n/∞"), 꽉 차면 빨강
+-- 가방 칸 알약: "가방 n/150" (♾ 켜면 "가방 n/∞"), 꽉 차면 빨강. ★v7.5 패스가 없으면 켜 둬도 "/150" (State.InfiniteBagOn)
 local function updateCount()
 	if not countLabel then
 		return
 	end
 	local bag = State.BagCount()
-	local infinite = State.GetSetting("InfiniteBag") == true
+	local infinite = State.InfiniteBagOn()
 	countLabel.Text = string.format("가방 %d/%s", bag, if infinite then "∞" else tostring(Config.MaxBagItems))
 	countPill.BackgroundColor3 = if bag >= State.BagCapacity() then C.Red else C.Lemon
 end
 
+-- ★v7.5 잠겼으면 (패스 없음) 회색 + 스위치 대신 "🔒 R$150" (켜 둔 값이 있어도)
 local function paintSwitch(sw: Switch, on: boolean, animate: boolean)
 	sw.Shown = on
+	local locked = sw.Locked
+	sw.Track.Visible = not locked
+	if sw.Lock then
+		sw.Lock.Visible = locked
+	end
+	sw.Caption.Size = UDim2.fromScale(if locked then 0.44 else 0.53, 0.8)
+	if locked then
+		on = false
+	end
 	local face = if on then sw.Color else OFF_FACE
 	sw.Face.BackgroundColor3 = face
 	local cs = strokeOf(sw.Caption)
@@ -1129,8 +1146,15 @@ local function paintSwitch(sw: Switch, on: boolean, animate: boolean)
 	end
 end
 
+-- ★v7.5 게임 패스 가격 글자 "R$150" (Config.Passes, 보여 주기만. Hud 와 같아요)
+local function priceText(key: string): string
+	local pass = (Config.Passes :: any)[key]
+	return "R$" .. tostring(if pass then pass.Price else "?")
+end
+
 -- ON/OFF 스위치 (Hud 켜고 끄는 버튼과 같은 모양: ON = 제 색 + 민트 스위치, OFF = 회색). 누르는 칸은 투명 버튼
-local function makeSwitch(parent: Instance, name: string, text: string, color: Color3, z: number, onTap: () -> ()): Switch
+-- ★v7.5 passKey 가 있으면 잠금 글씨 "🔒 R$150" 도 만들어요 (보이는 건 paintSwitch, 잠금 여부는 sw.Locked)
+local function makeSwitch(parent: Instance, name: string, text: string, color: Color3, z: number, onTap: () -> (), passKey: string?): Switch
 	local btn: TextButton = Make("TextButton", {
 		Name = name,
 		Text = "",
@@ -1193,6 +1217,19 @@ local function makeSwitch(parent: Instance, name: string, text: string, color: C
 	})
 	Make("UIAspectRatioConstraint", { AspectRatio = 1, DominantAxis = Enum.DominantAxis.Height, Parent = knob })
 	UiKit.Corner(knob, UDim.new(0.5, 0))
+	local lock: TextLabel? = nil
+	if passKey then
+		lock = UiKit.Label({
+			Name = "Lock",
+			Text = "🔒 " .. priceText(passKey),
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.fromScale(0.95, 0.5),
+			Size = UDim2.fromScale(0.44, 0.66),
+			Visible = false,
+			ZIndex = z + 2,
+			Parent = face,
+		}, { Stroke = UiKit.Darken(OFF_FACE, 0.55), MaxText = 18, StrokeThickness = 1.5 })
+	end
 	-- 누르는 느낌 (UiKit.Button 과 같게)
 	local scale = UiKit.Scale(face)
 	btn.MouseButton1Down:Connect(function()
@@ -1222,6 +1259,8 @@ local function makeSwitch(parent: Instance, name: string, text: string, color: C
 		StateLabel = state,
 		Color = color,
 		Shown = nil,
+		Lock = lock,
+		Locked = passKey ~= nil and not State.HasPass(passKey),
 	}
 end
 
@@ -1248,6 +1287,22 @@ local function queueSetting(key: string, value: number)
 end
 
 local function onInfiniteTap()
+	if bagSwitch.Locked then
+		-- ★v7.5 패스가 없어요: 설명 + 사기 창 (설정은 서버로 안 보내요. 사면 서버가 Pass_InfiniteBag 과 설정을 켜요)
+		local pass = (Config.Passes :: any).InfiniteBag
+		Toasts.Show("🛒 " .. pass.Emoji .. " " .. pass.Name .. " (" .. priceText("InfiniteBag") .. "): 가방을 "
+			.. Config.InfiniteBagItems .. "칸까지 늘려요! 지금은 " .. Config.MaxBagItems .. "칸", "info")
+		local id = Config.PassId("InfiniteBag")
+		local ok = id > 0
+			and pcall(function()
+				MarketplaceService:PromptGamePassPurchase(Players.LocalPlayer, id)
+			end)
+		if not ok then
+			UiKit.Shake(bagSwitch.Face, 6, 6)
+			Toasts.Show("지금은 살 수 없어요 😢 잠시 뒤에 다시 해 봐요", "warn")
+		end
+		return
+	end
 	local on = State.GetSetting("InfiniteBag") ~= true
 	State.SetSettingLocal("InfiniteBag", on) -- 바로 바꿔 보여 줘요 (OnSetting → 스위치 + 알약)
 	Remotes.SetSetting:FireServer("InfiniteBag", on)
@@ -1959,7 +2014,7 @@ function BagWindow.Init(gui: Instance, bagActions: Actions?)
 		AnchorPoint = Vector2.new(0, 0.5),
 		ZIndex = 25,
 	}, 20)
-	bagSwitch = makeSwitch(headerBox, "InfiniteBag", "♾ 가방 무한", INFINITE_COLOR, 25, onInfiniteTap)
+	bagSwitch = makeSwitch(headerBox, "InfiniteBag", "♾ 가방 무한", INFINITE_COLOR, 25, onInfiniteTap, "InfiniteBag") -- ★v7.5 패스
 	paintSwitch(bagSwitch, State.GetSetting("InfiniteBag") == true, false)
 
 	-- 도구 줄: 자동 배치 / 집 펫 모두 빼기 (두 번 눌러야 해요) / ★v7.1 💰 한꺼번에 팔기
@@ -2071,6 +2126,20 @@ function BagWindow.Init(gui: Instance, bagActions: Actions?)
 		elseif key == "SellZoneMax" or key == "SellRarityMax" then
 			refreshSell()
 		end
+	end)
+	-- ★v7.5 ♾ 패스가 생기거나 (사기 · 선물) 없어지면 (선물 끝) 스위치·알약을 바로 (펫은 그대로, 칸만 바뀌어요)
+	State.OnPass(function(key: string, has: boolean)
+		if key ~= "InfiniteBag" then
+			return
+		end
+		if bagSwitch.Locked ~= not has then
+			bagSwitch.Locked = not has
+			paintSwitch(bagSwitch, State.GetSetting("InfiniteBag") == true, false)
+			if has then
+				UiKit.Pop(bagSwitch.Face, 0.35)
+			end
+		end
+		updateCount()
 	end)
 	scroll:GetPropertyChangedSignal("CanvasPosition"):Connect(queueViewports)
 	scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(queueViewports)

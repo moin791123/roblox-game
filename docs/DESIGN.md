@@ -1,4 +1,4 @@
-# 펫 월드 (v7.4): design contract
+# 펫 월드 (v7.5): design contract
 
 Kid-friendly **pet-collecting simulator**. Rojo project, Luau. All player-facing text is **Korean**, cute and short.
 Code comments: short Korean comments (match existing files). Tabs, `task.*` (never `wait`/`spawn`/`delay`).
@@ -74,6 +74,10 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 >    Egg (→ bag, else free pedestal), RareEgg (SpawnSpecial in an unlocked zone), Grant (🧲 ⚡ 🏦 free, saved `Data.AdminGrants`),
 >    Rebirth +1 free (coins kept), Announce (≤ 60 chars, TextService filtered, dropped if filtering fails). Admins always have all
 >    paid features; `PassService.Has` = Id 0 or owns pass or grant or admin. Rate limits 0.2 s / op, 8 s / announce.
+> 12. ★v7.5 ♾ 가방 무한 확장 is a paid pass (`Config.Passes.InfiniteBag`, Id 2053007328, R$150, last in `PassOrder`). Capacity is
+>    500 only when `Settings.InfiniteBag` AND `PassService.Has` (hook `DataService.SetPassCheck`); SetSetting on without the pass is
+>    refused with a toast. Old saves keep the setting and every bag item (over 150 just counts as full). Buying / being granted turns
+>    it on with a toast. BagWindow ♾ switch shows "🔒 R$150" and prompts the purchase; admin 🎟 has 4 switches (2×2 on tiny/phone).
 > 7. **Hatch card shows the real income** (× Size) and, for rare pets, "📏 ×n": `Remotes.HatchFx` gains a 6th arg `size` (hatch + fuse).
 >
 > **v6 changes (this round)** — "조금 진행하니까 루즈해지네": a reason to rush to every map, plus a stronger magnet. ★v6 marks v6 below.

@@ -5,7 +5,7 @@
 --   (코인 줄·큰 버튼·환생 알약·팁·알림 줄·점프·조이스틱은 피해요). 꾸미기 중엔 숨어요.
 -- 창 (UiKit.Window, 한 번에 하나, ✖ / 바깥 / Esc 로 닫혀요): 👤 누구에게 (나 먼저) + 탭 7개
 --   💰 코인 (+1K … +1Qa, ×10) · 🐾 펫 (지역·희귀도 순 목록, 등급 ◀ ▶, 크기 4개) · 🥚 알 (희귀 알도)
---   · 🌟 희귀 알 소환 (지역 + 시크릿/천상/이터널) · 🎟 유료 기능 (🧲 ⚡ 🏦 공짜 선물 켜기/끄기)
+--   · 🌟 희귀 알 소환 (지역 + 시크릿/천상/이터널) · 🎟 유료 기능 (🧲 ⚡ 🏦 ★v7.5 ♾ 공짜 선물 켜기/끄기, 낮은 화면은 2열)
 --   · 🔄 환생 +1 (두 번 눌러요) · 📢 공지 (60자, 서버가 글자 검사)
 -- 모두 Remotes.Admin(op, payload) 로 보내요 (payload.Target = 고른 사람 UserId). 서버가 "State" 로 사람 목록을 줘요.
 -- 누르는 칸은 모두 44 px 넘게, 568×320 화면에서도 스크롤 목록 말고는 다 보여요.
@@ -1035,11 +1035,11 @@ local function layoutRare(PW: number, PH: number)
 	place(rareHint, 4, y, PW - 8, math.min(28, left))
 end
 
-local function layoutGrantRow(gr: GrantRow, y: number, W: number, h: number)
-	place(gr.Button, 0, y, W, h)
+local function layoutGrantRow(gr: GrantRow, x: number, y: number, W: number, h: number)
+	place(gr.Button, x, y, W, h)
 	local icon = math.floor(h * 0.66)
 	place(gr.Icon, 8, (h - icon) / 2, icon, icon)
-	local tw = math.clamp(math.floor(h * 1.3), 58, 80)
+	local tw = math.clamp(math.min(math.floor(h * 1.3), math.floor(W * 0.22)), 52, 80) -- ★v7.5 2열이면 스위치를 조금 좁게
 	local th = math.clamp(math.floor(h * 0.46), 24, 32)
 	place(gr.Track, W - tw - 10, (h - th) / 2, tw, th)
 	gr.Knob:SetAttribute("Edge", math.clamp((th * 0.78 / 2 + th * 0.12) / tw, 0.1, 0.45))
@@ -1051,13 +1051,19 @@ local function layoutGrantRow(gr: GrantRow, y: number, W: number, h: number)
 	setMax(gr.Desc, math.min(15, h * 0.3, textW / 12))
 end
 
+-- ★v7.5 패스가 4개 (🧲 ⚡ 🏦 ♾): 한 줄씩 44 px 가 안 들어가는 낮은 화면 (568×320, 667×375) 은 2열 (2×2)
 local function layoutPaid(PW: number, PH: number)
 	local n = #grantRows
-	local rowH = math.clamp(math.floor((PH - (n - 1) * GAP) / n), MIN, 72)
+	local cols = if n > 1 and (PH - (n - 1) * GAP) / n < MIN then 2 else 1
+	local rows = math.ceil(n / cols)
+	local colW = (PW - (cols - 1) * GAP) / cols
+	local rowH = math.clamp(math.floor((PH - (rows - 1) * GAP) / rows), MIN, if cols > 1 then 60 else 72)
 	for i, gr in grantRows do
-		layoutGrantRow(gr, (i - 1) * (rowH + GAP), PW, rowH)
+		local c = (i - 1) % cols
+		local r = (i - 1) // cols
+		layoutGrantRow(gr, c * (colW + GAP), r * (rowH + GAP), colW, rowH)
 	end
-	local y = n * (rowH + GAP)
+	local y = rows * (rowH + GAP)
 	local left = PH - y
 	paidHint.Visible = left >= 16
 	place(paidHint, 4, y, PW - 8, math.min(28, left))

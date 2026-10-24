@@ -672,16 +672,49 @@ end
 
 local settingListeners: { (Player, string, any) -> () } = {}
 
+-- ★v7.5 유료 기능을 쓸 수 있나 (= PassService.Has: Id 0 · 산 사람 · 관리자 선물 · 관리자).
+-- PassService 가 DataService 를 require 해서 여기서 PassService 를 require 하면 순환이에요 →
+-- PassService 가 불러와질 때 DataService.SetPassCheck(PassService.Has) 로 넣어 줘요 (속성 Pass_<키> 보다 늘 지금 값).
+-- 아직 안 넣었으면 (PassService 없음) Id = 0 인 공짜 기능만 true
+local passCheck: ((Player, string) -> boolean)? = nil
+
+function DataService.SetPassCheck(fn: (Player, string) -> boolean)
+	passCheck = fn
+end
+
+function DataService.HasPass(player: Player, key: string): boolean
+	if Config.PassId(key) <= 0 then
+		return true
+	end
+	local check = passCheck
+	return check ~= nil and check(player, key) == true
+end
+
+-- ★v7.5 ♾ 가방 무한이 정말 작동하나: 설정 ON + 패스. 패스 없이 켜 둔 예전(v7.1~7.4 공짜) 저장 값은 그대로 두고 효과만 없어요
+-- (🧲 ⚡ 🏦 와 같아요. 펫은 하나도 안 지우고, 가방이 150 넘으면 150 아래로 줄 때까지 "가득")
+function DataService.InfiniteBagOn(player: Player): boolean
+	local data = cache[player]
+	return data ~= nil and data.Settings.InfiniteBag == true and DataService.HasPass(player, "InfiniteBag")
+end
+
 -- 버튼 값이 바뀔 때 (다른 서비스가 바로 반응하고 싶을 때)
 function DataService.OnSettingChanged(fn: (Player, string, any) -> ())
 	table.insert(settingListeners, fn)
 end
 
 -- 값 검사는 Config.SettingValue (모르는 키 / 맞지 않는 값이면 false)
+-- ★v7.5 ♾ 가방 무한 켜기는 패스가 있어야 해요 (없으면 거절 + 말풍선, 값은 그대로). 끄기는 언제나 돼요
 function DataService.SetSetting(player: Player, key: string, value: any): boolean
 	local data = cache[player]
 	local v = Config.SettingValue(key, value)
 	if not data or v == nil then
+		return false
+	end
+	if key == "InfiniteBag" and v == true and not DataService.HasPass(player, key) then
+		if player.Parent then
+			local pass = (Config.Passes :: any)[key]
+			Remotes.Notify:FireClient(player, pass.Emoji .. " " .. pass.Name .. " 패스가 필요해요 (R$" .. tostring(pass.Price) .. ")", "warn")
+		end
 		return false
 	end
 	data.Settings[key] = v
@@ -842,9 +875,9 @@ function DataService.BagCount(player: Player): number
 end
 
 -- ★v7.1 가방 칸 수: ♾ 가방 무한이 켜져 있으면 Config.InfiniteBagItems, 아니면 Config.MaxBagItems
+-- ★v7.5 켜져 있어도 패스가 없으면 Config.MaxBagItems (DataService.InfiniteBagOn)
 function DataService.BagCapacity(player: Player): number
-	local data = cache[player]
-	return Config.BagCapacity(data ~= nil and data.Settings.InfiniteBag == true)
+	return Config.BagCapacity(DataService.InfiniteBagOn(player))
 end
 
 -- 남은 칸 (★v7.1 무한을 끄면 칸을 넘은 만큼은 그대로 두고 0: 칸 아래로 줄 때까지 "가득")

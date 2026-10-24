@@ -5,7 +5,7 @@
 -- 대상(payload.Target) = 지금 이 서버에 있고 데이터가 다 불러진 사람의 UserId (없으면 나). 값은 모두 검사해요 (타입·범위·아는 id).
 -- op: "Refresh" (정보만) · "Coins" (+정해진 값 / ×10, Config.Admin.CoinCap 까지) · "Pet" (아무 펫, 등급 1..7, 크기는 그 펫 범위 → 가방)
 --   · "Egg" (아무 알 → 가방, 가방이 차면 빈 받침대) · "RareEgg" (열린 지역 벨트에 희귀 알 소환, 알림은 그대로)
---   · "Grant" (🧲 ⚡ 🏦 공짜 선물 켜기/끄기, 저장 AdminGrants) · "Rebirth" (+1 공짜, 코인 그대로) · "Announce" (📢 글자 검사 후 모두에게).
+--   · "Grant" (🧲 ⚡ 🏦 ★v7.5 ♾ 공짜 선물 켜기/끄기, 저장 AdminGrants) · "Rebirth" (+1 공짜, 코인 그대로) · "Announce" (📢 글자 검사 후 모두에게).
 -- 끝나면 관리자에게 짧은 말풍선, 다른 사람에게 줬으면 그 사람에게 "🎁 관리자 선물: …", 관리자 창에는 "State" (사람마다 코인·환생·가방·선물).
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -318,6 +318,7 @@ local function opGrant(admin: Player, target: Player, payload: Payload)
 	local pass = (Config.Passes :: any)[key]
 	local title = pass.Emoji .. " " .. pass.Name
 	local had = DataService.HasGrant(target, key)
+	local could = PassService.Has(target, key) -- ★v7.5 선물 전에도 쓸 수 있었나 (산 패스 · 관리자 · 공짜)
 	if not DataService.SetGrant(target, key, on) then
 		return
 	end
@@ -327,10 +328,17 @@ local function opGrant(admin: Player, target: Player, payload: Payload)
 		if not had then
 			gift(admin, target, pass.Emoji .. " " .. josa(pass.Name, "을", "를") .. " 공짜로 쓸 수 있어요")
 		end
+		if not could then
+			PassService.AutoOn(target, key) -- ★v7.5 ♾ 가방 무한 확장은 바로 켜져요 (끄면 칸만 150, 펫은 그대로)
+		end
 	else
 		notify(admin, "✅ " .. nameOf(admin, target) .. ": " .. title .. " 공짜 선물 꺼짐", "info")
 		if had and target ~= admin then
-			notify(target, title .. " 선물이 끝났어요", "info")
+			local tail = ""
+			if key == "InfiniteBag" and not PassService.Has(target, key) and DataService.BagCount(target) > Config.MaxBagItems then
+				tail = " · 펫은 그대로예요! " .. Config.MaxBagItems .. "마리보다 적어지면 다시 넣을 수 있어요" -- ★v7.5 하나도 안 지워요
+			end
+			notify(target, title .. " 선물이 끝났어요" .. tail, "info")
 		end
 	end
 end

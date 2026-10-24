@@ -19,7 +19,7 @@ Config.Settings = {
 	Magnet = false, -- 맵 돈 자석 (넓은 범위 자동으로 먹기, ★v7.2 게임 패스 Config.Passes.Magnet)
 	SuperMagnet = false, -- ★v6 슈퍼 자석 (지금 있는 지역 코인 대부분, ★v7.2 게임 패스 Config.Passes.SuperMagnet)
 	AlertLevel = 0, -- ★v7 알 알림 단계 (Config.AlertLevels, 0 = 모두 받기)
-	InfiniteBag = false, -- ★v7.1 ♾ 가방 무한 (가방 칸 = Config.InfiniteBagItems)
+	InfiniteBag = false, -- ★v7.1 ♾ 가방 무한 (가방 칸 = Config.InfiniteBagItems, ★v7.5 게임 패스 Config.Passes.InfiniteBag)
 	AutoSell = false, -- ★v7.1 🤖 자동 판매 (새로 태어난 펫이 아래 조건이면 바로 팔아요)
 	SellZoneMax = 1, -- ★v7.1 💰 한꺼번에 팔기·자동 판매: 이 테마(지역 번호) 이하 펫만
 	SellRarityMax = 2, -- ★v7.1 이 등급(희귀도 Order, 2 = 고급) 이하 펫만
@@ -76,7 +76,7 @@ function Config.AlertLevelInfo(level: any): { [string]: any }
 	return Config.AlertLevels[n + 1]
 end
 
--- ★v7.2 게임 패스 (로벅스): 🧲 자석 R$50 · ⚡ 슈퍼 자석 R$100 · 🏦 자동 수금 R$150.
+-- ★v7.2 게임 패스 (로벅스): 🧲 자석 R$50 · ⚡ 슈퍼 자석 R$100 · 🏦 자동 수금 R$150 · ★v7.5 ♾ 가방 무한 확장 R$150.
 -- Id 에 Creator Hub 에서 만든 게임 패스 번호를 넣어요. Id = 0 (아직 안 만듦) 이면 모두에게 공짜예요 (v7.1 처럼).
 -- Price 는 버튼에 보여 주기만 해요 (진짜 가격은 Roblox 에서 정해요). 켜 둔 설정 값은 언제나 저장되고,
 -- 패스가 없으면 아무 일도 안 해요. 확인은 서버 PassService (플레이어 속성 Pass_<키> = true 면 쓸 수 있음)
@@ -84,8 +84,10 @@ Config.Passes = {
 	Magnet = { Id = 2055622545, Price = 50, Emoji = "🧲", Name = "자석" }, -- ★v7.3
 	SuperMagnet = { Id = 2053366693, Price = 100, Emoji = "⚡", Name = "슈퍼 자석" }, -- ★v7.3
 	AutoCollect = { Id = 2052736713, Price = 150, Emoji = "🏦", Name = "자동 수금" }, -- ★v7.3
+	-- ★v7.5 ♾ 가방 무한 확장: 패스가 있어야 Settings.InfiniteBag 이 칸을 Config.InfiniteBagItems 로 늘려요 (Roblox 이름 "가방무한")
+	InfiniteBag = { Id = 2053007328, Price = 150, Emoji = "♾", Name = "가방 무한 확장" }, -- ★v7.5 패스 ID
 }
-Config.PassOrder = { "Magnet", "SuperMagnet", "AutoCollect" }
+Config.PassOrder = { "Magnet", "SuperMagnet", "AutoCollect", "InfiniteBag" } -- ★v7.5 InfiniteBag 은 맨 뒤
 
 -- ★v7.2 그 기능의 게임 패스 번호 (패스가 없는 기능이거나 아직 0 이면 0 = 공짜)
 function Config.PassId(key: any): number
@@ -116,7 +118,7 @@ function Config.PassAttribute(key: string): string
 end
 
 -- ★v7.4 🛠 관리자 페이지: 이 UserId 들 + 이 게임을 만든 사람(개인 게임일 때 game.CreatorId) 만 써요.
--- 서버가 UserId 로만 확인해요 (클라이언트가 보낸 건 안 믿어요). 관리자는 유료 기능 (🧲 ⚡ 🏦) 을 늘 쓸 수 있어요
+-- 서버가 UserId 로만 확인해요 (클라이언트가 보낸 건 안 믿어요). 관리자는 유료 기능 (🧲 ⚡ 🏦 ★v7.5 ♾) 을 늘 쓸 수 있어요
 Config.AdminUserIds = { 981565959 } -- 게임 만든 사람 (beragom)
 Config.Admin = {
 	CoinCap = 1e17, -- 선물로 이만큼 넘게는 안 줘요 (환생 25회 비용 1.6e16 도 넉넉)
@@ -152,9 +154,10 @@ Config.MaxBagItems = 150 -- 가방 최대 칸 (Loc == "Bag" 인 아이템 수)
 -- 재어 보니 (긴 id + 옷 + 갤럭시, 받침대 120 + 데리고 다니는 5) 가방 1마리 ≈ 115 B: 150 → 저장/스냅샷 42 KB,
 -- 500 → 82 KB (DataStore 4 MB 의 2 %, 스냅샷은 지금 가방 150 의 2 배), 1000 → 139 KB. 스냅샷이 초당 5번까지 가서 500 으로 해요.
 -- 끄면 아무것도 안 지워요: 150 마리 넘게 있으면 150 아래로 줄 때까지 "가득" 이에요
+-- ★v7.5 게임 패스 (Config.Passes.InfiniteBag) 가 있을 때만 500. 패스 없이 켜 둔 예전 저장도 펫은 그대로, 칸만 150
 Config.InfiniteBagItems = 500
 
--- ★v7.1 지금 가방 칸 수 (infinite = Settings.InfiniteBag)
+-- ★v7.1 지금 가방 칸 수 (infinite = Settings.InfiniteBag ★v7.5 그리고 패스가 있나: 부르는 쪽이 둘 다 봐요)
 function Config.BagCapacity(infinite: any): number
 	return if infinite == true then Config.InfiniteBagItems else Config.MaxBagItems
 end
