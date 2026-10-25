@@ -66,7 +66,7 @@ local function unlocksAt(r: number): { string }
 	end
 	for f, info in Config.FloorInfo do
 		if f >= 2 and info.MinRebirth == r and r > 0 then
-			table.insert(list, string.format("🏗 %d층 가능", f))
+			table.insert(list, if f == Config.House.MaxFloors + 1 then "🏡 2번 집 가능" else "🏗 " .. Config.FloorName(f) .. " 가능") -- ★v8
 		end
 	end
 	return list
@@ -83,7 +83,7 @@ local function nextUnlockAfter(r: number): string?
 	end
 	for f, info in Config.FloorInfo do
 		if f >= 2 and info.MinRebirth > r then
-			table.insert(parts, string.format("🏗 %d층 (환생 %d)", f, info.MinRebirth))
+			table.insert(parts, string.format("%s (환생 %d)", if f == Config.House.MaxFloors + 1 then "🏡 2번 집" else "🏗 " .. Config.FloorName(f), info.MinRebirth)) -- ★v8
 			break
 		end
 	end

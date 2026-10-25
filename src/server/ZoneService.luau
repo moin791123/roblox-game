@@ -94,16 +94,18 @@ local function homeCFrame(player: Player): CFrame?
 	return nil
 end
 
--- 우리 집 n 층 자리 (HouseBuilder.FloorSpawn, 없으면 1층 입구 + 층 높이)
+-- 우리 집 n 층 자리 (HouseBuilder.FloorSpawn, 없으면 1층 입구 + 층 높이). ★v8 11층부터는 2번 집
 local function floorCFrame(player: Player, floor: number): CFrame?
 	local data = DataService.Get(player)
 	local plot: any = PlotService.GetPlot(player)
 	if not data or not plot then
 		return nil
 	end
+	local house, localFloor = Config.FloorHouse(floor)
+	local origin = if house == 2 then plot.Origin2 else plot.Origin
 	local fn = (HouseBuilder :: any).FloorSpawn
-	if type(fn) == "function" and typeof(plot.Origin) == "CFrame" then
-		local ok, cf = pcall(fn, plot.Origin, data.Theme, floor)
+	if type(fn) == "function" and typeof(origin) == "CFrame" then
+		local ok, cf = pcall(fn, origin, data.Theme, localFloor)
 		if ok and typeof(cf) == "CFrame" then
 			return cf
 		end
@@ -239,7 +241,7 @@ local function onTeleport(player: Player, kind: any, n: any)
 			return
 		end
 		if not data or n < 1 or n > data.Floors then
-			notify(player, "🏠 " .. tostring(n) .. "층은 아직 없어요!", "warn")
+			notify(player, "🏠 " .. (if type(n) == "number" and n >= 1 then Config.FloorName(n) else tostring(n) .. "층") .. "은 아직 없어요!", "warn")
 			return
 		end
 		ok = ZoneService.TeleportToFloor(player, n)

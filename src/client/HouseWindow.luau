@@ -1,7 +1,7 @@
 -- 🏠 내 집 창 (v4): 위쪽 탭 3개
 --   🏡 새 집 (처음 탭): 집 테마 8개 큰 카드 (집 그림, 이름, 크기, +N% 수익, 값 / 보유 / 사는 중, 🛒 사기 · 🚚 이사하기)
 --                     + 맨 위 "다음 집" 안내 (지금 살 수 있는 집 / 얼마 더 모으면 되는지)
---   🏗 층·받침대: 층 올리기(최대 10층)·받침대 사기, 자동 배치 / 모두 빼기, 층 목록 (🛗 이동)
+--   🏗 층·받침대: 층 올리기(10층 + ★v8 2번 집 10층)·받침대 사기, 자동 배치 / 모두 빼기, 층 목록 (🛗 이동)
 --   🪑 꾸미기: 가구 꾸미기 시작 (층 고르기), 놓은 가구 수, 🛍 가구 사기
 -- HouseWindow.OpenFloorPicker(floor?): 엘리베이터를 누르면 뜨는 작은 "층 이동" 창 (WorldFx → init.client 가 불러요)
 -- HouseWindow.ThemeGoal(): 지금 살 수 있는 더 좋은 집 (HUD "집" 버튼의 빨간 "!" 에 써요)
@@ -49,8 +49,20 @@ type PickerButton = { Button: TextButton, Label: TextLabel }
 
 type TabInfo = { Text: string, Color: Color3, Order: number }
 
-local MAX_FLOORS = Config.House.MaxFloors
+local MAX_FLOORS = Config.House.MaxFloors -- 집 한 채 층 (가구는 1번 집만)
+local TOTAL_FLOORS = Config.House.TotalFloors -- ★v8 2번 집까지 (11~20 = 2번 집 1~10층)
 local PER_FLOOR = Config.Plot.SlotsPerFloor
+
+-- ★v8 짧은 층 이름 (버튼용): 1번 집 "3층", 2번 집 "🏡3층"
+local function shortFloor(f: number): string
+	local house, lf = Config.FloorHouse(f)
+	return if house == 2 then "🏡" .. lf .. "층" else lf .. "층"
+end
+
+-- ★v8 2번 집 층을 보여 줄까 (1번 집을 다 올렸으면)
+local function showHouse2(floors: number): boolean
+	return floors >= MAX_FLOORS
+end
 local THEME_ORDER: { string } = Config.House.ThemeOrder
 
 -- 탭 (처음 = 새 집)
@@ -95,6 +107,7 @@ local decorFloorsShown = -1
 -- 엘리베이터 창
 local pickerButtons: { PickerButton } = {}
 local pickerInfo: TextLabel
+local pickerRelayout: (() -> ())? = nil -- ★v8 보이는 층 버튼 수가 바뀌면 칸 크기 다시
 local pickerFloor: number? = nil -- 엘리베이터가 있던 층 (모르면 캐릭터 높이로)
 local lastFire = 0
 local lastTeleport = -10
@@ -198,7 +211,7 @@ local function onBuyFloor()
 	local ok, reason = Config.CanBuyFloor(floors, slots, rebirths)
 	if not ok then
 		if reason == "Max" then
-			Toasts.Show("이미 10층이에요! 🏰", "info")
+			Toasts.Show("2번 집까지 다 올렸어요! 🏰", "info")
 		elseif reason == "Slots" then
 			Toasts.Show(string.format("받침대 %d개를 먼저 다 열어야 해요!", floors * PER_FLOOR), "warn")
 		elseif reason == "Rebirth" then
@@ -230,7 +243,7 @@ local function onBuySlot()
 		if slots >= Config.Plot.TotalSlots then
 			Toasts.Show("받침대가 최대예요! 🎉", "info")
 		else
-			Toasts.Show(string.format("%d층을 먼저 올려야 해요! 🏠", floors + 1), "warn")
+			Toasts.Show(Config.FloorName(floors + 1) .. "을 먼저 올려야 해요! 🏠", "warn")
 		end
 		UiKit.Shake(slotButton, 6, 6)
 		return
@@ -258,14 +271,14 @@ local function teleportFloor(n: number)
 	if n > snap.Floors then
 		local info = Config.FloorRequirement(n)
 		if info and snap.Rebirths < info.MinRebirth then
-			Toasts.Show(string.format("%d층은 🔄 환생 %d회부터 올릴 수 있어요!", n, info.MinRebirth), "warn")
+			Toasts.Show(string.format("%s은 🔄 환생 %d회부터 올릴 수 있어요!", Config.FloorName(n), info.MinRebirth), "warn")
 		else
-			Toasts.Show(string.format("%d층은 아직 없어요! 집(H)에서 올려 보세요 🏗", n), "warn")
+			Toasts.Show(string.format("%s은 아직 없어요! 집(H)에서 올려 보세요 🏗", Config.FloorName(n)), "warn")
 		end
 		return
 	end
 	if State.CurrentFloor() == n then
-		Toasts.Show(string.format("여기가 %d층이에요! 😊", n), "info")
+		Toasts.Show(string.format("여기가 %s이에요! 😊", Config.FloorName(n)), "info")
 		return
 	end
 	if os.clock() - lastTeleport < 1.6 then
@@ -275,7 +288,7 @@ local function teleportFloor(n: number)
 	lastTeleport = os.clock()
 	Remotes.Teleport:FireServer("Floor", n)
 	UiKit.PlaySound("Buy")
-	Toasts.Show(string.format("🛗 %d층으로 가요!", n), "good")
+	Toasts.Show(string.format("🛗 %s으로 가요!", Config.FloorName(n)), "good")
 	picker.Close()
 	window.Close()
 end
@@ -315,6 +328,10 @@ end
 local function decorateFloor(floor: number?)
 	if not State.Plot then
 		Toasts.Show("집이 아직 없어요! 잠깐만 기다려 주세요 🏠", "warn")
+		return
+	end
+	if floor and floor > MAX_FLOORS then
+		Toasts.Show("가구는 1번 집에만 놓을 수 있어요 🪑", "info") -- ★v8
 		return
 	end
 	local decorate = actions.Decorate
@@ -645,7 +662,7 @@ local function createFloorRow(parent: Instance, f: number): FloorRow
 	})
 	UiKit.Corner(frame, UDim.new(0.3, 0))
 	local stroke = UiKit.Stroke(frame, C.Grey, 3, true)
-	local namePill = UiKit.Pill(frame, string.format("🏠 %d층", f), C.Peach, {
+	local namePill = UiKit.Pill(frame, if f > MAX_FLOORS then shortFloor(f) else string.format("🏠 %d층", f), C.Peach, {
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 6, 0.5, 0),
 		Size = UDim2.new(0.2, 0, 0, 32),
@@ -785,24 +802,28 @@ local function rebuildFloors(snap: State.Snapshot, have: number)
 	local plotIdx = State.PlotIndex()
 	local where = if plotIdx then string.format("🏠 %d번 집", plotIdx) else "🏠 내 집"
 	local bonus = math.floor(Config.ThemeIncomeBonus(snap.Theme) * 100 + 0.5)
-	infoLabel.Text = string.format("%s · 🏢 %d층 · 받침대 %d/%d · 🎨 +%d%%", where, floors, slots, floors * PER_FLOOR, bonus)
+	local floorText = if floors > MAX_FLOORS
+		then string.format("🏢 %d층 + 🏡 %d층", MAX_FLOORS, floors - MAX_FLOORS)
+		else string.format("🏢 %d층", floors)
+	infoLabel.Text = string.format("%s · %s · 받침대 %d/%d · 🎨 +%d%%", where, floorText, slots, floors * PER_FLOOR, bonus)
 
-	-- 층 올리기 (큰 버튼)
+	-- 층 올리기 (큰 버튼). ★v8 10층 다음은 2번 집 짓기
 	local nextFloor = floors + 1
 	local nextInfo = Config.FloorRequirement(nextFloor)
-	if floors >= MAX_FLOORS or not nextInfo then
-		floorLabel.Text = string.format("🏰 %d층 완성! ✅", floors)
+	local nextName = if nextFloor == MAX_FLOORS + 1 then "🏡 2번 집 짓기" else "🏗 " .. Config.FloorName(nextFloor) .. " 올리기"
+	if floors >= TOTAL_FLOORS or not nextInfo then
+		floorLabel.Text = "🏰 2번 집까지 완성! ✅"
 		floorButton.BackgroundColor3 = C.Grey
 	else
 		local needSlots, needRebirth = floorNeeds(floors, slots, rebirths)
 		if needRebirth then
-			floorLabel.Text = string.format("🏗 %d층 올리기\n🔒 환생 %d회 필요", nextFloor, nextInfo.MinRebirth)
+			floorLabel.Text = string.format("%s\n🔒 환생 %d회 필요", nextName, nextInfo.MinRebirth)
 			floorButton.BackgroundColor3 = C.Grey
 		elseif needSlots then
-			floorLabel.Text = string.format("🏗 %d층 올리기\n받침대 먼저 (%d/%d)", nextFloor, slots, floors * PER_FLOOR)
+			floorLabel.Text = string.format("%s\n받침대 먼저 (%d/%d)", nextName, slots, floors * PER_FLOOR)
 			floorButton.BackgroundColor3 = C.Grey
 		else
-			floorLabel.Text = string.format("🏗 %d층 올리기\n💰 %s", nextFloor, Config.FormatNumber(nextInfo.Price))
+			floorLabel.Text = string.format("%s\n💰 %s", nextName, Config.FormatNumber(nextInfo.Price))
 			floorButton.BackgroundColor3 = if have >= nextInfo.Price then C.Mint else C.Lavender
 		end
 	end
@@ -813,7 +834,7 @@ local function rebuildFloors(snap: State.Snapshot, have: number)
 		slotLabel.Text = string.format("➕ 받침대 %d번\n💰 %s", slots + 1, Config.FormatNumber(price))
 		slotButton.BackgroundColor3 = if have >= price then C.Peach else C.Lavender
 	elseif slots < Config.Plot.TotalSlots then
-		slotLabel.Text = string.format("➕ 받침대\n%d층이 필요해요", floors + 1)
+		slotLabel.Text = "➕ 받침대\n" .. Config.FloorName(floors + 1) .. "이 필요해요"
 		slotButton.BackgroundColor3 = C.Grey
 	else
 		slotLabel.Text = "➕ 받침대\n최대 🎉"
@@ -824,6 +845,7 @@ local function rebuildFloors(snap: State.Snapshot, have: number)
 	for f, row in floorRows do
 		local info = Config.FloorRequirement(f)
 		local built = f <= floors
+		row.Frame.Visible = f <= MAX_FLOORS or showHouse2(floors) -- ★v8
 		if built then
 			local isHere = here == f
 			row.Status.Text = if isHere then "✅ 지금 여기 📍" else string.format("✅ 받침대 %d개", math.clamp(slots - (f - 1) * PER_FLOOR, 0, PER_FLOOR))
@@ -938,16 +960,21 @@ local function refreshPicker()
 	local snap = State.Snapshot
 	local floors = if snap then snap.Floors else 1
 	local here = pickerFloor or State.CurrentFloor()
-	pickerInfo.Text = if here then string.format("📍 지금 %d층 · 어디로 갈까요?", here) else "어디로 갈까요? 🛗"
+	pickerInfo.Text = if here then string.format("📍 지금 %s · 어디로 갈까요?", Config.FloorName(here)) else "어디로 갈까요? 🛗"
+	local show2 = floors > MAX_FLOORS -- ★v8 2번 집이 있으면 그 층 버튼도
 	for f, pb in pickerButtons do
+		pb.Button.Visible = f <= MAX_FLOORS or show2
 		if f <= floors then
 			local isHere = f == here
-			pb.Label.Text = if isHere then string.format("%d층\n📍 여기", f) else string.format("%d층", f)
-			pb.Button.BackgroundColor3 = if isHere then C.Gold else C.Sky
+			pb.Label.Text = if isHere then shortFloor(f) .. "\n📍 여기" else shortFloor(f)
+			pb.Button.BackgroundColor3 = if isHere then C.Gold elseif f > MAX_FLOORS then C.Mint else C.Sky
 		else
-			pb.Label.Text = string.format("%d층\n🔒", f)
+			pb.Label.Text = shortFloor(f) .. "\n🔒"
 			pb.Button.BackgroundColor3 = C.Grey
 		end
+	end
+	if pickerRelayout then
+		pickerRelayout()
 	end
 end
 
@@ -981,10 +1008,10 @@ local function buildPicker(gui: Instance)
 		VerticalAlignment = Enum.VerticalAlignment.Center,
 		Parent = gridFrame,
 	})
-	for f = 1, MAX_FLOORS do
+	for f = 1, TOTAL_FLOORS do
 		local btn, label = UiKit.Button({
 			Name = "Floor" .. f,
-			Text = string.format("%d층", f),
+			Text = shortFloor(f),
 			Color = C.Sky,
 			LayoutOrder = f,
 			Radius = UDim.new(0.3, 0),
@@ -1004,12 +1031,19 @@ local function buildPicker(gui: Instance)
 			return
 		end
 		local cols = 5
-		local rows = math.ceil(MAX_FLOORS / cols)
+		local shown = 0
+		for _, pb in pickerButtons do
+			if pb.Button.Visible then
+				shown += 1
+			end
+		end
+		local rows = math.max(math.ceil(shown / cols), 1)
 		local cw = math.floor((w - (cols - 1) * 8) / cols)
 		local ch = math.clamp(math.floor((h - (rows - 1) * 8) / rows), 36, 80)
 		grid.CellSize = UDim2.fromOffset(cw, ch)
 	end
 	gridFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayoutGrid)
+	pickerRelayout = relayoutGrid
 	relayoutGrid()
 
 	local bottom: Frame = Make("Frame", {
@@ -1240,7 +1274,7 @@ local function buildFloorsTab(content: Instance)
 		Padding = UDim.new(0, 6),
 		Parent = floorList,
 	})
-	for f = 1, MAX_FLOORS do
+	for f = 1, TOTAL_FLOORS do -- ★v8 2번 집 층까지
 		floorRows[f] = createFloorRow(floorList, f)
 	end
 end
