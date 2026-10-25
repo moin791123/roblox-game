@@ -99,6 +99,10 @@ file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/sha
 >    500 only when `Settings.InfiniteBag` AND `PassService.Has` (hook `DataService.SetPassCheck`); SetSetting on without the pass is
 >    refused with a toast. Old saves keep the setting and every bag item (over 150 just counts as full). Buying / being granted turns
 >    it on with a toast. BagWindow ♾ switch shows "🔒 R$150" and prompts the purchase; admin 🎟 has 4 switches (2×2 on tiny/phone).
+> 13. ★v8.1 after merging v7.6 UI + v8 maps: the tutorial card takes the widest free bottom gap (under the coin bar on small
+>    phones) and is a soft obstacle: rare-egg banners and toasts place around it, or the card hides briefly — alerts are never lost.
+>    Tips timer pauses during the tutorial; tool/🏡 squares ≥ 44 px, 2 columns on tiny when they fit. Admin 🌟 zone chips pick a
+>    column count that keeps ≥ 44 px for 16 zones. LampGenie/SunScarab tops lowered so ridden pets stay under the floor gap (10.6).
 > 7. **Hatch card shows the real income** (× Size) and, for rare pets, "📏 ×n": `Remotes.HatchFx` gains a 6th arg `size` (hatch + fuse).
 >
 > **v6 changes (this round)** — "조금 진행하니까 루즈해지네": a reason to rush to every map, plus a stronger magnet. ★v6 marks v6 below.

@@ -674,9 +674,10 @@ local function layoutTools(gui: ScreenGui, column: Frame, cell: number, gap: num
 	local gw, gh = size.X, size.Y
 	-- 큰 버튼이 크면 (PC·태블릿) 이름이 보이는 가로 버튼, 아니면 (폰) 작은 네모
 	local chip = cell >= 70 and gw >= 700
-	local bh = if chip then math.clamp(math.floor(cell * 0.56), 44, 54) else math.clamp(math.floor(cell * 0.62), 42, 58)
+	-- ★v7.6 폰 네모도 손가락 크기 44px 이상 (빠른 버튼은 원래 46px 이상이었어요), 네모 사이는 4px 부터
+	local bh = if chip then math.clamp(math.floor(cell * 0.56), 44, 54) else math.clamp(math.floor(cell * 0.62), 44, 58)
 	local bw = if chip then math.floor(bh * 3.3) else bh
-	local tgap = math.max(5, math.floor(bh * 0.12))
+	local tgap = if chip then math.max(5, math.floor(bh * 0.12)) else math.max(4, math.floor(bh * 0.1))
 	local ggap = tgap + math.max(6, math.floor(bh * 0.22)) -- 묶음 사이
 
 	-- 큰 버튼 칸은 방금 정한 Position/Size 로 바로 계산 (AbsolutePosition 은 아직 안 바뀌었을 수도 있어요). 기준점 (0, 0.5)
@@ -746,6 +747,22 @@ local function layoutTools(gui: ScreenGui, column: Frame, cell: number, gap: num
 		local rows = math.max(1, math.floor((maxH + tgap) / (bh + tgap)))
 		local tcols = math.ceil(n / rows)
 		rows = math.ceil(n / tcols) -- 줄마다 고르게
+		-- ★v7.6 아주 작은 폰 (568×320): 3줄이면 화면 가운데 (캐릭터 머리) 를 넘어요 → 한 줄 덜 쓰고
+		-- 코인 줄 바로 아래부터 화면 아래 6px 까지 길게 (큰 버튼 칸보다 조금 위·아래로 나와요)
+		if tcols > 2 and x0 + tcols * bw + (tcols - 1) * tgap > gw / 2 then
+			local c2 = tcols - 1
+			local r2 = math.ceil(n / c2)
+			local top = 8
+			for _, b in bars do
+				local bx0, bx1, by1 = b.X0 - off.X, b.X1 - off.X, b.Y1 - off.Y
+				if bx0 < x0 + c2 * bw + (c2 - 1) * tgap and x0 < bx1 then
+					top = math.max(top, math.ceil(by1) + 2)
+				end
+			end
+			if top + r2 * bh + (r2 - 1) * tgap <= gh - 6 then
+				y0, tcols, rows = top, c2, r2
+			end
+		end
 		for i, t in tools do
 			local col = math.floor((i - 1) / rows)
 			local row = (i - 1) % rows

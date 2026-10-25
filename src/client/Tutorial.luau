@@ -7,6 +7,8 @@
 --   이미 키운 친구 (환생 1번 이상 / 부화 5번 이상 / 펫 5마리 이상) 는 처음부터 끝낸 걸로 쳐요.
 -- 자리: PC 는 아래 가운데 (팁 줄 자리, 튜토리얼 동안 팁 줄은 쉬어요), 폰은 코인 줄 아래 가운데 (조이스틱을 피해요).
 -- 꾸미기 모드 동안은 카드·손가락·빛줄기가 숨어요 (SetSuppressed).
+-- ★v7.6 카드는 다른 HUD (왼쪽 버튼 · 도구 줄 · 펫 타기 버튼 · 점프 · 조이스틱 칸) 를 비켜요. 오른쪽 아래 알림 줄은 카드를 비켜 가다가
+--   자리가 모자라면 (작은 폰) 카드 자리를 써요: 그동안 카드만 잠깐 숨어요 (희귀 알 배너·말풍선은 절대 안 잃어요).
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -249,6 +251,7 @@ local current = 0 -- 지금 단계 (1..#STEPS), 0 = 안 해요
 local stepStarted = 0
 local passing = false -- 해낸 뒤 다음 단계로 넘어가는 중
 local suppressed = false
+local yielding = false -- ★v7.6 알림 줄이 자리가 모자라서 카드 자리를 쓰는 동안 (카드가 잠깐 숨어요)
 local started = false
 
 -- 빛줄기 (나만 보여요: 클라이언트에서 만든 건 서버로 안 가요)
@@ -268,24 +271,37 @@ local function setActive(on: boolean)
 	end
 end
 
--- 왼쪽 HUD (큰 버튼 칸 · 도구 줄) 가 y0..y1 높이에서 차지하는 오른쪽 끝
-local function hudRight(g: ScreenGui, y0: number, y1: number): number
-	local right = 0
-	local off = g.AbsolutePosition
-	for _, name in { "SideButtons", "Tools" } do
-		local o = g:FindFirstChild(name)
-		if o and o:IsA("GuiObject") and o.Visible then
-			local p, s = o.AbsolutePosition - off, o.AbsoluteSize
-			if p.Y < y1 and y0 < p.Y + s.Y then
-				right = math.max(right, p.X + s.X + 10)
-			end
+-- ★v7.6 y0..y1 줄에서 다른 HUD (왼쪽 큰 버튼 칸 · 도구 줄 · 펫 타기 버튼 · 창 ✖ · 폰 조이스틱 칸 · 점프 버튼) 사이의
+-- 가장 넓은 빈 칸 (화면 끝 10, 피할 것과 8 띄우기). 카드 자신은 SideSoft 라 UiKit.SideObstacles 에 안 들어가요
+local function freeSpan(obs: { UiKit.Rect }, gw: number, y0: number, y1: number): (number, number)
+	local cuts: { UiKit.Rect } = {}
+	for _, o in obs do
+		if o.Y0 < y1 and y0 < o.Y1 then
+			table.insert(cuts, o)
 		end
 	end
-	return right
+	table.sort(cuts, function(a: UiKit.Rect, b: UiKit.Rect): boolean
+		return a.X0 < b.X0
+	end)
+	local bestL, bestR = 10, 10
+	local x = 10
+	for _, o in cuts do
+		local e = math.min(o.X0 - 8, gw - 10)
+		if e - x > bestR - bestL then
+			bestL, bestR = x, e
+		end
+		x = math.max(x, o.X1 + 8)
+	end
+	if gw - 10 - x > bestR - bestL then
+		bestL, bestR = x, gw - 10
+	end
+	return math.floor(bestL), math.floor(bestR)
 end
 
--- 카드 자리와 안 크기 (화면이 바뀔 때마다).
--- 아래 가운데 (폰은 조이스틱 칸과 점프 버튼 사이) → 너무 좁으면 코인 줄 아래. 왼쪽 HUD 와는 안 겹치게
+-- 카드 자리와 안 크기 (화면이 바뀔 때 · 0.25초마다).
+-- 아래 가운데 (폰은 조이스틱 칸과 점프 버튼 사이) → 너무 좁으면 코인 줄 아래. 다른 HUD 와는 안 겹치고 화면 밖으로도 안 나가요.
+-- ★v7.6 오른쪽 알림 줄은 카드를 비켜 가다가, 자리가 모자라면 (작은 폰) 카드 자리를 써요 → 그동안 카드는 잠깐 숨어요 (tick)
+local MIN_W = 260
 local compact = false
 local function layoutCard()
 	local f, g = card, gui
@@ -300,26 +316,38 @@ local function layoutCard()
 	local small = gh < 500
 	local H = if small then 84 else 104
 	local want = math.clamp(gw * 0.46, 340, 560)
-	local L, R = 10, gw - 10
-	if touch then
-		L = math.floor(gw * 0.4) + 8
-		R = if math.min(gw, gh) <= 500 then gw - 113 else gw - 188
-	end
+	local obs = UiKit.SideObstacles(g)
+	-- 내 캐릭터 (화면 가운데, 머리 ~ 몸통) 도 가리지 않아요 (작은 폰에서 코인 줄 아래로 올라갈 때)
+	local cw = math.max(24, math.floor(gh * 0.07))
+	table.insert(obs, { X0 = gw / 2 - cw, Y0 = gh * 0.38, X1 = gw / 2 + cw, Y1 = gh * 0.65, Tag = "Character" })
+	local off = g.AbsolutePosition
+	-- (알약·건너뛰기 버튼이 카드 위로 12px 나와요: 줄은 그 위부터 봐요)
 	local y = gh - 12 - H
-	L = math.max(L, hudRight(g, y, y + H))
-	if R - L < 300 then
+	local L, R = freeSpan(obs, gw, y - 12, y + H)
+	if R - L < MIN_W then
 		-- 아래가 좁으면 코인 줄 아래
-		y = 90
+		-- (코인 줄과 점프 버튼 사이가 빠듯한 작은 폰: 몇 px 씩 내려 보며 가장 넓은 자리)
+		local base = 77
 		local top = g:FindFirstChild("TopBar")
 		local sub = top and top:FindFirstChild("SubRow", true)
 		if sub and sub:IsA("GuiObject") then
-			y = math.floor(sub.AbsolutePosition.Y - g.AbsolutePosition.Y + sub.AbsoluteSize.Y + 8)
+			base = math.ceil(sub.AbsolutePosition.Y - off.Y + sub.AbsoluteSize.Y)
 		end
-		L, R = 10, gw - 10
-		L = math.max(L, hudRight(g, y, y + H))
+		for d = 13, 21 do
+			local ty = base + d
+			local tl, tr = freeSpan(obs, gw, ty - 12, ty + H)
+			if tr - tl > R - L then
+				y, L, R = ty, tl, tr
+			end
+		end
 	end
-	local W = math.floor(math.max(math.min(want, R - L), math.min(260, gw - 20)))
+	-- 빈 칸이 좀 좁으면 (작은 폰) 카드도 좁게, 아주 좁으면 원래 너비로 (그래도 화면 밖으로는 안 나가요)
+	local W = math.floor(math.min(want, R - L))
+	if W < 200 then
+		W = math.min(MIN_W, gw - 20)
+	end
 	local x = math.floor(math.clamp(gw / 2 - W / 2, L, math.max(L, R - W)))
+	x = math.clamp(x, 10, math.max(10, gw - 10 - W))
 	f.AnchorPoint = Vector2.new(0, 0)
 	f.Position = UDim2.fromOffset(x, y)
 	f.Size = UDim2.fromOffset(W, H)
@@ -351,7 +379,7 @@ local function layoutCard()
 	liveLabel.Position = UDim2.fromOffset(tx, top + titleH + 2 + textH)
 	liveLabel.Size = UDim2.fromOffset(tw, rest - textH)
 	if bw > 0 then
-		local bh = math.max(40, math.floor(H * 0.46))
+		local bh = math.max(44, math.floor(H * 0.46)) -- ★v7.6 손가락 크기 44px 이상
 		nextButton.Size = UDim2.fromOffset(bw, bh)
 		nextButton.Position = UDim2.fromOffset(W - pad - bw, math.floor((H - bh) / 2) + 6)
 	end
@@ -532,6 +560,26 @@ end
 ----------------------------------------------------------------------
 local finish: (skipped: boolean) -> ()
 
+-- ★v7.6 비켜 주기: 작은 폰에서 희귀 알 배너·말풍선이 카드 자리까지 써야 하면 (Toasts.SoftCovered) 그동안 카드는 숨어요.
+-- 알림은 절대 안 잃어요. 숨어 있어도 자리는 그대로 알려 줘서 (SideYield) 알림이 줄면 카드가 다시 나와요
+local function setYield(on: boolean)
+	if yielding == on then
+		return
+	end
+	yielding = on
+	local f = card
+	if not f then
+		return
+	end
+	f:SetAttribute("SideYield", on)
+	if current > 0 then
+		f.Visible = not suppressed and not on
+		if f.Visible then
+			UiKit.Pop(f, 0.25)
+		end
+	end
+end
+
 local function showStep()
 	local f = card
 	local step = STEPS[current]
@@ -546,9 +594,9 @@ local function showStep()
 	nextButton.Visible = step.Button ~= nil
 	nextLabel.Text = step.Button or "넘어가기 ▶"
 	nextButton.BackgroundColor3 = C.Mint
-	f.Visible = not suppressed
+	f.Visible = not suppressed and not yielding
 	layoutCard()
-	if not suppressed then
+	if f.Visible then
 		UiKit.Pop(f, 0.3)
 	end
 end
@@ -594,6 +642,7 @@ finish = function(skipped: boolean)
 	local was = current
 	current = 0
 	passing = false
+	setYield(false)
 	clearGuide()
 	save(TOTAL)
 	local f = card
@@ -639,6 +688,8 @@ local function tick()
 	if not step then
 		return
 	end
+	setYield(Toasts.SoftCovered()) -- ★v7.6 알림이 먼저
+	layoutCard() -- 펫 타기 버튼처럼 나타났다 사라지는 HUD 도 비켜요
 	updateGuide(step)
 	if passing then
 		return
@@ -678,6 +729,8 @@ function Tutorial.Init(g: ScreenGui, h: Hooks)
 		ZIndex = 12,
 		Parent = g,
 	})
+	-- ★v7.6 알림 줄은 이 카드를 비켜 가지만, 자리가 모자라면 그 위에 놓여요 (카드가 비켜요, UiKit.SoftRects)
+	f:SetAttribute("SideSoft", true)
 	card = f
 	UiKit.Corner(f, UDim.new(0, 18))
 	UiKit.Gradient(f)
@@ -833,7 +886,7 @@ function Tutorial.SetSuppressed(on: boolean)
 	suppressed = on
 	local f = card
 	if f and current > 0 then
-		f.Visible = not on
+		f.Visible = not on and not yielding
 	end
 	if on then
 		clearGuide()

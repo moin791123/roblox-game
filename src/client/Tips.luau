@@ -3,6 +3,7 @@
 local UserInputService = game:GetService("UserInputService")
 
 local UiKit = require(script.Parent.UiKit)
+local Toasts = require(script.Parent.Toasts)
 
 local Make, C = UiKit.Make, UiKit.Colors
 
@@ -45,6 +46,64 @@ local banner: Frame? = nil
 local suppressed = false -- 꾸미기 모드 중에는 숨겨요 (아래 가구 줄을 가려요)
 local tutorialOn = false -- ★v7.6 튜토리얼 카드가 같은 자리를 써요: 그동안 쉬고, 끝나면 그때부터 2분 반
 
+-- ★v7.6 자리: 아래 가운데 (예전 그대로). 아주 작은 폰에서 거기가 왼쪽 도구 줄에 걸리면 코인 줄 아래 오른쪽 빈 칸
+-- (튜토리얼 카드와 같은 자리, 속성 SideSoft: 오른쪽 알림 줄은 비켜 가다가 자리가 모자라면 그 위에 놓여요 → 도움말이 잠깐 숨어요)
+local limit: UISizeConstraint? = nil
+local atTop = false
+local function place(frame: Frame, gui: Instance)
+	if not gui:IsA("GuiBase2d") then
+		return
+	end
+	local size = (gui :: GuiBase2d).AbsoluteSize
+	local gw, gh = size.X, size.Y
+	local w = math.clamp(math.floor(gw * 0.46), 260, 580)
+	local x0, y0 = gw / 2 - w / 2, gh - 12 - 48
+	local function hits(name: string, ax0: number, ay0: number, ax1: number, ay1: number): GuiObject?
+		local o = gui:FindFirstChild(name)
+		if o and o:IsA("GuiObject") and o.Visible then
+			local r = UiKit.RectOf(o, 4)
+			if r.X0 < ax1 and ax0 < r.X1 and r.Y0 < ay1 and ay0 < r.Y1 then
+				return o
+			end
+		end
+		return nil
+	end
+	atTop = hits("Tools", x0, y0, x0 + w, y0 + 48) ~= nil
+	if atTop then
+		local y = 90
+		local top = gui:FindFirstChild("TopBar")
+		local sub = top and top:FindFirstChild("SubRow", true)
+		if sub and sub:IsA("GuiObject") then
+			y = math.ceil(sub.AbsolutePosition.Y + sub.AbsoluteSize.Y) + 8
+		end
+		local L = 10
+		for _, name in { "SideButtons", "Tools" } do
+			local o = hits(name, 0, y, gw, y + 48)
+			if o then
+				L = math.max(L, math.ceil(o.AbsolutePosition.X + o.AbsoluteSize.X) + 10)
+			end
+		end
+		-- 내 캐릭터 (화면 가운데, 머리 ~ 몸통) 오른쪽으로
+		local cw = math.max(24, math.floor(gh * 0.07))
+		if y < gh * 0.65 and y + 48 > gh * 0.38 then
+			L = math.max(L, math.ceil(gw / 2 + cw) + 8)
+		end
+		local tw = math.max(200, math.min(w, gw - 10 - L))
+		frame.AnchorPoint = Vector2.new(0, 0)
+		frame.Position = UDim2.fromOffset(math.max(10, math.min(L, gw - 10 - tw)), y)
+		frame.Size = UDim2.fromOffset(tw, 48)
+	else
+		frame.AnchorPoint = Vector2.new(0.5, 1)
+		frame.Position = UDim2.new(0.5, 0, 1, -12)
+		frame.Size = UDim2.new(0.46, 0, 0, 48)
+	end
+	local c = limit
+	if c then
+		c.MinSize = Vector2.new(if atTop then 0 else 260, 0)
+	end
+	frame:SetAttribute("SideSoft", atTop)
+end
+
 function Tips.Init(gui: Instance)
 	local frame: Frame = Make("Frame", {
 		Name = "Tips",
@@ -57,7 +116,7 @@ function Tips.Init(gui: Instance)
 		Parent = gui,
 	})
 	banner = frame
-	Make("UISizeConstraint", { MinSize = Vector2.new(260, 0), MaxSize = Vector2.new(580, 60), Parent = frame })
+	limit = Make("UISizeConstraint", { MinSize = Vector2.new(260, 0), MaxSize = Vector2.new(580, 60), Parent = frame })
 	UiKit.Corner(frame, UDim.new(0.5, 0))
 	UiKit.Gradient(frame)
 	UiKit.Stroke(frame, C.White, 3, true)
@@ -75,17 +134,35 @@ function Tips.Init(gui: Instance)
 		while tutorialOn do
 			task.wait(1)
 		end
-		local started = os.clock()
+		local shown = 0 -- ★v7.6 튜토리얼이 늦게 (데이터가 오고 2초 뒤) 켜져도 그동안은 시계가 쉬어요 (끝나면 남은 시간만큼)
 		local i = 0
-		while os.clock() - started < DURATION do
+		while shown < DURATION do
+			if tutorialOn then
+				frame.Visible = false
+				task.wait(1)
+				continue
+			end
 			i = i % #TIPS + 1
 			label.Text = TIPS[i]
-			local hide = suppressed or tutorialOn
-			frame.Visible = not hide
-			if not hide then
+			place(frame, gui)
+			local covered = atTop and Toasts.SoftCovered()
+			frame:SetAttribute("SideYield", covered)
+			frame.Visible = not suppressed and not covered
+			if frame.Visible then
 				UiKit.Pop(frame, 0.35)
 			end
-			task.wait(INTERVAL)
+			-- 위로 올라간 도움말은 알림 줄이 자리가 모자라면 비켜 줘요 (0.25초마다)
+			local t = 0
+			while t < INTERVAL and not tutorialOn do
+				task.wait(0.25)
+				t += 0.25
+				local cover = atTop and Toasts.SoftCovered()
+				if cover ~= (frame:GetAttribute("SideYield") == true) then
+					frame:SetAttribute("SideYield", cover)
+					frame.Visible = not suppressed and not cover
+				end
+			end
+			shown += INTERVAL
 		end
 		UiKit.Tween(UiKit.Scale(frame), 0.25, { Scale = 0 }, Enum.EasingStyle.Back, Enum.EasingDirection.In)
 		task.wait(0.3)

@@ -993,28 +993,47 @@ end
 
 local function layoutRare(PW: number, PH: number)
 	local nz = #zoneChips
-	local zc = if (PW - (nz - 1) * GAP) / nz >= 56 then nz else math.ceil(nz / 2)
-	local zr = math.ceil(nz / zc)
-	local nRows = zr + 2
-	local rowH = math.clamp(math.floor((PH - (nRows - 1) * GAP) / nRows), MIN, 64)
-	local zw = math.floor((PW - (zc - 1) * GAP) / zc)
+	-- ★v8 지역 16개: 지역 칸 (넓이 minW 이상) 몇 줄 + 등급 칩 줄 + 소환 버튼 줄. 높이가 모자라면 등급 칩과 소환을 한 줄에,
+	-- 그래도 모자라면 (세운 작은 폰) 칸 사이를 좁게. 모든 칸은 MIN (44) 이상
+	local gap, zc, zr, nRows, sw, together = GAP, nz, 1, 3, PW, false
+	for _, try in { { GAP, 56, false }, { GAP, 56, true }, { GAP, MIN, true }, { 3, MIN, true } } do
+		local g, minW, tog = try[1], try[2], try[3]
+		local c = nz
+		while c > 1 and (PW - (c - 1) * g) / c < minW do
+			c -= 1
+		end
+		local r = math.ceil(nz / c)
+		c = math.ceil(nz / r)
+		local rows = r + (if tog then 1 else 2)
+		local w = if tog then math.min(math.max(math.floor(PW * 0.34), 120), PW - 3 * (MIN + g)) else PW
+		gap, zc, zr, nRows, sw, together = g, c, r, rows, w, tog
+		if rows * MIN + (rows - 1) * g <= PH and w >= 100 then
+			break
+		end
+	end
+	local rowH = math.clamp(math.floor((PH - (nRows - 1) * gap) / nRows), MIN, 64)
+	local zw = math.floor((PW - (zc - 1) * gap) / zc)
 	for i, chip in zoneChips do
 		local col = (i - 1) % zc
 		local row = math.floor((i - 1) / zc)
-		place(chip.Button, col * (zw + GAP), row * (rowH + GAP), zw, rowH)
+		place(chip.Button, col * (zw + gap), row * (rowH + gap), zw, rowH)
 		place(chip.Label, 2, 2, zw - 4, rowH - 4)
 		setMax(chip.Label, math.min(20, rowH * 0.42))
 	end
-	local y = zr * (rowH + GAP)
-	local tw = math.floor((PW - 2 * GAP) / 3)
+	local y = zr * (rowH + gap)
+	local tw = if together then math.floor((PW - sw - 3 * gap) / 3) else math.floor((PW - 2 * gap) / 3)
 	for i, chip in rareChips do
-		place(chip.Button, (i - 1) * (tw + GAP), y, tw, rowH)
+		place(chip.Button, (i - 1) * (tw + gap), y, tw, rowH)
 		place(chip.Label, 2, 2, tw - 4, rowH - 4)
 		setMax(chip.Label, math.min(20, rowH * 0.42))
 	end
-	y += rowH + GAP
-	place(spawnButton, 0, y, PW, rowH)
-	y += rowH + GAP
+	if together then
+		place(spawnButton, PW - sw, y, sw, rowH)
+	else
+		y += rowH + gap
+		place(spawnButton, 0, y, PW, rowH)
+	end
+	y += rowH + gap
 	local left = PH - y
 	rareHint.Visible = left >= 16
 	place(rareHint, 4, y, PW - 8, math.min(28, left))

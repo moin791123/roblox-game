@@ -522,7 +522,8 @@ return function(Kit, PET_BUILDERS, _EGG_BUILDERS)
 		-- 상투 + 금 고리
 		local top = H.top(c, 0.9)
 		addPart(b, "HairTie", "Cyl", V(0.16, 0.36, 0.36), CFrame.new(top + V(0, 0.05, 0)) * CFrame.Angles(0, 0, math.pi / 2), GOLD, METAL)
-		ell(b, "Hair", V(0.4, 0.75, 0.4), CFrame.new(top + V(0, 0.45, 0.1)) * CFrame.Angles(0.4, 0, 0), RGB(40, 40, 70))
+		-- ★v8 상투를 낮게: 크게 타면 집 천장 (층 사이 11) 을 뚫었어요 (타기 키 10.84 → 10.15)
+		ell(b, "Hair", V(0.36, 0.5, 0.36), CFrame.new(top + V(0, 0.28, 0.08)) * CFrame.Angles(0.4, 0, 0), RGB(40, 40, 70))
 		ell(b, "Sparkle", V(0.16, 0.16, 0.16), CFrame.new(0.45, 0.85, -0.85), RGB(200, 230, 255), NEON)
 		H.glow(H.part(b, "Body"), RGB(150, 200, 255), 0.25, 4)
 	end
@@ -548,7 +549,8 @@ return function(Kit, PET_BUILDERS, _EGG_BUILDERS)
 		local hp = surf(c.H, c.HS, V(0, 1, -0.2))
 		H.link(b, "Horn", hp, hp + V(0, 0.4, -0.3), 0.18, GOLD)
 		-- 해 공 (머리 위 원반 + 빛살)
-		local sc = H.top(c, 0.9) + V(0, 0.85, 0.2)
+		-- ★v8 해 공을 머리에 붙여서: 크게 타면 집 천장 (층 사이 11) 을 뚫었어요 (타기 키 11.24 → 10.16)
+		local sc = H.top(c, 0.9) + V(0, 0.4, 0.2)
 		ell(b, "Sun", V(0.75, 0.75, 0.75), CFrame.new(sc), RGB(255, 200, 70), NEON)
 		for i = 0, 7 do
 			local a = i * math.pi / 4
