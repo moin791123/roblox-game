@@ -57,6 +57,9 @@ local KEY_COOLDOWN = 7 -- 같은 키는 6초에 한 번만 쓸 수 있어요
 local WRITE_RESERVE = 2 -- 주기 쓰기는 예산을 조금 남겨 둬요 (나갈 때 쓰기용)
 local NAME_RETRY = 600 -- 이름 찾기에 실패하면 10분 뒤 다시
 local INT_MAX = 2 ^ 53 -- OrderedDataStore 는 정수만 (double 로 안전한 최대값)
+-- ★v8 1000조 넘는 점수는 로그로 줄여서 써요 (순서는 그대로, 1e30 도 INT_MAX 안에)
+local BIG = 1e15
+local BIG_STEP = 1e12 -- 10배마다 이만큼
 local UNKNOWN_NAME = "익명 친구"
 
 local FONT = Enum.Font.FredokaOne
@@ -145,10 +148,25 @@ end
 
 local function toInt(v: any): number
 	local n = tonumber(v) or 0
-	if n ~= n then
+	if n ~= n or n == math.huge then
 		return 0
 	end
-	return math.clamp(math.floor(n), 0, INT_MAX)
+	return math.max(math.floor(n), 0)
+end
+
+-- ★v8 점수 → OrderedDataStore 값 (BIG 넘으면 로그 눈금)
+local function encodeScore(n: number): number
+	if n < BIG then
+		return n
+	end
+	return math.min(BIG + math.floor(math.log10(n / BIG) * BIG_STEP), INT_MAX)
+end
+
+local function decodeScore(s: number): number
+	if s < BIG then
+		return s
+	end
+	return math.floor(BIG * 10 ^ ((s - BIG) / BIG_STEP) + 0.5)
 end
 
 local function keyFor(userId: number): string
@@ -606,7 +624,7 @@ local function writeStat(stat: Stat, userId: number, value: number, minGap: numb
 	end
 	stat.WrittenAt[userId] = now
 	local ok, err = pcall(function()
-		store:SetAsync(keyFor(userId), value)
+		store:SetAsync(keyFor(userId), encodeScore(value))
 	end)
 	if ok then
 		stat.Written[userId] = value
@@ -637,7 +655,7 @@ local function readStat(stat: Stat): boolean
 		for _, item in result do
 			if type(item) == "table" then
 				local userId = tonumber(string.match(tostring(item.key), "^u_(%-?%d+)$"))
-				local value = toInt(item.value)
+				local value = decodeScore(toInt(item.value))
 				if userId and value > 0 then
 					table.insert(entries, { UserId = userId, Value = value })
 				end

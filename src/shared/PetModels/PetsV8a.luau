@@ -4,7 +4,7 @@
 return function(Kit, PET_BUILDERS, _EGG_BUILDERS)
 	local V, RGB, ell, surf, front, facing, chibi, SIDES = Kit.V, Kit.RGB, Kit.ell, Kit.surf, Kit.front, Kit.facing, Kit.chibi, Kit.SIDES
 	local addPart, darker, alongY, tri, frameUp, muzzle, smallNose, pointyEars, roundEars = Kit.addPart, Kit.darker, Kit.alongY, Kit.tri, Kit.frameUp, Kit.muzzle, Kit.smallNose, Kit.pointyEars, Kit.roundEars
-	local WHITE, EYE, MOUTH = Kit.WHITE, Kit.EYE, Kit.MOUTH
+	local WHITE = Kit.WHITE
 	local NEON = Enum.Material.Neon
 	local GLASS = Enum.Material.Glass
 	local H = require(script.Parent.V8Kit).make(Kit)

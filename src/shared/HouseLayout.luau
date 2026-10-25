@@ -493,7 +493,7 @@ end
 -- 받침대 윗면 (아이템 모델 바닥 피벗) 플롯 로컬 CFrame. 받침대 s 는 ceil(s / 12) 층. 앞(-Z, 입구)을 바라봐요
 function HouseLayout.SlotLocal(slot: number, themeId: any): CFrame
 	local l = HouseLayout.Get(themeId)
-	local s = math.max(math.floor(tonumber(slot) or 1), 1)
+	local _, s = Config.SlotHouse(slot) -- ★v8 2번 집 받침대(121~)도 그 집 안 번호로 (원점은 부르는 쪽이 2번 집 자리로)
 	local spot = l.Slots[(s - 1) % SLOTS + 1]
 	return CFrame.new(spot.X, HouseLayout.FloorY(Config.SlotFloor(s)) + PED_H, spot.Z)
 end

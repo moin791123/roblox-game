@@ -1,4 +1,4 @@
-# 펫 월드 (v7.5): design contract
+# 펫 월드 (v8): design contract
 
 Kid-friendly **pet-collecting simulator**. Rojo project, Luau. All player-facing text is **Korean**, cute and short.
 Code comments: short Korean comments (match existing files). Tabs, `task.*` (never `wait`/`spawn`/`delay`).
@@ -9,6 +9,27 @@ This file is the **contract** between the phase-2 builder agents. Use the exact 
 need is missing here, do the simplest thing that fits the contract and write it in your report — never edit a
 file you do not own (see **File ownership**). `src/shared/Config.luau`, `src/shared/Remotes.luau` and
 `src/server/DataService.luau` are **done** (read them; they are the source of truth for numbers and helpers).
+
+> **v8 changes (this round)**: 8 new theme maps and a second house. ★v8 marks v8 below.
+> 1. **8 outer islands (zones 9–16)**: 🌸 벚꽃 정원 (환생 16) · 🦕 공룡 섬 (18) · 💎 보석 동굴 (20) · 🏜 사막 오아시스 (22) ·
+>    🧸 장난감 나라 (24) · 🌙 꿈나라 (26) · 🌋 불꽃 화산 (28) · 👑 황금 왕국 (30, max rebirth). Each one has 11 pets (8 normal + 시크릿/천상/이터널)
+>    and 8 eggs (5 normal + 3 rare), so 88 pets and 64 eggs in total. `Zone.Parent` is the island its trail starts from (the far edge of
+>    zones 2–8, 황금 왕국 from 사막 오아시스). WorldBuilder builds the trail, a fence gap, a road from the plaza to each exit, and the
+>    gate sign back "← <parent>". Pet models are in `PetModels/PetsV8a..d` with the shared helper kit `PetModels/V8Kit` (it returns a table,
+>    so the auto-register skips it). Every pet has 60 parts or fewer. 꿈나라 uses `Palette.Night` (ZoneClient sets a night sky like 우주).
+>    The 숲 마을 ground is now z ±200, so islands 3, 4, 6 and 7 moved 75 studs further out.
+> 2. **2번 집**: `data.Floors` is 1..`Config.House.TotalFloors` (20). Floors 11–20 are house 2 floors 1–10, and slots 121–240 are
+>    house 2. Floor 11 ("2번 집 짓기") needs rebirth 18 and all 120 house-1 slots open. House 2 is at `Config.Layout.Plots2[i]`
+>    (z ±160, right behind house 1, facing the same way; a back alley path runs between z 112 and 128) and uses house 1's theme.
+>    Helpers: `Config.FloorHouse(floor)`, `Config.SlotHouse(slot)`, `Config.HouseFloorCount(floors, house)`, `Config.FloorName(floor)`
+>    ("3층" / "2번 집 3층") and `Config.PlotOrigin(idx, house?)`. `HouseLayout.SlotLocal` uses the slot number inside its house, and the
+>    caller passes house 2's origin. `HouseBuilder.Build(..., opts { House = 2 })` gives pedestals and elevators the global
+>    slot and floor numbers. PlotService keeps house 2 in `Plot<i>/Annex` (its own House, Collector and SpawnPoint; `plot.Origin2`,
+>    `plot.Handles2`). Before house 2 is built, the lot shows a sign "🔒 2번 집 / 환생 18회 + 받침대 120개". Both collector pads
+>    collect from the same `Pending`. Furniture stays in house 1 only. The elevator picker and the 🏗 floor list show house 2 floors
+>    ("🏡3층") once house 1 has 10 floors.
+> 3. Big numbers: the leaderstats 💰/⚡ values are now StringValues (`Config.FormatNumber`). LeaderboardService stores scores above 1e15
+>    on a log scale (`encodeScore`/`decodeScore`), so values up to 1e30 keep their order.
 
 > **v7 changes (this round)** — six asks from the parent. ★v7 marks v7 below.
 > 1. **Alert level** (`Config.Settings.AlertLevel`, a NUMBER 0–4, default 0; every other setting stays boolean). It is a ladder, each

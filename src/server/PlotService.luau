@@ -63,6 +63,14 @@ export type Plot = {
 	LastAutoClaim: number, -- 마지막 자동 수금 (os.clock)
 	ShownPending: number,
 	ShownAuto: boolean?, -- 수금 패드 글자가 "자동 수금 중" 인가
+	-- ★v8 2번 집 (Plot 아래 Model "Annex". 층이 10 넘으면 지어져요, 아니면 빈 땅 + 간판 "Lot")
+	Origin2: CFrame,
+	Annex: Model,
+	Handles2: HouseBuilder.Handles?,
+	Collector2: BasePart?,
+	CollectorLabel2: TextLabel?,
+	CollectorConn2: RBXScriptConnection?,
+	SignLabel2: TextLabel?,
 }
 
 export type PlotChangeReason = "Assign" | "Rebuild" | "Release"
@@ -189,7 +197,8 @@ end
 
 -- 받침대 윗면 (아이템이 놓이는 곳). 받침대 배치는 테마 크기에 따라 HouseBuilder(HouseLayout) 가 알아요
 local function slotCFrameOf(plot: Plot, slot: number): CFrame
-	return HouseBuilder.SlotCFrame(plot.Origin, slot, plot.Theme)
+	local house = Config.SlotHouse(slot) -- ★v8 121~ 은 2번 집
+	return HouseBuilder.SlotCFrame(if house == 2 then plot.Origin2 else plot.Origin, slot, plot.Theme)
 end
 
 -- Collector > BillboardGui > TextLabel "Amount" (HouseBuilder 가 만들어요)
@@ -233,6 +242,9 @@ local function setSign(plot: Plot)
 	end
 	local owner = plot.Owner
 	label.Text = if owner then owner.DisplayName .. " 님의 집" else "빈 집"
+	if plot.SignLabel2 then
+		plot.SignLabel2.Text = if owner then owner.DisplayName .. " 님의 2번 집" else "빈 집"
+	end
 end
 
 -- 잠긴/열린 받침대 색과 가격표 (HouseBuilder 가 그려요). 빈 집은 시작 받침대 / 1층
@@ -242,6 +254,9 @@ local function updatePedestals(plot: Plot)
 	local unlocked = if data then data.SlotsUnlocked else Config.Plot.StartSlots
 	local floors = if data then data.Floors else 1
 	HouseBuilder.UpdatePedestals(plot.Handles, unlocked, floors)
+	if plot.Handles2 then
+		HouseBuilder.UpdatePedestals(plot.Handles2, unlocked, floors) -- ★v8
+	end
 end
 
 -- 자동 수금 버튼이 켜져 있고 쓸 수 있나 (★v7.2 게임 패스)
@@ -260,27 +275,28 @@ local function updateCollector(plot: Plot)
 	plot.ShownPending = pending
 	plot.ShownAuto = auto
 	plot.Collector:SetAttribute("Pending", pending)
-	local label = plot.CollectorLabel
-	if label then
-		label.Text = if auto
-			then "🏦 자동 수금 중"
-			elseif pending > 0 then "💰 " .. Config.FormatNumber(pending) .. " 받기"
-			else "💰 모으기"
+	if plot.Collector2 then
+		plot.Collector2:SetAttribute("Pending", pending)
+	end
+	local text = if auto
+		then "🏦 자동 수금 중"
+		elseif pending > 0 then "💰 " .. Config.FormatNumber(pending) .. " 받기"
+		else "💰 모으기"
+	for _, label in { plot.CollectorLabel, plot.CollectorLabel2 } do -- ★v8 2번 집 수금 패드도 같은 금고
+		if label then
+			label.Text = text
+		end
 	end
 end
 
 ----------------------------------------------------------------------
 -- 집 짓기 (외형은 HouseBuilder)
 ----------------------------------------------------------------------
-local claim: (plot: Plot, player: Player) -> ()
+local claim: (plot: Plot, player: Player, pad: BasePart?) -> ()
 
--- 수금 패드 밟기 → 수금. 집을 지을 때마다 다시 연결해요 (HouseBuilder 는 Collector 를 재사용하지만, 바뀌어도 안전하게)
-local function bindCollector(plot: Plot)
-	if plot.CollectorConn then
-		plot.CollectorConn:Disconnect()
-		plot.CollectorConn = nil
-	end
-	plot.CollectorConn = plot.Collector.Touched:Connect(function(hit)
+-- 수금 패드 밟기 → 수금 (★v8 2번 집 패드도 같은 금고)
+local function padConn(plot: Plot, pad: BasePart): RBXScriptConnection
+	return pad.Touched:Connect(function(hit)
 		local owner = plot.Owner
 		if not owner then
 			return
@@ -293,8 +309,17 @@ local function bindCollector(plot: Plot)
 		if not hum or hum.Health <= 0 then
 			return
 		end
-		claim(plot, owner)
+		claim(plot, owner, pad)
 	end)
+end
+
+-- 집을 지을 때마다 다시 연결해요 (HouseBuilder 는 Collector 를 재사용하지만, 바뀌어도 안전하게)
+local function bindCollector(plot: Plot)
+	if plot.CollectorConn then
+		plot.CollectorConn:Disconnect()
+		plot.CollectorConn = nil
+	end
+	plot.CollectorConn = padConn(plot, plot.Collector)
 end
 
 -- 엘리베이터 프롬프트 주인 확인 (HouseBuilder 가 지을 때 OwnerUserId 를 읽지만, 혹시 몰라 한 번 더 맞춰요).
@@ -339,17 +364,89 @@ local function setHouseAttributes(model: Model, themeId: string, floors: number)
 	model:SetAttribute("ThemeSize", Config.ThemeSize(themeId))
 end
 
--- 집을 (다시) 지어요. 받침대 위 아이템은 안 그려요 (필요하면 RefreshPlot)
-local function buildHouse(plot: Plot, themeId: string, floors: number, slotsUnlocked: number)
-	local theme = if Config.House.Themes[themeId] then themeId else "Basic"
-	local floorCount = math.clamp(math.floor(floors), 1, Config.House.MaxFloors)
-	plot.Theme = theme
-	plot.Floors = floorCount
-	setHouseAttributes(plot.Model, theme, floorCount)
-	applyHandles(plot, HouseBuilder.Build(plot.Model, plot.Origin, theme, floorCount, slotsUnlocked))
+-- ★v8 2번 집 자리가 비었을 때: 빈 땅 + 간판 (몇 번 환생하면 지어지는지)
+local function buildLot(plot: Plot)
+	if plot.Annex:FindFirstChild("Lot") then
+		return
+	end
+	local lot = Instance.new("Model")
+	lot.Name = "Lot"
+	local o = plot.Origin2
+	local function piece(name: string, size: Vector3, cf: CFrame, color: Color3, mat: Enum.Material): Part
+		local p = Instance.new("Part")
+		p.Name = name
+		p.Anchored = true
+		p.Size = size
+		p.CFrame = o * cf
+		p.Color = color
+		p.Material = mat
+		p.TopSurface = Enum.SurfaceType.Smooth
+		p.BottomSurface = Enum.SurfaceType.Smooth
+		p.Parent = lot
+		return p
+	end
+	local s = Config.Layout.PlotSize - 10
+	local ground = piece("Ground", Vector3.new(s, 0.2, s), CFrame.new(0, 0.1, 0), Color3.fromRGB(205, 175, 130), Enum.Material.Ground)
+	ground.CanCollide = false
+	ground.CanQuery = false
+	local z = -s / 2 + 4
+	piece("Post", Vector3.new(0.6, 5, 0.6), CFrame.new(0, 2.5, z), Color3.fromRGB(150, 105, 70), Enum.Material.Wood)
+	local board = piece("Board", Vector3.new(9, 3.4, 0.5), CFrame.new(0, 5.6, z), Color3.fromRGB(255, 235, 190), Enum.Material.Wood)
+	local _, label = makeBillboard(board, 3.4, 14, 3.2, 90)
+	local req = Config.FloorRequirement(Config.House.MaxFloors + 1)
+	local need = if req then req.MinRebirth else 0
+	label.Text = "🔒 2번 집\n🔄 환생 " .. need .. "회 + 받침대 " .. (Config.House.MaxFloors * SLOTS_PER_FLOOR) .. "개"
+	label.TextColor3 = Color3.fromRGB(255, 235, 120)
+	lot.Parent = plot.Annex
 end
 
-local function buildPlot(index: number, origin: CFrame, parent: Instance): Plot
+-- ★v8 2번 집을 (다시) 짓거나, 층이 10 이하면 빈 땅으로
+local function buildAnnex(plot: Plot, theme: string, total: number, slotsUnlocked: number)
+	local annex = plot.Annex
+	if plot.CollectorConn2 then
+		plot.CollectorConn2:Disconnect()
+		plot.CollectorConn2 = nil
+	end
+	local floors2 = Config.HouseFloorCount(total, 2)
+	if floors2 <= 0 then
+		HouseBuilder.Destroy(annex)
+		plot.Handles2 = nil
+		plot.Collector2 = nil
+		plot.CollectorLabel2 = nil
+		plot.SignLabel2 = nil
+		buildLot(plot)
+		return
+	end
+	local lot = annex:FindFirstChild("Lot")
+	if lot then
+		lot:Destroy()
+	end
+	annex:SetAttribute("OwnerUserId", plot.Model:GetAttribute("OwnerUserId") or 0)
+	local h = HouseBuilder.Build(annex, plot.Origin2, theme, floors2, slotsUnlocked, { House = 2 })
+	plot.Handles2 = h
+	plot.Collector2 = h.Collector
+	plot.CollectorLabel2 = collectorLabelOf(h.Collector)
+	plot.SignLabel2 = signLabelOf(h.House)
+	syncElevatorOwner(plot, h)
+	plot.CollectorConn2 = padConn(plot, h.Collector)
+end
+
+-- 집을 (다시) 지어요. 받침대 위 아이템은 안 그려요 (필요하면 RefreshPlot).
+-- floors = 전체 층 수 (1..20): 1번 집 min(floors, 10)층, 넘는 만큼 2번 집 (★v8)
+local function buildHouse(plot: Plot, themeId: string, floors: number, slotsUnlocked: number)
+	local theme = if Config.House.Themes[themeId] then themeId else "Basic"
+	local total = math.clamp(math.floor(floors), 1, Config.House.TotalFloors)
+	plot.Theme = theme
+	plot.Floors = total
+	setHouseAttributes(plot.Model, theme, total)
+	applyHandles(plot, HouseBuilder.Build(plot.Model, plot.Origin, theme, Config.HouseFloorCount(total, 1), slotsUnlocked))
+	buildAnnex(plot, theme, total, slotsUnlocked)
+	setSign(plot)
+	plot.ShownPending = -1
+	updateCollector(plot)
+end
+
+local function buildPlot(index: number, origin: CFrame, origin2: CFrame, parent: Instance): Plot
 	local model = Instance.new("Model")
 	model.Name = "Plot" .. index
 	model:SetAttribute("PlotIndex", index)
@@ -361,6 +458,11 @@ local function buildPlot(index: number, origin: CFrame, parent: Instance): Plot
 	local items = Instance.new("Folder")
 	items.Name = "Items"
 	items.Parent = model
+
+	local annex = Instance.new("Model") -- ★v8 2번 집
+	annex.Name = "Annex"
+	annex:SetAttribute("HouseNo", 2)
+	annex.Parent = model
 
 	-- 빈 집: 기본 테마, 1층, 시작 받침대만 열림
 	local handles = HouseBuilder.Build(model, origin, "Basic", 1, Config.Plot.StartSlots)
@@ -382,8 +484,11 @@ local function buildPlot(index: number, origin: CFrame, parent: Instance): Plot
 		LastClaim = 0,
 		LastAutoClaim = 0,
 		ShownPending = -1,
+		Origin2 = origin2,
+		Annex = annex,
 	}
 	applyHandles(plot, handles)
+	buildLot(plot)
 	model.Parent = parent
 	return plot
 end
@@ -649,9 +754,11 @@ end
 
 function PlotService.GetPlotAt(position: Vector3): Plot?
 	for _, plot in plots do
-		local p = plot.Origin:PointToObjectSpace(position)
-		if math.abs(p.X) <= HALF and math.abs(p.Z) <= HALF then
-			return plot
+		for _, origin in { plot.Origin, plot.Origin2 } do -- ★v8 2번 집 땅도
+			local p = origin:PointToObjectSpace(position)
+			if math.abs(p.X) <= HALF and math.abs(p.Z) <= HALF then
+				return plot
+			end
 		end
 	end
 	return nil
@@ -779,7 +886,7 @@ end
 ----------------------------------------------------------------------
 -- 수금 / 받침대 구매 / 층 / 테마 / 환생
 ----------------------------------------------------------------------
-claim = function(plot: Plot, player: Player)
+claim = function(plot: Plot, player: Player, pad: BasePart?)
 	if plot.Owner ~= player or autoOn(player) then
 		return -- 자동 수금이 켜져 있으면 틱이 조용히 받아요
 	end
@@ -798,7 +905,7 @@ claim = function(plot: Plot, player: Player)
 	plot.LastClaim = t
 	data.Pending -= amount
 	DataService.AddCoins(player, amount) -- 코인만 바뀌어서 CoinSync 로 충분해요
-	Remotes.CoinFx:FireClient(player, amount, plot.Collector.Position + Vector3.new(0, 3, 0))
+	Remotes.CoinFx:FireClient(player, amount, (pad or plot.Collector).Position + Vector3.new(0, 3, 0))
 	notify(player, "💰 " .. Config.FormatNumber(amount) .. " 코인을 받았어요!", "good")
 	updateCollector(plot)
 end
@@ -852,7 +959,7 @@ local function tryBuySlot(player: Player)
 		if data.SlotsUnlocked >= TOTAL_SLOTS then
 			notify(player, "받침대가 최대예요! 🎉", "info")
 		elseif data.SlotsUnlocked >= data.Floors * SLOTS_PER_FLOOR then
-			notify(player, (data.Floors + 1) .. "층을 먼저 올려야 해요! 🏠", "warn")
+			notify(player, Config.FloorName(data.Floors + 1) .. "을 먼저 올려야 해요! 🏠", "warn")
 		else
 			notify(player, "지금은 받침대를 살 수 없어요", "warn")
 		end
@@ -863,7 +970,7 @@ local function tryBuySlot(player: Player)
 		return
 	end
 	data.SlotsUnlocked = math.min(data.SlotsUnlocked + 1, data.Floors * SLOTS_PER_FLOOR, TOTAL_SLOTS)
-	HouseBuilder.UpdatePedestals(plot.Handles, data.SlotsUnlocked, data.Floors)
+	updatePedestals(plot)
 	notify(player, "새 받침대가 열렸어요! 🎉", "good")
 	DataService.Sync(player)
 end
@@ -879,7 +986,7 @@ local function tryBuyFloor(player: Player)
 	local ok, reason = Config.CanBuyFloor(data.Floors, data.SlotsUnlocked, data.Rebirths)
 	if not ok then
 		if reason == "Max" then
-			notify(player, "이미 " .. Config.House.MaxFloors .. "층이에요! 🏰", "info")
+			notify(player, "2번 집까지 " .. Config.House.MaxFloors .. "층을 다 올렸어요! 🏰", "info")
 		elseif reason == "Slots" then
 			notify(player, "받침대 " .. (data.Floors * SLOTS_PER_FLOOR) .. "개를 먼저 다 열어야 해요!", "warn")
 		elseif reason == "Rebirth" then
@@ -903,7 +1010,11 @@ local function tryBuyFloor(player: Player)
 	data.Floors = nextFloor
 	data.SlotsUnlocked = math.max(data.SlotsUnlocked, Config.FloorStartSlots(nextFloor))
 	PlotService.RebuildHouse(player)
-	notify(player, "🏠 " .. nextFloor .. "층이 생겼어요!", "good")
+	if nextFloor == Config.House.MaxFloors + 1 then
+		notify(player, "🏡 1번 집 뒤에 2번 집이 생겼어요! 또 10층까지 올릴 수 있어요", "good") -- ★v8
+	else
+		notify(player, "🏠 " .. Config.FloorName(nextFloor) .. "이 생겼어요!", "good")
+	end
 	DataService.Sync(player)
 end
 
@@ -968,10 +1079,14 @@ local function applyRebirth(player: Player, data: DataService.Data)
 			notify(player, "🗺 새 지역 " .. josa(zone.Name, "이", "가") .. " 열렸어요!", "good")
 		end
 	end
-	for f = 2, Config.House.MaxFloors do
+	for f = 2, Config.House.TotalFloors do
 		local req = Config.FloorRequirement(f)
 		if req and req.MinRebirth == r and f > data.Floors then
-			notify(player, "🏗 이제 " .. f .. "층까지 올릴 수 있어요!", "good")
+			if f == Config.House.MaxFloors + 1 then
+				notify(player, "🏡 이제 2번 집을 지을 수 있어요! (1번 집 받침대를 다 열면)", "good") -- ★v8
+			else
+				notify(player, "🏗 이제 " .. Config.FloorName(f) .. "까지 올릴 수 있어요!", "good")
+			end
 		end
 	end
 	DataService.Sync(player)
@@ -1660,13 +1775,18 @@ local function tickPlot(plot: Plot)
 	-- 수금 패드 위에 서 있으면 자동으로 받기
 	local hrp = rootPart(owner)
 	if hrp then
-		local rel = plot.Collector.Position - hrp.Position
-		if
-			Vector2.new(rel.X, rel.Z).Magnitude < 3.6
-			and math.abs(rel.Y) < 6
-			and os.clock() - plot.LastClaim >= 3
-		then
-			claim(plot, owner)
+		for _, pad in { plot.Collector, plot.Collector2 } do -- ★v8 2번 집 패드도
+			if not pad then
+				continue
+			end
+			local rel = pad.Position - hrp.Position
+			if
+				Vector2.new(rel.X, rel.Z).Magnitude < 3.6
+				and math.abs(rel.Y) < 6
+				and os.clock() - plot.LastClaim >= 3
+			then
+				claim(plot, owner, pad)
+			end
 		end
 	end
 end
@@ -1699,7 +1819,7 @@ function PlotService.Start()
 	plotsFolder.Parent = workspace
 
 	for i, origin in Config.Layout.Plots do
-		plots[i] = buildPlot(i, origin, plotsFolder)
+		plots[i] = buildPlot(i, origin, Config.Layout.Plots2[i], plotsFolder)
 	end
 
 	Remotes.PetAction.OnServerEvent:Connect(function(player, uid, action)

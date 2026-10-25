@@ -2,7 +2,7 @@
 -- 규칙은 init.luau 와 같아요: 앞쪽 = -Z, 바닥 = y 0, 몸 = Body, 머리 = Head.
 return function(Kit, PET_BUILDERS, _EGG_BUILDERS)
 	local V, RGB, ell, surf, front, facing, chibi, SIDES = Kit.V, Kit.RGB, Kit.ell, Kit.surf, Kit.front, Kit.facing, Kit.chibi, Kit.SIDES
-	local addPart, darker, alongY, tri, frameUp, muzzle, smallNose, pointyEars, roundEars = Kit.addPart, Kit.darker, Kit.alongY, Kit.tri, Kit.frameUp, Kit.muzzle, Kit.smallNose, Kit.pointyEars, Kit.roundEars
+	local addPart, darker, alongY, tri, frameUp, muzzle, smallNose, pointyEars = Kit.addPart, Kit.darker, Kit.alongY, Kit.tri, Kit.frameUp, Kit.muzzle, Kit.smallNose, Kit.pointyEars
 	local WHITE, EYE = Kit.WHITE, Kit.EYE
 	local NEON = Enum.Material.Neon
 	local GLASS = Enum.Material.Glass
