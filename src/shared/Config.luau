@@ -23,7 +23,11 @@ Config.Settings = {
 	AutoSell = false, -- ★v7.1 🤖 자동 판매 (새로 태어난 펫이 아래 조건이면 바로 팔아요)
 	SellZoneMax = 1, -- ★v7.1 💰 한꺼번에 팔기·자동 판매: 이 테마(지역 번호) 이하 펫만
 	SellRarityMax = 2, -- ★v7.1 이 등급(희귀도 Order, 2 = 고급) 이하 펫만
+	Tutorial = 0, -- ★v7.6 📘 튜토리얼: 끝낸 단계 수 (0 .. Config.TutorialSteps, 다 끝내면 다시 안 나와요)
 }
+
+-- ★v7.6 📘 튜토리얼 단계 수 (클라이언트 Tutorial.luau 의 STEPS 와 같아야 해요)
+Config.TutorialSteps = 8
 
 -- ★v7 알 알림 단계: 한 칸 내려갈수록 더 꺼요 ("어디까지 받을지"). [n + 1] = 단계 n
 -- Normal: 보통 좋은 알 알림 ("All" = v6 규칙, "Top" = 내 최종 테마(열린 가장 먼 지역)만, "None" = 안 받기)
@@ -50,6 +54,8 @@ function Config.SettingRange(key: any): (number?, number?)
 		return 1, Config.MaxZone
 	elseif key == "SellRarityMax" then
 		return 1, Config.SellRarityTop
+	elseif key == "Tutorial" then
+		return 0, Config.TutorialSteps
 	end
 	return nil, nil
 end

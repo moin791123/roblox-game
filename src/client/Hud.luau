@@ -2,16 +2,17 @@
 -- (가방 B / 도감 N / 집 H / 상점 P / 지도 M / 순위 L / 환생 R). 화면이 낮으면 2~3열로 접혀요.
 -- Hud.SetBadge("집", true): 버튼 오른쪽 위에 빨간 "!" (새 집을 살 수 있을 때 init.client 가 켜요)
 -- 켜고 끄는 버튼 3개 (🏦 자동 수금 / 🧲 자석 / ⚡ 슈퍼 자석): 한 번 누르면 바로 켜짐/꺼짐
---   (색 + ON/OFF 스위치), 서버로 Remotes.SetSetting, 스냅샷 Settings 를 따라가요 (State.GetSetting). PC·태블릿은 이름이 보이는
---   가로 버튼, 폰은 작은 네모. 자리: 큰 버튼 칸 바로 오른쪽 세로 (위 → 아래 맞춤) → 왼쪽 위 가로 줄 → 왼쪽 위 2×2
---   → 큰 버튼 칸 오른쪽 2×2 → 오른쪽 위 (세로 / 2×2). 코인 줄·점프·조이스틱은 피해요. 꾸미기 모드 동안은 큰 버튼과 같이 숨어요.
+--   (색 + ON/OFF 스위치), 서버로 Remotes.SetSetting, 스냅샷 Settings 를 따라가요 (State.GetSetting). 자리는 아래 ★v7.6 도구 줄.
 --   ★v7.2 셋 다 게임 패스 (Config.Passes: 🧲 R$50 · ⚡ R$100 · 🏦 R$150, Id = 0 이면 공짜라 보통 버튼).
 --   패스가 없으면 회색 "🔒 R$50", 누르면 MarketplaceService:PromptGamePassPurchase (서버가 사면 속성 Pass_<키> 를 켜요
 --   → 바로 보통 버튼으로 바뀌고 통통). 켜 둔 값은 그대로 저장돼요 (패스가 생기면 바로 작동). 환생 잠금은 없어요.
--- ★v7.2 ⚙️ 옵션 버튼 (켜고 끄는 버튼 줄 마지막 칸): 누르면 ⚙️ 게임 옵션 창 (OptionsWindow: 🙈 부화 숨기기 · 🔔 알 알림).
+-- ★v7.2 ⚙️ 옵션 버튼 (도구 줄 맨 아래): 누르면 ⚙️ 게임 옵션 창 (OptionsWindow: 🙈 부화 숨기기 · 🔔 알 알림).
 -- ★v7 빠른 버튼 2개 (가방 밖): "🐾 하위 펫 한 개 가방으로" (★v7.2 이름, Remotes.StashEgg) · "✨ 자동 배치" (Remotes.AutoPlace).
---   폰은 작은 네모 (이모지 + 두 줄 글씨) 를 코인 줄 오른쪽 위 구석에 (알림 줄은 코인 줄 때문에 원래 거기까지 못 올라가요),
---   PC·태블릿은 이름 버튼을 켜고 끄는 버튼 아래에. 알림 줄 띠·팁 줄·점프·조이스틱은 피하고, 꾸미기 동안은 숨어요.
+-- ★v7.6 🏡 집으로 가기 버튼 (Remotes.Teleport "Home", actions.GoHome).
+-- ★v7.6 버튼 정리: 큰 버튼 칸 바로 오른쪽에 "도구 줄" 하나 (프레임 "Tools"), 큰 버튼 칸 위쪽에 맞춰 위 → 아래로
+--   [🏡 집으로] · [🏦 🧲 ⚡ 켜고 끄는 버튼] · [🐾 ✨ 빠른 버튼] · [⚙️ 옵션] 묶음마다 조금 더 띄워요.
+--   PC·태블릿은 이름이 보이는 가로 버튼, 폰은 작은 네모. 한 줄에 다 안 들어가면 2~3줄 (위 → 아래 먼저 채워요).
+--   환생 비용 알약·조이스틱 자리는 피하고, 꾸미기 동안은 큰 버튼과 같이 숨어요.
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -116,11 +117,9 @@ type Toggle = {
 	Locked: boolean,
 	Chip: boolean,
 }
-local toggleFrame: Frame? = nil
+local toolFrame: Frame? = nil -- ★v7.6 도구 줄 (켜고 끄는 버튼 · ⚙️ · 빠른 버튼 · 🏡 모두 여기)
 local toggles: { Toggle } = {}
 local toggleByKey: { [string]: Toggle } = {}
-local topBarFrame: Frame? = nil
-local subRowFrame: Frame? = nil
 
 -- ★v7.2 ⚙️ 옵션 버튼 (켜고 끄는 버튼 줄 마지막 칸) → OptionsWindow
 type OptionsButton = {
@@ -141,9 +140,16 @@ local QUICK: { QuickDef } = {
 	{ Name = "StashEgg", Emoji = "🐾", Caption = "하위 펫 한 개\n가방으로", Short = "하위 펫\n1개 가방", Color = C.Peach },
 	{ Name = "AutoPlace", Emoji = "✨", Caption = "자동 배치", Short = "자동 배치", Color = C.Mint },
 }
+-- ★v7.6 🏡 집으로 가기 (빠른 버튼과 같은 모양, 도구 줄 맨 위)
+local HOME: QuickDef = { Name = "Home", Emoji = "🏡", Caption = "집으로 가기", Short = "집으로", Color = Color3.fromRGB(70, 200, 200) }
 type Quick = { Def: QuickDef, Button: TextButton, Icon: TextLabel, Caption: TextLabel, LastTap: number }
-local quickFrame: Frame? = nil
 local quicks: { Quick } = {}
+local homeQuick: Quick? = nil
+local goHome: (() -> ())? = nil
+
+-- ★v7.6 도구 줄 (한 프레임 "Tools"): 버튼 + 묶음 번호 + 크기 맞추기
+type Tool = { Button: TextButton, Group: number, Style: (w: number, h: number, chip: boolean) -> () }
+local tools: { Tool } = {}
 
 export type Actions = {
 	ToggleBag: () -> (),
@@ -154,6 +160,7 @@ export type Actions = {
 	ToggleMap: (() -> ())?,
 	ToggleLeaderboard: (() -> ())?,
 	ToggleOptions: (() -> ())?, -- ★v7.2 ⚙️ 게임 옵션 창
+	GoHome: (() -> ())?, -- ★v7.6 🏡 집으로 가기
 }
 
 -- 키보드가 있는 PC 에서만 버튼 구석에 단축키 글자를 보여 줘요
@@ -582,7 +589,14 @@ local function onQuickTap(q: Quick)
 		return -- 연타는 한 번으로 (서버도 막아요)
 	end
 	q.LastTap = now
-	if q.Def.Name == "StashEgg" then
+	if q.Def.Name == "Home" then
+		local fn = goHome
+		if fn then
+			fn()
+		else
+			Remotes.Teleport:FireServer("Home")
+		end
+	elseif q.Def.Name == "StashEgg" then
 		Remotes.StashEgg:FireServer()
 	else
 		Remotes.AutoPlace:FireServer()
@@ -647,212 +661,101 @@ local function styleQuick(q: Quick, w: number, h: number, chip: boolean)
 	end
 end
 
--- 빠른 버튼 2개 자리. 폰 (네모): 코인 줄 오른쪽 위 구석 (알림 줄은 코인 줄에 막혀 원래 거기까지 못 올라가요.
--- 아주 낮은 폰 화면에선 부화 칸이 구석 대신 조금 왼쪽에 떠요) → 켜고 끄는 버튼 아래 → 그 오른쪽 → 코인 줄 아래 가운데.
--- (켜고 끄는 버튼 옆·코인 줄 아래는 캐릭터를 가려서 나중에). PC·태블릿 (이름 버튼): 켜고 끄는 버튼 아래 세로 → 오른쪽 위 → 코인 줄 아래.
--- 켜고 끄는 버튼 자리에서 피한 것 + 그 버튼 줄 + 오른쪽 알림 줄 띠 (Toasts 와 같은 너비) + 아래 팁 줄 자리를 피해요
-local function layoutQuick(gui: ScreenGui, avoid: { UiKit.Rect }, box: UiKit.Rect, chip: boolean, bw: number, bh: number, tgap: number)
-	local frame = quickFrame
-	local n = #quicks
+-- ★v7.6 도구 줄 자리: 큰 버튼 칸 바로 오른쪽, 큰 버튼 칸 위에 맞춰서 위 → 아래.
+-- 한 줄로 다 들어가면 묶음 사이를 조금 더 띄우고, 아니면 2~3줄로 (줄마다 위 → 아래 먼저 채워요).
+-- 아래 끝: 화면 아래 여백 (폰은 조이스틱 자리) · 환생 비용 알약 (도구 줄 쪽으로 나와 있으면) 위까지
+local function layoutTools(gui: ScreenGui, column: Frame, cell: number, gap: number, cols: number, bottomMargin: number)
+	local frame = toolFrame
+	local n = #tools
 	if not frame or n == 0 then
 		return
 	end
 	local size = gui.AbsoluteSize
 	local gw, gh = size.X, size.Y
-	local w = if chip then bw else math.clamp(bh + 6, 46, 56)
-	local h = if chip then bh else w
-	local gap = tgap + 1
-	local hud = table.clone(avoid)
-	table.insert(hud, { X0 = box.X0 - 4, Y0 = box.Y0 - 4, X1 = box.X1 + 4, Y1 = box.Y1 + 4 })
-	local list = table.clone(hud)
-	local small = gh < 500
-	local stripW = if small then math.clamp(math.floor(gw * 0.31), 224, 270) else math.clamp(math.floor(gw * 0.19), 300, 360)
-	local m = if small then 10 else 16
-	local stripX0 = gw - m - stripW - 8
-	local stripTop = 0 -- 알림 줄이 올라갈 수 있는 맨 위 (코인 줄에 막히면 그 아래)
-	local top = topBarFrame
-	local topY = 6
-	if top then
-		local tr = UiKit.RectOf(top, 4)
-		topY = tr.Y0 + 4
-		if tr.X1 > stripX0 then
-			stripTop = tr.Y1
-		end
-	end
-	table.insert(list, { X0 = stripX0, Y0 = stripTop, X1 = gw, Y1 = gh })
-	local tipW = math.clamp(gw * 0.46, 260, 580)
-	table.insert(list, { X0 = (gw - tipW) / 2 - 4, Y0 = gh - 64, X1 = (gw + tipW) / 2 + 4, Y1 = gh })
-
-	local function shape(cols: number): (number, number)
-		local rows = math.ceil(n / cols)
-		return cols * w + (cols - 1) * gap, rows * h + (rows - 1) * gap
-	end
-	local rowW = shape(n)
-	local subY = topY + 60
-	local sub = subRowFrame
-	if sub then
-		subY = sub.AbsolutePosition.Y + sub.AbsoluteSize.Y
-	end
-	type Spot = { X: number, Y: number, Cols: number }
-	local below: Spot = { X = box.X0, Y = box.Y1 + gap + 3, Cols = if chip then 1 else n }
-	local corner: Spot = { X = gw - m - rowW, Y = topY, Cols = n }
-	local under: Spot = { X = math.floor((gw - rowW) / 2), Y = subY + 8, Cols = n }
-	local beside: Spot = { X = box.X1 + gap + 3, Y = box.Y0, Cols = 1 }
-	local belowCol: Spot = { X = box.X1 - w, Y = box.Y1 + gap + 3, Cols = 1 }
-	local leftCol: Spot = { X = box.X0 - gap - 3 - w, Y = box.Y0, Cols = 1 }
-	local spots: { Spot } = if chip
-		then { below, corner, under, beside, belowCol, leftCol }
-		else { corner, below, beside, under, belowCol, leftCol }
-	-- 아무것도 안 가리는 첫 자리 → (세로 화면처럼 자리가 모자라면) HUD 만 안 가리는 첫 자리 → 가장 덜 가리는 자리
-	local function pick(against: { UiKit.Rect }): (Spot, number)
-		local best: Spot = spots[1]
-		local bestOv = math.huge
-		for _, spot in spots do
-			local sw, sh = shape(spot.Cols)
-			local r: UiKit.Rect = { X0 = spot.X, Y0 = spot.Y, X1 = spot.X + sw, Y1 = spot.Y + sh }
-			local ov = UiKit.OverlapArea(r, against)
-			if r.X0 < 0 or r.Y0 < 0 or r.X1 > gw or r.Y1 > gh then
-				ov += sw * sh -- 화면 밖
-			end
-			if ov < bestOv then
-				best, bestOv = spot, ov
-				if ov == 0 then
-					break
-				end
-			end
-		end
-		return best, bestOv
-	end
-	local best, ov = pick(list)
-	if ov > 0 then
-		local hudBest, hudOv = pick(hud)
-		if hudOv == 0 then
-			best = hudBest
-		end
-	end
-	local fw, fh = shape(best.Cols)
-	frame.Position = UDim2.fromOffset(math.floor(best.X), math.floor(best.Y))
-	frame.Size = UDim2.fromOffset(fw, fh)
-	for i, q in quicks do
-		local col = (i - 1) % best.Cols
-		local row = math.floor((i - 1) / best.Cols)
-		q.Button.Position = UDim2.fromOffset(col * (w + gap), row * (h + gap))
-		styleQuick(q, w, h, chip)
-	end
-end
-
--- 버튼 4개 (켜고 끄는 버튼 3 + ★v7.2 ⚙️) 자리: 큰 버튼 칸 오른쪽 위에 세로로 (안 되면 왼쪽 위 가로 → 큰 버튼 칸 오른쪽 아래 → 왼쪽 위 2×2
--- → 큰 버튼 칸 오른쪽 2×2 (위 / 아래 맞춤) → 오른쪽 위 세로 → 오른쪽 위 2×2). 아무것도 안 가리는 첫 자리,
--- 없으면 가장 덜 가리는 자리. (오른쪽은 되도록 아래 알림 줄 자리로 비워 둬요)
--- 위 코인 줄(+초당/금고 알약 줄), 큰 버튼 칸(+환생 알약), 폰 점프 버튼·조이스틱 자리는 피해요
-local function layoutToggles(gui: ScreenGui, column: Frame, cell: number, gap: number)
-	local frame = toggleFrame
-	if not frame then
-		return
-	end
-	local size = gui.AbsoluteSize
-	local gw, gh = size.X, size.Y
-	local n = #toggles + (if optionsButton then 1 else 0) -- ★v7.2 ⚙️ 옵션 버튼이 마지막 칸
 	-- 큰 버튼이 크면 (PC·태블릿) 이름이 보이는 가로 버튼, 아니면 (폰) 작은 네모
 	local chip = cell >= 70 and gw >= 700
 	local bh = if chip then math.clamp(math.floor(cell * 0.56), 44, 54) else math.clamp(math.floor(cell * 0.62), 42, 58)
 	local bw = if chip then math.floor(bh * 3.3) else bh
 	local tgap = math.max(5, math.floor(bh * 0.12))
+	local ggap = tgap + math.max(6, math.floor(bh * 0.22)) -- 묶음 사이
 
-	local avoid: { UiKit.Rect } = {}
-	local top, sub = topBarFrame, subRowFrame
-	if top then
-		table.insert(avoid, UiKit.RectOf(top, 2))
-	end
-	if sub then
-		table.insert(avoid, UiKit.RectOf(sub, 2)) -- 금고 알약이 보이든 안 보이든 그 줄 전체 (버튼이 왔다 갔다 하지 않게)
-	end
 	-- 큰 버튼 칸은 방금 정한 Position/Size 로 바로 계산 (AbsolutePosition 은 아직 안 바뀌었을 수도 있어요). 기준점 (0, 0.5)
 	local colPos, colSize = column.Position, column.Size
 	local sx0, sy0 = colPos.X.Offset, colPos.Y.Offset - colSize.Y.Offset / 2
 	local side: UiKit.Rect = { X0 = sx0, Y0 = sy0, X1 = sx0 + colSize.X.Offset, Y1 = sy0 + colSize.Y.Offset }
-	table.insert(avoid, { X0 = side.X0 - 4, Y0 = side.Y0 - 4, X1 = side.X1 + 4, Y1 = side.Y1 + 4 })
+	-- 큰 버튼 오른쪽 위 빨간 "!" 알림(칸의 8 % 밖으로 나와요)과 안 닿게 조금 띄워요
+	local x0 = side.X1 + math.max(tgap, math.ceil(cell * 0.09) + 3)
+	local bottom = math.max(side.Y1, gh - bottomMargin)
 	if rebirthPill and rebirthButton then
-		-- 환생 알약: 환생 버튼(마지막 칸) 오른쪽
-		local cols = math.max(1, math.floor((colSize.X.Offset + gap) / (cell + gap) + 0.5))
+		-- 환생 알약: 환생 버튼 오른쪽 (도구 줄 쪽으로 나와 있으면 그 위까지만)
 		local idx = rebirthButton.LayoutOrder - 1
 		local cx = side.X0 + (idx % cols) * (cell + gap)
 		local cy = side.Y0 + math.floor(idx / cols) * (cell + gap)
-		local px = cx + cell + 8
-		table.insert(avoid, { X0 = px - 4, Y0 = cy + cell * 0.29 - 4, X1 = px + cell * 1.5 + 4, Y1 = cy + cell * 0.71 + 4 })
-	end
-	if UserInputService.TouchEnabled then
-		if math.min(gw, gh) <= 500 then
-			table.insert(avoid, { X0 = gw - 105, Y0 = gh - 100, X1 = gw, Y1 = gh })
-		else
-			table.insert(avoid, { X0 = gw - 180, Y0 = gh - 220, X1 = gw - 40, Y1 = gh - 80 })
+		local px1 = cx + cell + 8 + rebirthPill.Size.X.Offset + rebirthPill.Size.X.Scale * cell
+		local py0 = cy + cell * 0.29
+		if px1 > x0 and py0 - side.Y0 >= bh then
+			bottom = math.min(bottom, math.floor(py0) - tgap)
 		end
-		-- 조이스틱: 왼쪽 아래 (큰 버튼 칸과 같은 아래 여백 120)
-		table.insert(avoid, { X0 = 0, Y0 = gh - 120, X1 = gw * 0.4, Y1 = gh })
 	end
 
-	-- 모양: cols 열 (1 = 세로, n = 가로, 2 = 2×2)
-	local function shape(cols: number): (number, number)
-		local rows = math.ceil(n / cols)
-		return cols * bw + (cols - 1) * tgap, rows * bh + (rows - 1) * tgap
-	end
-	local _, long = shape(1) -- 세로로 세울 때 높이
-	local gridW, gridH = shape(math.min(2, n))
-	local _, grid3H = shape(math.min(3, n)) -- ★v7 5칸이면 3×2
-	type Spot = { X: number, Y: number, Cols: number }
-	-- 큰 버튼 오른쪽 위 빨간 "!" 알림(칸의 8 % 밖으로 나와요)과 안 닿게 조금 띄워요
-	local sx = side.X1 + math.max(tgap, math.ceil(cell * 0.09) + 3)
-	local spots: { Spot } = {
-		{ X = sx, Y = math.max(8, side.Y0), Cols = 1 },
-		{ X = 10, Y = 8, Cols = n },
-		{ X = sx, Y = side.Y1 - long, Cols = 1 },
-		{ X = 10, Y = 8, Cols = 2 },
-		{ X = sx, Y = math.max(8, side.Y0), Cols = 2 },
-		{ X = sx, Y = side.Y1 - gridH, Cols = 2 },
-		{ X = 10, Y = 8, Cols = 3 }, -- ★v7 왼쪽 위 3×2 → 큰 버튼 칸 오른쪽 3×2 (위 / 아래 맞춤)
-		{ X = sx, Y = math.max(8, side.Y0), Cols = 3 },
-		{ X = sx, Y = side.Y1 - grid3H, Cols = 3 },
-		{ X = gw - 10 - bw, Y = 8, Cols = 1 },
-		{ X = gw - 10 - gridW, Y = 8, Cols = 2 },
-	}
-	local best: Spot? = nil
-	local bestOv = math.huge
-	for _, spot in spots do
-		local w, h = shape(spot.Cols)
-		local r: UiKit.Rect = { X0 = spot.X, Y0 = spot.Y, X1 = spot.X + w, Y1 = spot.Y + h }
-		local ov = UiKit.OverlapArea(r, avoid)
-		if r.X0 < 0 or r.Y0 < 0 or r.X1 > gw or r.Y1 > gh then
-			ov += w * h -- 화면 밖
+	-- 한 줄 (묶음 사이 띄우기)
+	local groups = 0
+	local lastGroup = -1
+	for _, t in tools do
+		if t.Group ~= lastGroup then
+			groups += 1
+			lastGroup = t.Group
 		end
-		if ov < bestOv then
-			best, bestOv = spot, ov
-			if ov == 0 then
-				break
+	end
+	local singleH = n * bh + (n - 1) * tgap + (groups - 1) * (ggap - tgap)
+	-- 위 끝: 큰 버튼 칸 위. 좁은 창에서 코인 줄(+초당/금고 알약 줄)에 닿으면 그 아래로
+	local y0 = side.Y0
+	local bars: { UiKit.Rect } = {}
+	local topBar = gui:FindFirstChild("TopBar")
+	if topBar and topBar:IsA("GuiObject") then
+		table.insert(bars, UiKit.RectOf(topBar, 4))
+		local sub = topBar:FindFirstChild("SubRow", true)
+		if sub and sub:IsA("GuiObject") then
+			table.insert(bars, UiKit.RectOf(sub, 4))
+		end
+	end
+	local off = gui.AbsolutePosition
+	for _, b in bars do
+		local bx0, bx1, by1 = b.X0 - off.X, b.X1 - off.X, b.Y1 - off.Y
+		local wide = if singleH <= bottom - y0 then bw else bw * 3 + tgap * 2
+		if bx0 < x0 + wide and x0 < bx1 and y0 < by1 then
+			y0 = math.max(y0, math.ceil(by1) + 2)
+		end
+	end
+	local maxH = math.max(bh, bottom - y0)
+	local fw, fh
+	if singleH <= maxH then
+		local y = 0
+		lastGroup = tools[1].Group
+		for _, t in tools do
+			if t.Group ~= lastGroup then
+				y += ggap - tgap
+				lastGroup = t.Group
 			end
+			t.Button.Position = UDim2.fromOffset(0, y)
+			t.Style(bw, bh, chip)
+			y += bh + tgap
 		end
+		fw, fh = bw, singleH
+	else
+		local rows = math.max(1, math.floor((maxH + tgap) / (bh + tgap)))
+		local tcols = math.ceil(n / rows)
+		rows = math.ceil(n / tcols) -- 줄마다 고르게
+		for i, t in tools do
+			local col = math.floor((i - 1) / rows)
+			local row = (i - 1) % rows
+			t.Button.Position = UDim2.fromOffset(col * (bw + tgap), row * (bh + tgap))
+			t.Style(bw, bh, chip)
+		end
+		fw, fh = tcols * bw + (tcols - 1) * tgap, rows * bh + (rows - 1) * tgap
 	end
-	local spot = best :: Spot
-	local fw, fh = shape(spot.Cols)
-	frame.Position = UDim2.fromOffset(math.floor(spot.X), math.floor(spot.Y))
+	frame.Position = UDim2.fromOffset(math.floor(x0), math.floor(y0))
 	frame.Size = UDim2.fromOffset(fw, fh)
-	-- 버튼은 줄 순서대로 (왼쪽 → 오른쪽, 위 → 아래)
-	for i, tg in toggles do
-		local col = (i - 1) % spot.Cols
-		local row = math.floor((i - 1) / spot.Cols)
-		tg.Button.Position = UDim2.fromOffset(col * (bw + tgap), row * (bh + tgap))
-		styleToggle(tg, bw, bh, chip)
-	end
-	-- ★v7.2 ⚙️ (마지막 칸) → 빠른 버튼 2개
-	local bx, by = math.floor(spot.X), math.floor(spot.Y)
-	local o = optionsButton
-	if o then
-		local i = #toggles + 1
-		local col = (i - 1) % spot.Cols
-		local row = math.floor((i - 1) / spot.Cols)
-		o.Button.Position = UDim2.fromOffset(col * (bw + tgap), row * (bh + tgap))
-		styleOptions(o, bw, bh, chip)
-	end
-	layoutQuick(gui, avoid, { X0 = bx, Y0 = by, X1 = bx + fw, Y1 = by + fh }, chip, bw, bh, tgap)
 end
 
 function Hud.Init(gui: ScreenGui, actions: Actions)
@@ -948,8 +851,6 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 	incomeLabel.Text = "💰 +0/초"
 	pendingPill, pendingLabel = smallPill(subRow, "Pending", C.Orange, 2, 0.5)
 	pendingPill.Visible = false
-	topBarFrame = top
-	subRowFrame = subRow
 
 	coinValue.Changed:Connect(function(v: number)
 		coinLabel.Text = Config.FormatNumber(v)
@@ -993,21 +894,46 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 	end
 	local count = #defs
 
-	-- 켜고 끄는 버튼 3개 + ⚙️ (자리는 layout 이 정해요, 버튼 하나하나 Position 으로)
-	local toggleBox: Frame = Make("Frame", {
-		Name = "Toggles",
+	-- ★v7.6 도구 줄 (자리는 layoutTools 가 정해요, 버튼 하나하나 Position 으로)
+	-- 묶음: 1 🏡 집으로 · 2 켜고 끄는 버튼 3개 · 3 빠른 버튼 2개 · 4 ⚙️ 옵션
+	local toolBox: Frame = Make("Frame", {
+		Name = "Tools",
 		BackgroundTransparency = 1,
 		Parent = gui,
 	})
-	toggleFrame = toggleBox
+	toolFrame = toolBox
+	local function addQuick(def: QuickDef, group: number): Quick
+		local q = makeQuick(toolBox, def)
+		table.insert(tools, {
+			Button = q.Button,
+			Group = group,
+			Style = function(w: number, h: number, chip: boolean)
+				styleQuick(q, w, h, chip)
+			end,
+		})
+		return q
+	end
+	goHome = actions.GoHome
+	homeQuick = addQuick(HOME, 1)
 	for i, def in TOGGLES do
-		local t = makeToggle(toggleBox, def, i)
+		local t = makeToggle(toolBox, def, i)
 		table.insert(toggles, t)
 		toggleByKey[def.Key] = t
 		paintToggle(t, State.GetSetting(def.Key), false)
+		table.insert(tools, {
+			Button = t.Button,
+			Group = 2,
+			Style = function(w: number, h: number, chip: boolean)
+				styleToggle(t, w, h, chip)
+			end,
+		})
 	end
-	-- ★v7.2 ⚙️ 옵션 (마지막 칸, 🙈 부화 숨기기 · 🔔 알 알림은 OptionsWindow 안에), 빠른 버튼 2개 (가방 밖)
-	local gear = makeOptionsButton(toggleBox, function()
+	-- ★v7 빠른 버튼 2개 (가방 밖)
+	for _, def in QUICK do
+		table.insert(quicks, addQuick(def, 3))
+	end
+	-- ★v7.2 ⚙️ 옵션 (맨 아래, 🙈 부화 숨기기 · 🔔 알 알림은 OptionsWindow 안에)
+	local gear = makeOptionsButton(toolBox, function()
 		local o = optionsButton
 		local now = os.clock()
 		if not o or now - o.LastTap < 0.25 then
@@ -1021,17 +947,14 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 			Toasts.Show("⚙️ 옵션은 곧 열려요!", "info")
 		end
 	end)
-	gear.Button.LayoutOrder = #TOGGLES + 1
 	optionsButton = gear
-	local quickBox: Frame = Make("Frame", {
-		Name = "Quick",
-		BackgroundTransparency = 1,
-		Parent = gui,
+	table.insert(tools, {
+		Button = gear.Button,
+		Group = 4,
+		Style = function(w: number, h: number, chip: boolean)
+			styleOptions(gear, w, h, chip)
+		end,
 	})
-	quickFrame = quickBox
-	for _, def in QUICK do
-		table.insert(quicks, makeQuick(quickBox, def))
-	end
 	State.OnSetting(function(key: string, value: any)
 		local t = toggleByKey[key]
 		if t and t.Shown ~= value then
@@ -1110,10 +1033,18 @@ function Hud.Init(gui: ScreenGui, actions: Actions)
 		-- 쓸 수 있는 칸의 가운데 (위아래 여백 안)
 		local centerY = topMargin + avail / 2
 		column.Position = UDim2.new(0, 10, 0, math.floor(math.max(topMargin + height / 2, centerY)))
-		layoutToggles(gui, column, cell, GAP)
+		-- ★v7.6 환생 비용 알약: 1열이면 버튼 오른쪽으로 길게, 여러 열이면 옆 빈칸 안에만 (도구 줄을 안 막게)
+		local rc = (count - 1) % cols
+		local room = (cols - rc - 1) * (cell + GAP) - 8
+		if cols > 1 and room >= cell * 0.9 then
+			rebirthPill.Size = UDim2.new(0, room, 0.42, 0)
+		else
+			rebirthPill.Size = UDim2.new(1.5, 0, 0.42, 0)
+		end
+		layoutTools(gui, column, cell, GAP, cols, bottomMargin)
 		-- 코인 줄 크기는 한 프레임 뒤에 바뀔 수 있어서 한 번 더
 		task.defer(function()
-			layoutToggles(gui, column, cell, GAP)
+			layoutTools(gui, column, cell, GAP, cols, bottomMargin)
 		end)
 	end
 	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout)
@@ -1191,14 +1122,9 @@ end
 
 -- 왼쪽 큰 버튼들 보이기/숨기기 (꾸미기 모드 동안 숨겨요)
 function Hud.SetSideVisible(visible: boolean)
-	local box = toggleFrame
+	local box = toolFrame
 	if box then
-		box.Visible = visible -- 켜고 끄는 버튼도 같이
-	end
-	-- ★v7 빠른 버튼도 같이 숨어요 (⚙️ 옵션 창은 꾸미기를 시작할 때 init.client 가 다른 창처럼 닫아요)
-	local quick = quickFrame
-	if quick then
-		quick.Visible = visible
+		box.Visible = visible -- ★v7.6 도구 줄도 같이 (⚙️ 옵션 창은 꾸미기를 시작할 때 init.client 가 다른 창처럼 닫아요)
 	end
 	local column = sideColumn
 	if not column or column.Visible == visible then
@@ -1209,9 +1135,6 @@ function Hud.SetSideVisible(visible: boolean)
 		UiKit.Pop(column, 0.3)
 		if box then
 			UiKit.Pop(box, 0.3)
-		end
-		if quick then
-			UiKit.Pop(quick, 0.3)
 		end
 	end
 end
@@ -1228,7 +1151,24 @@ function Hud.OptionsButton(): TextButton?
 	return if o then o.Button else nil
 end
 
+-- ★v7.6 🏡 집으로 가기 버튼 · 도구 줄 · 왼쪽 큰 버튼 (튜토리얼이 손가락으로 가리켜요)
+function Hud.HomeButton(): TextButton?
+	local q = homeQuick
+	return if q then q.Button else nil
+end
+
+function Hud.ToolsFrame(): Frame?
+	return toolFrame
+end
+
+function Hud.SideButton(caption: string): TextButton?
+	return sideButtons[caption]
+end
+
 function Hud.QuickButton(name: string): TextButton?
+	if name == "Home" then
+		return Hud.HomeButton()
+	end
 	for _, q in quicks do
 		if q.Def.Name == name then
 			return q.Button

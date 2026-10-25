@@ -415,11 +415,9 @@ local function obstacles(g: ScreenGui): ({ UiKit.Rect }, { UiKit.Rect })
 	if sub and sub:IsA("GuiObject") then
 		table.insert(hard, UiKit.RectOf(sub, 2)) -- 금고 알약이 숨어도 그 줄 전체 (버튼이 왔다 갔다 하지 않게)
 	end
-	for _, name in { "Toggles", "Quick" } do
-		local r = offsetRect(name)
-		if r then
-			table.insert(hard, { X0 = r.X0 - 3, Y0 = r.Y0 - 3, X1 = r.X1 + 3, Y1 = r.Y1 + 3 })
-		end
+	local r = offsetRect("Tools") -- ★v7.6 도구 줄 (켜고 끄는 버튼 · 빠른 버튼 · ⚙️ · 🏡)
+	if r then
+		table.insert(hard, { X0 = r.X0 - 3, Y0 = r.Y0 - 3, X1 = r.X1 + 3, Y1 = r.Y1 + 3 })
 	end
 	local tipW = math.clamp(gw * 0.46, 260, 580)
 	table.insert(hard, { X0 = (gw - tipW) / 2 - 4, Y0 = gh - 64, X1 = (gw + tipW) / 2 + 4, Y1 = gh })
@@ -452,8 +450,7 @@ local function obstacles(g: ScreenGui): ({ UiKit.Rect }, { UiKit.Rect })
 	return all, hard
 end
 
--- 자리 찾기: 이름 버튼 (PC·태블릿) = 빠른 버튼 아래 → 옆 → 켜고 끄는 버튼 아래 …,
--- 네모 (폰) = 빠른 버튼 왼쪽 → 켜고 끄는 버튼 오른쪽 (위 / 아래 맞춤) → 빠른 버튼 아래 → …
+-- 자리 찾기 (★v7.6): 도구 줄 아래 → 도구 줄 오른쪽 (위 / 아래 맞춤) → 왼쪽 위 → 오른쪽 위
 -- 아무것도 안 가리는 첫 자리 → (세로 화면처럼 모자라면) 꼭 피할 것만 안 가리는 첫 자리 → 가장 덜 가리는 자리
 local function placeButton()
 	local btn, g = hudButton, gui
@@ -471,9 +468,9 @@ local function placeButton()
 		return
 	end
 	local w, h = 48, 48
-	local quick = g:FindFirstChild("Quick")
-	if quick then
-		for _, c in quick:GetChildren() do
+	local toolBox = g:FindFirstChild("Tools")
+	if toolBox then
+		for _, c in toolBox:GetChildren() do
 			if c:IsA("GuiButton") and c.Size.X.Offset >= MIN and c.Size.Y.Offset >= MIN then
 				w, h = c.Size.X.Offset, c.Size.Y.Offset
 				break
@@ -481,28 +478,16 @@ local function placeButton()
 		end
 	end
 	local chip = w > h * 1.5
-	local Q, T = offsetRect("Quick"), offsetRect("Toggles")
+	local T = offsetRect("Tools")
 	local cands: { { number } } = {}
 	local function add(x: number, y: number)
 		table.insert(cands, { math.floor(x), math.floor(y) })
 	end
-	if Q and T then
-		if chip then
-			add(Q.X0, Q.Y1 + GAP)
-			add(Q.X1 + GAP, Q.Y0)
-			add(T.X0, T.Y1 + GAP)
-			add(T.X1 + GAP, T.Y0)
-			add(Q.X0 - GAP - w, Q.Y0)
-		else
-			add(Q.X0 - GAP - w, Q.Y0)
-			add(T.X1 + GAP, T.Y0)
-			add(T.X1 + GAP, T.Y1 - h)
-			add(Q.X0, Q.Y1 + GAP)
-			add(Q.X1 - w, Q.Y1 + GAP)
-			add(T.X0, T.Y1 + GAP)
-			add(T.X0 - GAP - w, T.Y0)
-			add(Q.X1 + GAP, Q.Y0)
-		end
+	if T then
+		-- ★v7.6 도구 줄 아래 (같은 줄처럼) → 오른쪽 위 → 오른쪽 아래
+		add(T.X0, T.Y1 + GAP)
+		add(T.X1 + GAP, T.Y0)
+		add(T.X1 + GAP, T.Y1 - h)
 	end
 	add(10, 8)
 	add(gw - 10 - w, 8)

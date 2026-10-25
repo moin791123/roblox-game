@@ -1,5 +1,5 @@
 -- 처음 2분 반 동안 아래쪽에 도움말이 바뀌며 나와요 (지도·상점·자동 배치·옷·엘리베이터·켜고 끄는 버튼 소개,
--- ★v7.2 ⚙️ 옵션 창 (🙈 부화 숨기기 · 🔔 알 알림) · 🐾 하위 펫 한 개 가방으로 / ✨ 자동 배치 빠른 버튼)
+-- ★v7.2 ⚙️ 옵션 창 (🙈 부화 숨기기 · 🔔 알 알림) · 🐾 하위 펫 한 개 가방으로 / ✨ 자동 배치 빠른 버튼, ★v7.6 🏡 집으로 가기)
 local UserInputService = game:GetService("UserInputService")
 
 local UiKit = require(script.Parent.UiKit)
@@ -17,6 +17,7 @@ end
 local TIPS = {
 	"🥚 컨베이어에서 알을 사세요" .. (if showKeys then " (E)" else ""),
 	"🐣 집 받침대에 둔 알은 시간이 지나면 부화해요",
+	"🏡 '집으로 가기' 버튼" .. key("G") .. "으로 언제든 집에 바로 가요",
 	"🐾 받침대가 꽉 차면 '하위 펫 한 개 가방으로'를 눌러 새 알 자리를 만들어요",
 	"💰 들판의 코인을 주우면 코인이 늘어요",
 	"🏦 집의 금색 판을 밟거나 '자동 수금'을 켜면 모인 코인을 받아요",
@@ -42,6 +43,7 @@ local INTERVAL = 6
 
 local banner: Frame? = nil
 local suppressed = false -- 꾸미기 모드 중에는 숨겨요 (아래 가구 줄을 가려요)
+local tutorialOn = false -- ★v7.6 튜토리얼 카드가 같은 자리를 써요: 그동안 쉬고, 끝나면 그때부터 2분 반
 
 function Tips.Init(gui: Instance)
 	local frame: Frame = Make("Frame", {
@@ -70,13 +72,17 @@ function Tips.Init(gui: Instance)
 
 	task.spawn(function()
 		task.wait(3)
+		while tutorialOn do
+			task.wait(1)
+		end
 		local started = os.clock()
 		local i = 0
 		while os.clock() - started < DURATION do
 			i = i % #TIPS + 1
 			label.Text = TIPS[i]
-			frame.Visible = not suppressed
-			if not suppressed then
+			local hide = suppressed or tutorialOn
+			frame.Visible = not hide
+			if not hide then
 				UiKit.Pop(frame, 0.35)
 			end
 			task.wait(INTERVAL)
@@ -86,6 +92,15 @@ function Tips.Init(gui: Instance)
 		banner = nil
 		frame:Destroy()
 	end)
+end
+
+-- ★v7.6 튜토리얼 중에는 쉬어요 (끝나면 그때부터 도움말이 돌아요)
+function Tips.SetTutorial(on: boolean)
+	tutorialOn = on
+	local b = banner
+	if b and on then
+		b.Visible = false
+	end
 end
 
 -- 잠깐 숨기기 (꾸미기 모드 등). false 면 다음 도움말부터 다시 보여요

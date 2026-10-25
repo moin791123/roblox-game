@@ -642,6 +642,18 @@ shows snapshot data.
 
 Prompt filtering: only `PromptKind = "Owner"` hiding. Keys: B bag, N index, H house, P shop, M map, L leaderboard, R rebirth.
 
+★v7.6 UI round (thread "튜토리얼과 버튼 정리"):
+- **Hud tool column** (frame `Tools`): one column right of `SideButtons`, top-aligned with it, groups top → bottom
+  🏡 집으로 가기 (`actions.GoHome`, key **G**) · 🏦 🧲 ⚡ toggles · 🐾 ✨ quick buttons · ⚙️ options, with a wider gap between
+  groups. Chips (PC/tablet) or squares (phone); wraps into 2–3 columns (column-major) when one column does not fit above the
+  bottom margin / the rebirth-cost pill. Multi-column menus keep the rebirth pill inside the menu's empty cells.
+  `Hud.HomeButton()`, `Hud.ToolsFrame()`, `Hud.SideButton(caption)`. The old `Toggles` / `Quick` frames are gone (AdminWindow
+  now places 🛠 below / beside `Tools`).
+- **Tutorial** (`src/client/Tutorial.luau`): 8 steps (welcome → buy egg [beam to belt] → go home [points at 🏡] → hatch →
+  collect vault [beam to Collector] → open bag → tool column → rebirth). Progress saved in `Settings.Tutorial`
+  (0..`Config.TutorialSteps`, number of finished steps). Veterans (rebirths > 0, hatched ≥ 5 or pets ≥ 5) skip it.
+  "건너뛰기" (two taps) ends it; Tips wait while it runs.
+
 ---
 
 ## 11. Zone / pet / egg tables (★ = new id). In-zone rarity: C×2 (zone 1: ×4), U, R, E, L, M, S
