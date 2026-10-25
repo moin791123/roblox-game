@@ -120,6 +120,14 @@ local GROUND_MATERIAL: { [string]: Enum.Material } = {
 	Candy = Enum.Material.SmoothPlastic,
 	Cloud = Enum.Material.SmoothPlastic,
 	Space = Enum.Material.Slate,
+	Blossom = Enum.Material.Grass, -- ★v8
+	Dino = Enum.Material.LeafyGrass,
+	Crystal = Enum.Material.Slate,
+	Desert = Enum.Material.Sand,
+	Toy = Enum.Material.SmoothPlastic,
+	Dream = Enum.Material.SmoothPlastic,
+	Volcano = Enum.Material.Basalt,
+	Gold = Enum.Material.Marble,
 }
 
 local CLIFF_COLOR: { [string]: Color3 } = {
@@ -131,6 +139,14 @@ local CLIFF_COLOR: { [string]: Color3 } = {
 	Candy = RGB(125, 75, 55), -- 초콜릿 케이크
 	Cloud = RGB(230, 225, 250),
 	Space = RGB(50, 40, 85),
+	Blossom = RGB(175, 125, 105), -- ★v8
+	Dino = RGB(130, 100, 70),
+	Crystal = RGB(70, 60, 95),
+	Desert = RGB(215, 170, 110),
+	Toy = RGB(90, 160, 255), -- 장난감 블록 받침
+	Dream = RGB(95, 90, 160),
+	Volcano = RGB(50, 40, 45),
+	Gold = RGB(230, 185, 70),
 }
 
 local rng = Random.new(20261020)
@@ -379,6 +395,7 @@ type Ctx = {
 	Blocks: { Rect }, -- 모든 장식 금지 (길, 컨베이어, 집, 순위표 ...)
 	Circles: { Circle },
 	Placed: { Spot },
+	Exits: { Vector3 }, -- ★v8 이 섬에서 바깥 섬으로 나가는 길 시작점 (Zone.Parent == 이 섬)
 }
 
 local function rect(minX: number, maxX: number, minZ: number, maxZ: number): Rect
@@ -1284,7 +1301,7 @@ local function buildGate(arches: Instance, gates: Instance, k: number)
 	local front = signFrame(sign, Enum.NormalId.Front, 30, COLORS.Cream, stroke)
 	textLabel(front, def.Emoji .. " " .. def.Name, UDim2.fromScale(0.04, 0.06), UDim2.fromScale(0.92, 0.58), stroke)
 	textLabel(front, "🔄 환생 " .. def.MinRebirth .. "회", UDim2.fromScale(0.1, 0.66), UDim2.fromScale(0.8, 0.28), COLORS.Text)
-	local home = Zones[1]
+	local home = Zones[def.Parent or 1] -- ★v8 길이 시작하는 땅
 	local back = signFrame(sign, Enum.NormalId.Back, 30, COLORS.Cream, stroke)
 	textLabel(back, def.Emoji .. " " .. def.Name, UDim2.fromScale(0.04, 0.06), UDim2.fromScale(0.92, 0.58), stroke)
 	textLabel(back, "← " .. home.Emoji .. " " .. home.Name, UDim2.fromScale(0.1, 0.66), UDim2.fromScale(0.8, 0.28), COLORS.Text)
@@ -1558,7 +1575,7 @@ local function buildHome(ctx: Ctx)
 	end
 	for k = 2, #Zones do
 		local t = Zones[k].Trail
-		if t and math.abs(t.Dir.Z) > 0.5 then
+		if t and Zones[k].Parent == 1 and math.abs(t.Dir.Z) > 0.5 then
 			addLane(t.From.X)
 		end
 	end
@@ -1581,7 +1598,7 @@ local function buildHome(ctx: Ctx)
 	local spurs: { Rect } = {}
 	for k = 2, #Zones do
 		local t = Zones[k].Trail
-		if t and math.abs(t.Dir.X) > 0.5 then
+		if t and Zones[k].Parent == 1 and math.abs(t.Dir.X) > 0.5 then
 			-- 동쪽 입구는 큰길이 이미 닿아요 (z = 0)
 			if math.abs(t.From.Z) > HALF_TRAIL then
 				local nearest = laneXs[1] or LOBBY.X
@@ -1599,6 +1616,12 @@ local function buildHome(ctx: Ctx)
 	end
 	for _, side in { 1, -1 } do
 		flatRect(paths, laneMin, laneMax, side * (rowFront - 5), side * (rowFront - 1), 0.12, pathColor)
+	end
+	-- ★v8 2번 집 줄 (1번 집 바로 뒤): 1번 집 뒤 ~ 2번 집 앞 사이 뒷골목 길. 양 끝이 세로 길과 이어져요
+	local alleyIn = Layout.Plots[1].Position.Z + HALF_PLOT -- 112
+	local alleyOut = Layout.Plots2[1].Position.Z - HALF_PLOT -- 128
+	for _, side in { 1, -1 } do
+		flatRect(paths, laneMin, laneMax, side * (alleyIn + 3), side * (alleyOut - 3), 0.12, pathColor)
 	end
 	-- 캔디 가로등
 	for _, x in { -44, -20, 20, 44 } do
@@ -1620,6 +1643,11 @@ local function buildHome(ctx: Ctx)
 	end
 	for _, side in { 1, -1 } do
 		table.insert(blocks, rect(laneMin - 2, laneMax + 2, math.min(side * (rowFront - 7), side * rowFront), math.max(side * (rowFront - 7), side * rowFront)))
+		table.insert(blocks, rect(laneMin - 2, laneMax + 2, math.min(side * alleyIn, side * alleyOut), math.max(side * alleyIn, side * alleyOut)))
+	end
+	for _, cf in Layout.Plots2 do
+		local p = cf.Position
+		table.insert(blocks, rect(p.X - HALF_PLOT - 4, p.X + HALF_PLOT + 4, p.Z - HALF_PLOT - 4, p.Z + HALF_PLOT + 4))
 	end
 	for _, x in laneXs do
 		table.insert(blocks, rect(x - LANE - 2, x + LANE + 2, r.MinZ, r.MaxZ))
@@ -1630,7 +1658,7 @@ local function buildHome(ctx: Ctx)
 	-- 길 입구 앞 (문 아치 앞이 막히지 않게)
 	for k = 2, #Zones do
 		local t = Zones[k].Trail
-		if t then
+		if t and Zones[k].Parent == 1 then
 			table.insert(blocks, stripRect(t.From, t.From - t.Dir * 22, HALF_TRAIL + 6))
 		end
 	end
@@ -1722,6 +1750,15 @@ local function buildZoneRoads(ctx: Ctx)
 	table.insert(blocks, localRect(def, u0 - 10, u0 + 2, roadEdge, wv))
 	table.insert(blocks, localRect(def, 0, 14, -18, 18)) -- 섬 입구 앞
 	table.insert(ctx.Circles, { X = sp.X, Z = sp.Z, R = 10 })
+
+	-- ★v8 바깥 섬으로 가는 길: 광장 → 섬 맨 끝 길 시작점 (시작점은 늘 섬 안 좌표 v = 0 쪽 끝이에요)
+	for _, exit in ctx.Exits do
+		local eu = (exit - t.To):Dot(t.Dir)
+		local ev = (exit - t.To):Dot(t.Side)
+		rectPart(f, localRect(def, plazaU + 8, eu + 1, ev - HALF_TRAIL, ev + HALF_TRAIL), 0.1, pal.Path)
+		table.insert(blocks, localRect(def, plazaU, eu, ev - HALF_TRAIL - 2, ev + HALF_TRAIL + 2))
+		table.insert(blocks, stripRect(exit, exit - t.Dir * 22, HALF_TRAIL + 6))
+	end
 end
 
 ----------------------------------------------------------------------
@@ -1913,6 +1950,15 @@ THEMES.Cloud = function(ctx)
 			local along = (e.B - e.A).Unit
 			for i = 0, 3 do
 				local p = e.A + (e.B - e.A) * ((i + 0.5) / 4) + e.N * 3 + Vector3.new(0, -1.5, 0)
+				local blocked = false
+				for _, exit in ctx.Exits do
+					if (Vector3.new(p.X, 0, p.Z) - exit).Magnitude < 17 + HALF_TRAIL + 4 then
+						blocked = true -- ★v8 바깥 섬 길 앞은 비워요
+					end
+				end
+				if blocked then
+					continue
+				end
 				blobCF(ctx.Folder, CFrame.lookAt(p, p + along), Vector3.new(16, 9, 34), RGB(250, 248, 255)).Name = "EdgeCloud"
 			end
 		end
@@ -1992,13 +2038,527 @@ THEMES.Space = function(ctx)
 		local s = ball(ctx.Deco, Vector3.new(def.Center.X + rng:NextNumber(-140, 140), rng:NextNumber(45, 90), def.Center.Z + rng:NextNumber(-140, 140)), rng:NextNumber(0.6, 1.4), pick({ COLORS.White, RGB(255, 240, 160), RGB(170, 220, 255) }), Enum.Material.Neon)
 		s.CastShadow = false
 	end
-	-- 섬 맨 끝 너머 바다: 발사대 위 큰 로켓
-	local vc = (def.Center - t.To):Dot(t.Side)
-	local padPos = localPoint(def, def.Size.X + 34, vc)
+	-- 섬 너머 바다: 발사대 위 큰 로켓 (★v8 맨 끝은 바깥 섬 길이라 빈 바다에서 자리를 찾아요)
+	local padPos = outerSpots(ctx, 1, 26, 45, 16)[1] or localPoint(def, def.Size.X / 2, (def.Center - t.To):Dot(t.Side) - def.Size.X / 2 - 34)
 	disc(ctx.Deco, padPos + Vector3.new(0, -1.5, 0), 30, 3, RGB(120, 115, 150), Enum.Material.Metal).Name = "LaunchPad"
 	disc(ctx.Deco, padPos + Vector3.new(0, 0.05, 0), 18, 0.2, pal.Accent, Enum.Material.Neon).CastShadow = false
 	buildRocket(ctx.Deco, padPos, 3)
-	table.insert(seaPlaced, { x = padPos.X, z = padPos.Z, r = 16 })
+end
+
+----------------------------------------------------------------------
+-- ★v8 바깥 섬 8곳 장식
+----------------------------------------------------------------------
+
+local SAKURA_CROWNS = { RGB(255, 190, 215), RGB(255, 170, 205), RGB(255, 215, 230), RGB(250, 160, 195) }
+local GEM_COLORS = { RGB(120, 240, 230), RGB(255, 120, 170), RGB(170, 130, 255), RGB(120, 180, 255), RGB(255, 225, 120) }
+local TOY_COLORS = { RGB(255, 95, 115), RGB(90, 160, 255), RGB(255, 210, 60), RGB(110, 210, 120), RGB(190, 130, 255), RGB(255, 160, 80) }
+
+-- 섬 위에 꽃잎·불씨처럼 천천히 떨어지는 것 (보이지 않는 판 하나 + 파티클)
+local function skyParticles(ctx: Ctx, props: { [string]: any })
+	local def = ctx.Def
+	local sky = newPart(ctx.Deco, Vector3.new(def.Size.X, 1, def.Size.Z), CFrame.new(def.Center.X, 60, def.Center.Z), COLORS.White)
+	sky.Name = "SkyParticles"
+	sky.Transparency = 1
+	sky.CastShadow = false
+	emitter(sky, props)
+end
+
+-- 벚꽃 나무: 굵은 줄기 + 분홍 꽃 뭉치 3개
+local function buildSakuraTree(parent: Instance, pos: Vector3, scale: number?)
+	local m = model("SakuraTree", parent)
+	local s = scale or rng:NextNumber(1, 1.4)
+	local h = 6 * s
+	local trunk = column(m, pos, h + 1, 1.2 * s, RGB(140, 95, 80))
+	trunk.CanCollide = true
+	local top = pos + Vector3.new(0, h, 0)
+	stick(m, top - Vector3.new(0, 2 * s, 0), top + Vector3.new(2.6, 1.2, 0.8) * s, 0.6 * s, RGB(140, 95, 80))
+	blob(m, top + Vector3.new(0, 2 * s, 0), Vector3.new(8, 5.5, 8) * s, pick(SAKURA_CROWNS))
+	blob(m, top + Vector3.new(2.8, 1.6, 1) * s, Vector3.new(5, 4, 5) * s, pick(SAKURA_CROWNS))
+	blob(m, top + Vector3.new(-2.4, 1.2, -1.2) * s, Vector3.new(4.6, 3.6, 4.6) * s, pick(SAKURA_CROWNS))
+end
+
+-- 종이 등불 (기둥 + 빛나는 등)
+local function buildLantern(parent: Instance, pos: Vector3, color: Color3)
+	local m = model("Lantern", parent)
+	local pole = column(m, pos, 4.5, 0.5, RGB(120, 85, 70))
+	pole.CanCollide = true
+	disc(m, pos + Vector3.new(0, 4.6, 0), 2.2, 0.3, RGB(90, 60, 50))
+	local lamp = blob(m, pos + Vector3.new(0, 5.7, 0), Vector3.new(1.8, 2.2, 1.8), color, Enum.Material.Neon)
+	lamp.CastShadow = false
+	disc(m, pos + Vector3.new(0, 6.9, 0), 1.6, 0.3, RGB(90, 60, 50))
+end
+
+-- 고사리 (잎 4~5장)
+local function buildFern(parent: Instance, pos: Vector3)
+	local m = model("Fern", parent)
+	local n = rng:NextInteger(4, 5)
+	for i = 1, n do
+		local a = i / n * math.pi * 2 + rng:NextNumber(-0.3, 0.3)
+		local d = Vector3.new(math.cos(a), 0.8, math.sin(a)).Unit
+		blobCF(m, CFrame.lookAt(pos + d * 1.6, pos + d * 3.2), Vector3.new(1.0, 0.25, 3.6), pick({ RGB(70, 160, 80), RGB(90, 180, 90) }))
+	end
+end
+
+-- 공룡 뼈 (갈비뼈 아치 + 등뼈)
+local function buildBones(parent: Instance, pos: Vector3)
+	local m = model("Bones", parent)
+	local yaw = rng:NextNumber(0, math.pi * 2)
+	local base = CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
+	local bone = RGB(245, 240, 225)
+	stick(m, (base * CFrame.new(0, 2.6, -4)).Position, (base * CFrame.new(0, 2.2, 4)).Position, 0.7, bone)
+	for i = -1, 1 do
+		for _, sx in { -1, 1 } do
+			local top = (base * CFrame.new(0, 2.5, i * 2.2)).Position
+			local foot = (base * CFrame.new(sx * 2.2, 0, i * 2.2)).Position
+			stick(m, top, foot, 0.5, bone).CanCollide = true
+		end
+	end
+	ball(m, (base * CFrame.new(0, 1.2, -5.2)).Position, 2.4, bone)
+end
+
+-- 공룡 알 둥지 (나뭇가지 둥지 + 점박이 알 2~3개)
+local function buildDinoEgg(parent: Instance, pos: Vector3)
+	local m = model("DinoNest", parent)
+	disc(m, pos + Vector3.new(0, 0.3, 0), 6, 0.6, RGB(150, 110, 70), Enum.Material.WoodPlanks)
+	for i = 1, rng:NextInteger(2, 3) do
+		local a = i * 2.2
+		local c = pick({ RGB(240, 235, 210), RGB(190, 225, 170), RGB(255, 215, 170) })
+		local e = blob(m, pos + Vector3.new(math.cos(a) * 1.2, 1.9, math.sin(a) * 1.2), Vector3.new(2.2, 3, 2.2), c)
+		e.CanCollide = true
+		ball(m, pos + Vector3.new(math.cos(a) * 1.9, 2.3, math.sin(a) * 1.9), 0.6, darken(c, 0.25))
+	end
+end
+
+-- 큰 보석 무더기 (빛나는 기둥 3~4개)
+local function buildBigCrystal(parent: Instance, pos: Vector3, scale: number?)
+	local m = model("BigCrystal", parent)
+	local s = scale or rng:NextNumber(1, 1.6)
+	local c = pick(GEM_COLORS)
+	for i = 1, rng:NextInteger(3, 4) do
+		local h = rng:NextNumber(3, 7) * s
+		local p = newPart(
+			m,
+			Vector3.new(1.4 * s, h, 1.4 * s),
+			CFrame.new(pos + Vector3.new(rng:NextNumber(-1, 1) * s, h / 2 - 0.4, rng:NextNumber(-1, 1) * s)) * CFrame.Angles(rng:NextNumber(-0.4, 0.4), i * 1.2, rng:NextNumber(-0.4, 0.4)),
+			if i == 1 then c else lighten(c, 0.3),
+			nil,
+			if i == 1 then Enum.Material.Neon else Enum.Material.Glass
+		)
+		p.Transparency = if i == 1 then 0 else 0.2
+		p.CastShadow = false
+		if i == 1 then
+			p.CanCollide = true
+		end
+	end
+end
+
+-- 정동 (반으로 갈라진 돌 + 안쪽 보석)
+local function buildGeode(parent: Instance, pos: Vector3)
+	local m = model("Geode", parent)
+	local shell = blob(m, pos + Vector3.new(0, 1.2, 0), Vector3.new(4.5, 3, 4), RGB(120, 110, 125), Enum.Material.Slate)
+	shell.CanCollide = true
+	blob(m, pos + Vector3.new(0, 2.4, 0), Vector3.new(3.4, 0.6, 3), pick(GEM_COLORS), Enum.Material.Neon).CastShadow = false
+end
+
+-- 선인장 (몸통 + 팔 2개)
+local function buildCactus(parent: Instance, pos: Vector3)
+	local m = model("Cactus", parent)
+	local s = rng:NextNumber(0.9, 1.5)
+	local g = pick({ RGB(95, 175, 90), RGB(115, 190, 100) })
+	local body = column(m, pos, 6 * s, 1.8 * s, g)
+	body.CanCollide = true
+	ball(m, pos + Vector3.new(0, 6 * s, 0), 1.8 * s, g)
+	for _, sx in { -1, 1 } do
+		local y = rng:NextNumber(2.2, 3.6) * s
+		stick(m, pos + Vector3.new(0, y, 0), pos + Vector3.new(sx * 1.8 * s, y, 0), 1.1 * s, g)
+		column(m, pos + Vector3.new(sx * 1.8 * s, y, 0), 2 * s, 1.1 * s, g)
+		ball(m, pos + Vector3.new(sx * 1.8 * s, y + 2 * s, 0), 1.1 * s, g)
+	end
+	if rng:NextNumber() < 0.5 then
+		ball(m, pos + Vector3.new(0, 7 * s, 0), 0.9, RGB(255, 120, 170))
+	end
+end
+
+-- 계단 피라미드 (블록 5단, 바다 위 큰 배경)
+local function buildPyramid(parent: Instance, pos: Vector3, w: number)
+	local m = model("Pyramid", parent)
+	local c = RGB(235, 200, 135)
+	local steps = 5
+	local stepH = w * 0.12
+	for i = 0, steps - 1 do
+		local size = w * (1 - i / steps)
+		newPart(m, Vector3.new(size, stepH, size), CFrame.new(pos + Vector3.new(0, SEA_Y + stepH * (i + 0.5), 0)), if i % 2 == 0 then c else darken(c, 0.08), nil, Enum.Material.Sandstone).Name = "Step"
+	end
+	ball(m, pos + Vector3.new(0, SEA_Y + stepH * steps + 1.5, 0), 3, COLORS.Gold, Enum.Material.Neon).CastShadow = false
+end
+
+-- 장난감 블록 탑 (색 블록 2~4개 + 위 동그란 돌기)
+local function buildToyBlocks(parent: Instance, pos: Vector3, scale: number?)
+	local m = model("ToyBlocks", parent)
+	local s = scale or rng:NextNumber(1, 1.5)
+	local y = 0
+	for i = 1, rng:NextInteger(2, 4) do
+		local size = Vector3.new(rng:NextNumber(2.5, 4), 2, rng:NextNumber(2.5, 4)) * s
+		local c = pick(TOY_COLORS)
+		local b = newPart(m, size, CFrame.new(pos + Vector3.new(rng:NextNumber(-0.6, 0.6), y + size.Y / 2, rng:NextNumber(-0.6, 0.6))) * CFrame.Angles(0, rng:NextNumber(-0.4, 0.4), 0), c)
+		b.CanCollide = true
+		y += size.Y
+		if i == 1 then
+			disc(m, pos + Vector3.new(0, size.Y + 0.25, 0), 1.2 * s, 0.5, c)
+		end
+	end
+end
+
+-- 비치볼 (3색 공)
+local function buildToyBall(parent: Instance, pos: Vector3)
+	local m = model("ToyBall", parent)
+	local d = rng:NextNumber(2.5, 4)
+	local b = ball(m, pos + Vector3.new(0, d / 2, 0), d, pick(TOY_COLORS))
+	b.CanCollide = true
+	disc(m, pos + Vector3.new(0, d / 2, 0), d * 1.02, 0.5, COLORS.White)
+end
+
+-- 풍선 다발 (줄 + 공 3개)
+local function buildBalloons(parent: Instance, pos: Vector3)
+	local m = model("Balloons", parent)
+	column(m, pos, 0.6, 1, RGB(200, 200, 210)).CanCollide = true
+	for i = 1, 3 do
+		local a = i * 2.1
+		local top = pos + Vector3.new(math.cos(a) * 1.2, 7 + i * 0.8, math.sin(a) * 1.2)
+		stick(m, pos + Vector3.new(0, 0.6, 0), top - Vector3.new(0, 1.2, 0), 0.08, COLORS.White)
+		blob(m, top, Vector3.new(2, 2.5, 2), pick(TOY_COLORS))
+	end
+end
+
+-- 팽이 (원뿔 대신 원판 2장 + 손잡이)
+local function buildSpinningTop(parent: Instance, pos: Vector3)
+	local m = model("SpinningTop", parent)
+	local c = pick(TOY_COLORS)
+	blob(m, pos + Vector3.new(0, 1.6, 0), Vector3.new(4.5, 2.6, 4.5), c).CanCollide = true
+	disc(m, pos + Vector3.new(0, 1.8, 0), 4.6, 0.4, COLORS.White)
+	column(m, pos + Vector3.new(0, 2.6, 0), 1.6, 0.6, darken(c, 0.2))
+	ball(m, pos + Vector3.new(0, 0.3, 0), 0.8, darken(c, 0.2))
+end
+
+-- 큰 베개 (꿈나라)
+local function buildPillow(parent: Instance, pos: Vector3)
+	local m = model("Pillow", parent)
+	local c = pick({ RGB(255, 225, 240), RGB(220, 225, 255), RGB(255, 245, 210) })
+	local yaw = rng:NextNumber(0, math.pi)
+	local p = blobCF(m, CFrame.new(pos + Vector3.new(0, 1.1, 0)) * CFrame.Angles(0, yaw, 0), Vector3.new(6, 2.4, 4), c)
+	p.CanCollide = true
+	for _, sx in { -1, 1 } do
+		ball(m, (CFrame.new(pos + Vector3.new(0, 1.1, 0)) * CFrame.Angles(0, yaw, 0) * CFrame.new(sx * 2.8, 0, 0)).Position, 1.4, c)
+	end
+end
+
+-- 초승달 가로등 (꿈나라 길가)
+local function buildMoonLamp(parent: Instance, pos: Vector3)
+	local m = model("MoonLamp", parent)
+	local pole = column(m, pos, 6, 0.5, RGB(200, 195, 240))
+	pole.CanCollide = true
+	local top = pos + Vector3.new(0, 7, 0)
+	ball(m, top, 1.8, RGB(255, 235, 150), Enum.Material.Neon).CastShadow = false
+	blob(m, top + Vector3.new(0.5, 0.3, 0), Vector3.new(1.6, 1.7, 1.9), RGB(200, 195, 240))
+end
+
+-- 용암 웅덩이 (돌 테두리 + 빛나는 용암)
+local function buildLavaPool(parent: Instance, pos: Vector3)
+	local m = model("LavaPool", parent)
+	local d = rng:NextNumber(7, 11)
+	disc(m, pos + Vector3.new(0, 0.1, 0), d + 2.4, 0.2, RGB(60, 50, 55), Enum.Material.Basalt)
+	local lava = disc(m, pos + Vector3.new(0, 0.2, 0), d, 0.2, RGB(255, 110, 40), Enum.Material.Neon)
+	lava.CastShadow = false
+	for i = 1, 4 do
+		local a = i / 4 * math.pi * 2 + rng:NextNumber(-0.4, 0.4)
+		blob(m, pos + Vector3.new(math.cos(a) * (d / 2 + 0.8), 0.5, math.sin(a) * (d / 2 + 0.8)), Vector3.new(2.4, 1.4, 2), RGB(50, 42, 48), Enum.Material.Basalt).CanCollide = true
+	end
+end
+
+-- 흑요석 뾰족 바위
+local function buildObsidian(parent: Instance, pos: Vector3)
+	local m = model("Obsidian", parent)
+	for i = 1, 3 do
+		local h = rng:NextNumber(3, 6)
+		local p = newPart(m, Vector3.new(1.4, h, 1.4), CFrame.new(pos + Vector3.new(rng:NextNumber(-0.8, 0.8), h / 2 - 0.4, rng:NextNumber(-0.8, 0.8))) * CFrame.Angles(rng:NextNumber(-0.3, 0.3), i, rng:NextNumber(-0.3, 0.3)), RGB(40, 30, 50), nil, Enum.Material.Glass)
+		p.Reflectance = 0.25
+		if i == 1 then
+			p.CanCollide = true
+		end
+	end
+end
+
+-- 바다 위 큰 화산 (산 + 꼭대기 용암 + 연기)
+local function buildVolcanoMountain(parent: Instance, pos: Vector3, w: number, h: number)
+	local m = model("VolcanoMountain", parent)
+	blob(m, Vector3.new(pos.X, SEA_Y, pos.Z), Vector3.new(w, h * 2, w * 0.9), RGB(70, 55, 60), Enum.Material.Basalt)
+	local top = Vector3.new(pos.X, SEA_Y + h * 0.92, pos.Z)
+	local lava = blob(m, top, Vector3.new(w * 0.3, h * 0.12, w * 0.28), RGB(255, 110, 40), Enum.Material.Neon)
+	lava.CastShadow = false
+	emitter(lava, {
+		Rate = 4,
+		Lifetime = NumberRange.new(6, 9),
+		Speed = NumberRange.new(4, 7),
+		SpreadAngle = Vector2.new(15, 15),
+		EmissionDirection = Enum.NormalId.Top,
+		Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 4), NumberSequenceKeypoint.new(1, 14) }),
+		Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.3), NumberSequenceKeypoint.new(1, 1) }),
+		Color = ColorSequence.new(RGB(120, 110, 115)),
+	})
+end
+
+-- 동전 더미 (납작한 금 원판들)
+local function buildCoinPile(parent: Instance, pos: Vector3)
+	local m = model("CoinPile", parent)
+	local base = blob(m, pos + Vector3.new(0, 0.6, 0), Vector3.new(5, 2, 5), COLORS.Gold, Enum.Material.Metal)
+	base.CanCollide = true
+	for _ = 1, 4 do
+		local a = rng:NextNumber(0, math.pi * 2)
+		local r = rng:NextNumber(0.5, 2)
+		newPart(m, Vector3.new(0.3, 1.4, 1.4), CFrame.new(pos + Vector3.new(math.cos(a) * r, rng:NextNumber(1.2, 2), math.sin(a) * r)) * CFrame.Angles(rng:NextNumber(-1, 1), a, math.pi / 2 + rng:NextNumber(-0.6, 0.6)), RGB(255, 220, 90), Enum.PartType.Cylinder, Enum.Material.Metal)
+	end
+end
+
+-- 보물 상자 (뚜껑 열린 상자 + 반짝이)
+local function buildTreasure(parent: Instance, pos: Vector3)
+	local m = model("Treasure", parent)
+	local yaw = rng:NextNumber(0, math.pi * 2)
+	local base = CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
+	newPart(m, Vector3.new(4, 2.4, 2.8), base * CFrame.new(0, 1.2, 0), RGB(170, 105, 55), nil, Enum.Material.WoodPlanks).CanCollide = true
+	newPart(m, Vector3.new(4.1, 0.5, 2.9), base * CFrame.new(0, 2.3, 0), COLORS.Gold, nil, Enum.Material.Metal)
+	newPart(m, Vector3.new(4, 0.6, 2.8), base * CFrame.new(0, 3.0, 1.6) * CFrame.Angles(-1.1, 0, 0), RGB(170, 105, 55), nil, Enum.Material.WoodPlanks)
+	ball(m, (base * CFrame.new(0, 2.6, 0)).Position, 1.4, RGB(255, 230, 120), Enum.Material.Neon).CastShadow = false
+end
+
+-- 분수 (둥근 물받이 + 기둥 + 물)
+local function buildFountain(parent: Instance, pos: Vector3, pal: any)
+	local m = model("Fountain", parent)
+	local rim = disc(m, pos + Vector3.new(0, 0.6, 0), 10, 1.2, RGB(250, 245, 230), Enum.Material.Marble)
+	rim.CanCollide = true
+	local water = disc(m, pos + Vector3.new(0, 1.25, 0), 8.6, 0.2, pal.Water or COLORS.Sky, Enum.Material.Glass)
+	water.Transparency = 0.15
+	column(m, pos, 4.5, 1.2, RGB(250, 245, 230), Enum.Material.Marble)
+	disc(m, pos + Vector3.new(0, 4.5, 0), 3.6, 0.5, COLORS.Gold, Enum.Material.Metal)
+	ball(m, pos + Vector3.new(0, 5.3, 0), 1.4, COLORS.Gold, Enum.Material.Metal)
+end
+
+THEMES.Blossom = function(ctx)
+	local pal = ctx.Pal
+	scatter(ctx, 10, 5, false, ctx.South, function(p, pos)
+		buildSakuraTree(p, pos)
+	end)
+	scatter(ctx, 2, 9, false, ctx.South, function(p, pos)
+		buildPond(p, pos, pal)
+	end)
+	scatter(ctx, 5, 1.6, false, ctx.South, function(p, pos)
+		buildLantern(p, pos, RGB(255, 170, 190))
+	end)
+	scatter(ctx, 4, 2.2, false, ctx.South, buildBush)
+	scatter(ctx, 12, 1.8, true, ctx.Field, buildFlowers)
+	for _, s in outerSpots(ctx, 4, 30, 55, 30) do
+		buildHill(ctx.Deco, s, Vector3.new(rng:NextNumber(50, 62), rng:NextNumber(26, 36), rng:NextNumber(40, 54)), pick({ RGB(150, 215, 130), RGB(255, 200, 220) }), Enum.Material.Grass)
+	end
+	for _, s in outerSpots(ctx, 10, 3, 35, 2.5) do
+		buildLilyPad(ctx.Deco, Vector3.new(s.X, SEA_Y, s.Z))
+	end
+	skyParticles(ctx, {
+		Rate = 14,
+		Lifetime = NumberRange.new(14, 18),
+		Speed = NumberRange.new(3, 4.5),
+		SpreadAngle = Vector2.new(25, 25),
+		EmissionDirection = Enum.NormalId.Bottom,
+		Size = NumberSequence.new(0.5),
+		Color = ColorSequence.new(RGB(255, 190, 215), RGB(255, 230, 240)),
+		RotSpeed = NumberRange.new(-60, 60),
+	})
+	skyClouds(ctx, 2)
+end
+
+THEMES.Dino = function(ctx)
+	scatter(ctx, 7, 5, false, ctx.South, function(p, pos)
+		buildPalm(p, pos)
+	end)
+	scatter(ctx, 7, 3, false, ctx.South, buildFern)
+	scatter(ctx, 3, 6, false, ctx.South, buildBones)
+	scatter(ctx, 3, 3.6, false, ctx.South, buildDinoEgg)
+	scatter(ctx, 4, 2.4, false, ctx.South, function(p, pos)
+		buildRock(p, pos, RGB(150, 140, 125), RGB(110, 175, 85))
+	end)
+	scatter(ctx, 8, 1.6, true, ctx.Field, buildFern)
+	local spots = outerSpots(ctx, 5, 30, 60, 32)
+	for i, s in spots do
+		if i == 1 then
+			buildVolcanoMountain(ctx.Deco, s, rng:NextNumber(60, 70), rng:NextNumber(40, 50))
+		else
+			buildHill(ctx.Deco, s, Vector3.new(rng:NextNumber(50, 64), rng:NextNumber(36, 56), rng:NextNumber(44, 58)), pick({ RGB(70, 150, 75), RGB(95, 165, 80) }), Enum.Material.LeafyGrass)
+		end
+	end
+	skyClouds(ctx, 2)
+end
+
+THEMES.Crystal = function(ctx)
+	scatter(ctx, 9, 3.4, false, ctx.South, function(p, pos)
+		buildBigCrystal(p, pos)
+	end)
+	scatter(ctx, 4, 2.6, false, ctx.South, buildGeode)
+	scatter(ctx, 5, 1.6, false, ctx.South, buildMushroom)
+	scatter(ctx, 4, 2.4, false, ctx.South, function(p, pos)
+		buildRock(p, pos, RGB(95, 85, 115), nil)
+	end)
+	scatter(ctx, 10, 1.6, true, ctx.Field, function(p, pos)
+		buildSpaceCrystal(p, pos, ctx.Pal)
+	end)
+	-- 바다 위 큰 동굴 바위 (보석이 박힌 어두운 산)
+	for _, s in outerSpots(ctx, 5, 30, 60, 32) do
+		local w = rng:NextNumber(50, 66)
+		blob(ctx.Deco, Vector3.new(s.X, SEA_Y, s.Z), Vector3.new(w, rng:NextNumber(50, 80), w * 0.85), RGB(80, 70, 100), Enum.Material.Slate).Name = "CaveRock"
+		buildBigCrystal(ctx.Deco, Vector3.new(s.X, SEA_Y + 12, s.Z) + (ctx.Def.Center - s).Unit * w * 0.3, 2.6)
+	end
+	skyParticles(ctx, {
+		Rate = 6,
+		Lifetime = NumberRange.new(10, 14),
+		Speed = NumberRange.new(1, 2),
+		SpreadAngle = Vector2.new(40, 40),
+		EmissionDirection = Enum.NormalId.Bottom,
+		Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 0.5), NumberSequenceKeypoint.new(1, 0) }),
+		Color = ColorSequence.new(RGB(150, 255, 245), RGB(220, 170, 255)),
+		LightEmission = 1,
+	})
+end
+
+THEMES.Desert = function(ctx)
+	local pal = ctx.Pal
+	scatter(ctx, 9, 2.6, false, ctx.South, buildCactus)
+	scatter(ctx, 5, 5, false, ctx.South, function(p, pos)
+		buildPalm(p, pos)
+	end)
+	scatter(ctx, 2, 9, false, ctx.South, function(p, pos)
+		buildPond(p, pos, pal) -- 오아시스
+	end)
+	scatter(ctx, 4, 2.4, false, ctx.South, function(p, pos)
+		buildRock(p, pos, RGB(210, 170, 120), nil)
+	end)
+	scatter(ctx, 8, 1.2, true, ctx.Field, buildShell)
+	local spots = outerSpots(ctx, 5, 35, 60, 32)
+	for i, s in spots do
+		if i <= 2 then
+			buildPyramid(ctx.Deco, s, rng:NextNumber(46, 60))
+		else
+			buildHill(ctx.Deco, s, Vector3.new(rng:NextNumber(55, 70), rng:NextNumber(20, 30), rng:NextNumber(40, 55)), RGB(240, 210, 150), Enum.Material.Sand)
+		end
+	end
+	skyClouds(ctx, 1)
+end
+
+THEMES.Toy = function(ctx)
+	-- 케이크처럼 장난감 블록 띠 (섬 가장자리)
+	local def = ctx.Def
+	newPart(ctx.Folder, Vector3.new(def.Size.X + 3.4, 0.8, def.Size.Z + 3.4), CFrame.new(def.Center.X, -1.6, def.Center.Z), RGB(255, 210, 60)).Name = "ToyBand"
+	scatter(ctx, 9, 3, false, ctx.South, function(p, pos)
+		buildToyBlocks(p, pos)
+	end)
+	scatter(ctx, 5, 2.4, false, ctx.South, buildBalloons)
+	scatter(ctx, 4, 2.6, false, ctx.South, buildSpinningTop)
+	scatter(ctx, 5, 2, false, ctx.South, buildToyBall)
+	local castle = findSpot(ctx, 9, false, ctx.South)
+	if castle then
+		buildCastle(ctx.Deco, castle)
+	end
+	scatter(ctx, 8, 1.2, true, ctx.Field, buildGumDrop)
+	for _, s in outerSpots(ctx, 5, 25, 55, 14) do
+		buildToyBlocks(ctx.Deco, Vector3.new(s.X, SEA_Y, s.Z), rng:NextNumber(3, 4.5))
+	end
+	skyClouds(ctx, 3)
+end
+
+THEMES.Dream = function(ctx)
+	local def = ctx.Def
+	scatter(ctx, 6, 4, false, ctx.South, function(p, pos)
+		buildCloudPuff(p, pos)
+	end)
+	scatter(ctx, 6, 3.4, false, ctx.South, buildPillow)
+	scatter(ctx, 6, 1.6, false, ctx.South, buildMoonLamp)
+	scatter(ctx, 8, 1.2, true, ctx.Field, buildGumDrop)
+	-- 들판 위에 떠 있는 별
+	local t = def.Trail
+	local placed = 0
+	for _ = 1, 60 do
+		if placed >= 9 then
+			break
+		end
+		local x = rng:NextNumber(ctx.Field.MinX + 6, ctx.Field.MaxX - 6)
+		local z = rng:NextNumber(ctx.Field.MinZ + 6, ctx.Field.MaxZ - 6)
+		local v = (Vector3.new(x, 0, z) - t.To):Dot(t.Side)
+		if math.abs(v) > HALF_TRAIL + 6 then
+			buildStar(ctx.Deco, Vector3.new(x, rng:NextNumber(9, 16), z), rng:NextNumber(1.6, 2.4), pick({ COLORS.Gold, RGB(200, 210, 255) }))
+			placed += 1
+		end
+	end
+	-- 큰 달 + 구름 + 하늘 별
+	local moonAt = def.Center + outward(ctx) * def.Size.X + Vector3.new(0, 80, 0)
+	local moon = ball(ctx.Deco, moonAt, 34, RGB(255, 240, 180), Enum.Material.Neon)
+	moon.Name = "Moon"
+	moon.CastShadow = false
+	ball(ctx.Deco, moonAt + Vector3.new(9, 6, -6), 30, RGB(45, 45, 100)).CastShadow = false -- 초승달로 가려요
+	for _, s in outerSpots(ctx, 6, 20, 60, 12) do
+		buildCloud(ctx.Deco, Vector3.new(s.X, rng:NextNumber(0, 10), s.Z), RGB(200, 200, 245))
+	end
+	for _ = 1, 12 do
+		local s = ball(ctx.Deco, Vector3.new(def.Center.X + rng:NextNumber(-140, 140), rng:NextNumber(45, 90), def.Center.Z + rng:NextNumber(-140, 140)), rng:NextNumber(0.6, 1.4), pick({ COLORS.White, RGB(255, 240, 160), RGB(200, 210, 255) }), Enum.Material.Neon)
+		s.CastShadow = false
+	end
+end
+
+THEMES.Volcano = function(ctx)
+	scatter(ctx, 4, 6, false, ctx.South, buildLavaPool)
+	scatter(ctx, 7, 2.2, false, ctx.South, buildObsidian)
+	scatter(ctx, 6, 2.4, false, ctx.South, function(p, pos)
+		buildRock(p, pos, RGB(70, 58, 62), nil)
+	end)
+	scatter(ctx, 8, 1.4, true, ctx.Field, buildObsidian)
+	for i, s in outerSpots(ctx, 4, 35, 65, 34) do
+		buildVolcanoMountain(ctx.Deco, s, rng:NextNumber(60, 76), rng:NextNumber(45, 62) * (if i == 1 then 1.3 else 1))
+	end
+	skyParticles(ctx, {
+		Rate = 10,
+		Lifetime = NumberRange.new(8, 12),
+		Speed = NumberRange.new(1, 3),
+		SpreadAngle = Vector2.new(60, 60),
+		EmissionDirection = Enum.NormalId.Bottom,
+		Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.4, 0.4), NumberSequenceKeypoint.new(1, 0) }),
+		Color = ColorSequence.new(RGB(255, 200, 80), RGB(255, 90, 40)),
+		LightEmission = 1,
+	})
+end
+
+THEMES.Gold = function(ctx)
+	local pal = ctx.Pal
+	scatter(ctx, 5, 2, false, ctx.South, buildPillar)
+	scatter(ctx, 5, 3, false, ctx.South, buildCoinPile)
+	scatter(ctx, 4, 2.8, false, ctx.South, buildTreasure)
+	scatter(ctx, 2, 6, false, ctx.South, function(p, pos)
+		buildFountain(p, pos, pal)
+	end)
+	scatter(ctx, 6, 4.5, false, ctx.South, function(p, pos)
+		buildTree(p, pos, { RGB(255, 215, 90), RGB(255, 235, 150), RGB(250, 200, 70) })
+	end)
+	local castle = findSpot(ctx, 9, false, ctx.South)
+	if castle then
+		buildCastle(ctx.Deco, castle, 1.2)
+	end
+	scatter(ctx, 8, 1.4, true, ctx.Field, function(p, pos)
+		buildStar(p, pos + Vector3.new(0, 1.4, 0), 1.4)
+	end)
+	-- 바다 위 큰 황금 성
+	local big = outerSpots(ctx, 1, 40, 60, 32)[1]
+	if big then
+		blob(ctx.Deco, big + Vector3.new(0, SEA_Y, 0), Vector3.new(60, 14, 44), RGB(250, 240, 205), Enum.Material.Sand).Name = "CastleIsland"
+		buildCastle(ctx.Deco, big + Vector3.new(0, 3, 0), 2.4)
+	end
+	for _, s in outerSpots(ctx, 3, 25, 55, 14) do
+		buildCoinPile(ctx.Deco, Vector3.new(s.X, SEA_Y, s.Z))
+	end
+	skyClouds(ctx, 3, RGB(255, 245, 215))
 end
 
 ----------------------------------------------------------------------
@@ -2054,18 +2614,17 @@ end
 
 ----------------------------------------------------------------------
 
--- 지역 k 울타리에서 비울 곳: 숲 마을은 모든 길의 시작점, 섬은 자기 길 끝
+-- 지역 k 울타리에서 비울 곳: 자기 길 끝 + 여기서 시작하는 길 (★v8 Zone.Parent == k, 숲 마을은 안쪽 섬 7개)
 local function fenceGaps(k: number): { Vector3 }
 	local gaps: { Vector3 } = {}
-	if k == 1 then
-		for j = 2, Config.MaxZone do
-			local t = Zones[j].Trail
-			if t then
-				table.insert(gaps, t.From)
-			end
-		end
-	elseif Zones[k].Trail then
+	if Zones[k].Trail then
 		table.insert(gaps, Zones[k].Trail.To)
+	end
+	for j = 2, Config.MaxZone do
+		local t = Zones[j].Trail
+		if t and Zones[j].Parent == k then
+			table.insert(gaps, t.From)
+		end
 	end
 	return gaps
 end
@@ -2088,7 +2647,14 @@ local function newCtx(k: number, world: Instance): Ctx
 		Blocks = {},
 		Circles = {},
 		Placed = {},
+		Exits = {},
 	}
+	for j = 2, Config.MaxZone do
+		local t = Zones[j].Trail
+		if t and Zones[j].Parent == k then
+			table.insert(ctx.Exits, t.From)
+		end
+	end
 	return ctx
 end
 

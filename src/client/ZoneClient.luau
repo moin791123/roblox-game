@@ -231,7 +231,7 @@ local function applyLighting(zone: number)
 		}
 	end
 	local base = baseLight :: { ClockTime: number, Tint: Color3, Ambient: Color3 }
-	local isSpace = def.Id == "Space"
+	local isSpace = def.Id == "Space" or def.Palette.Night == true -- ★v8 꿈나라도 밤
 	local info = TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
 	TweenService:Create(Lighting, info, {
 		ClockTime = if isSpace then NIGHT_CLOCK else base.ClockTime,
