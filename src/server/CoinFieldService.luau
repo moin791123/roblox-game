@@ -106,10 +106,12 @@ local function pickKind(rng: Random): CoinKind
 end
 
 local function insidePlot(pos: Vector3): boolean
-	for _, cf in Layout.Plots do
-		local lp = cf:PointToObjectSpace(Vector3.new(pos.X, cf.Position.Y, pos.Z))
-		if math.abs(lp.X) <= HALF_PLOT + PLOT_MARGIN and math.abs(lp.Z) <= HALF_PLOT + PLOT_MARGIN then
-			return true
+	for _, list in { Layout.Plots, Layout.Plots2 } do -- ★v8 2번 집 땅도
+		for _, cf in list do
+			local lp = cf:PointToObjectSpace(Vector3.new(pos.X, cf.Position.Y, pos.Z))
+			if math.abs(lp.X) <= HALF_PLOT + PLOT_MARGIN and math.abs(lp.Z) <= HALF_PLOT + PLOT_MARGIN then
+				return true
+			end
 		end
 	end
 	return false

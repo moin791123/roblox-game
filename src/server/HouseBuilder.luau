@@ -24,6 +24,9 @@ export type Handles = {
 	Bounds: { MinY: number, MaxY: number }, -- 월드 y 범위 (바닥 밑 ~ 지붕 꼭대기)
 }
 
+-- ★v8 2번 집: House = 2 이면 받침대 번호 +120, 층 번호 +10 (속성·글자는 전체 번호, 위치는 그 집 안 번호)
+export type BuildOpts = { House: number? }
+
 ----------------------------------------------------------------------
 -- 상수
 ----------------------------------------------------------------------
@@ -150,6 +153,8 @@ type Ctx = {
 	count: number,
 	L: HouseLayout.Layout,
 	ownerId: number,
+	slotOffset: number, -- ★v8 2번 집이면 120
+	floorOffset: number, -- ★v8 2번 집이면 10
 	eaveY: number, -- 처마 (지붕 밑) 높이
 	roofBase: number, -- 지붕 쐐기 밑면
 	roofH: number, -- 지붕 높이
@@ -538,18 +543,19 @@ local function buildElevator(ctx: Ctx, f: number): BasePart
 	local frame = box(ctx, "ElevatorFrame", e.X - e.W / 2, e.X + e.W / 2, y, y + ELEV_FRAME_H, frameBack, frameFront, {
 		Color = theme.Accent,
 	})
-	surfaceText(frame, Enum.NormalId.Back, "🛗 " .. f .. "층", UDim2.fromScale(0.05, 0.84), UDim2.fromScale(0.9, 0.15))
+	local gf = f + ctx.floorOffset -- ★v8 전체 층 번호 (2번 집 1층 = 11)
+	surfaceText(frame, Enum.NormalId.Back, "🛗 " .. Config.FloorName(gf), UDim2.fromScale(0.05, 0.84), UDim2.fromScale(0.9, 0.15))
 	local door = box(ctx, "Elevator", e.X - ELEV_DOOR_W / 2, e.X + ELEV_DOOR_W / 2, y + 0.05, y + ELEV_DOOR_H, frameFront, e.PanelMaxZ, {
 		Color = if ctx.deco == "galaxy" then Color3.fromRGB(150, 120, 255) else GLASS,
 		Material = Enum.Material.Glass,
 		Transparency = 0.1,
 		Reflectance = 0.15,
 	})
-	door:SetAttribute("Floor", f)
+	door:SetAttribute("Floor", gf)
 	door:SetAttribute("PromptAction", "Elevator")
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.ActionText = "🛗 층 이동"
-	prompt.ObjectText = f .. "층 엘리베이터"
+	prompt.ObjectText = Config.FloorName(gf) .. " 엘리베이터"
 	prompt.HoldDuration = 0
 	prompt.MaxActivationDistance = 8
 	prompt.RequiresLineOfSight = false
@@ -557,7 +563,7 @@ local function buildElevator(ctx: Ctx, f: number): BasePart
 	prompt:SetAttribute("PromptKind", "Owner")
 	prompt:SetAttribute("OwnerUserId", ctx.ownerId)
 	prompt:SetAttribute("PromptAction", "Elevator")
-	prompt:SetAttribute("Floor", f)
+	prompt:SetAttribute("Floor", gf)
 	prompt.Parent = door
 	return door
 end
@@ -753,7 +759,7 @@ local function lockText(slot: number): string
 	end
 	local f = Config.SlotFloor(slot)
 	if f >= 2 then
-		return "🔒 " .. f .. "층 혜택"
+		return "🔒 " .. Config.FloorName(f) .. " 혜택"
 	end
 	return "🔒"
 end
@@ -814,13 +820,13 @@ local function buildPedestals(ctx: Ctx, slotsUnlocked: number): { [number]: Base
 	for f = 1, ctx.floors do
 		local y = HouseLayout.FloorY(f)
 		for i, s in L.Slots do
-			local slot = (f - 1) * SLOTS_PER_FLOOR + i
+			local slot = ctx.slotOffset + (f - 1) * SLOTS_PER_FLOOR + i
 			local m = Instance.new("Model")
 			m.Name = "Pedestal" .. slot
 			local base = vcyl(ctx, s.X, s.Z, y, PED_BASE_H, L.PedD, { Name = "Base", Color = WHITE, Parent = m })
 			local top = vcyl(ctx, s.X, s.Z, y + PED_BASE_H, PED_TOP_H, L.PedTopD, { Name = "Top", Color = ctx.theme.Accent, Parent = m })
 			top:SetAttribute("Slot", slot)
-			top:SetAttribute("Floor", f)
+			top:SetAttribute("Floor", f + ctx.floorOffset)
 			local bb, label = makeBillboard(top, 2.2, 5, 1.6, 50, "Label")
 			bb.Enabled = false
 			m.Parent = ctx.house
@@ -1272,8 +1278,10 @@ function HouseBuilder.ElevatorLocal(themeId: string?, floor: number): CFrame
 end
 
 -- 집 전체를 (다시) 지어요. 기존 House 는 지우고, Collector / SpawnPoint 는 재사용.
--- 엘리베이터 프롬프트 주인은 plotModel 의 OwnerUserId 속성 (부르는 쪽이 짓기 전에 맞춰요)
-function HouseBuilder.Build(plotModel: Model, origin: CFrame, themeId: string, floors: number, slotsUnlocked: number): Handles
+-- 엘리베이터 프롬프트 주인은 plotModel 의 OwnerUserId 속성 (부르는 쪽이 짓기 전에 맞춰요).
+-- ★v8 2번 집은 opts.House = 2, floors = 그 집 층 수 (1..10), plotModel = 2번 집 모델 (Plot 아래 "Annex")
+function HouseBuilder.Build(plotModel: Model, origin: CFrame, themeId: string, floors: number, slotsUnlocked: number, opts: BuildOpts?): Handles
+	local houseNo = if opts and opts.House == 2 then 2 else 1
 	local theme, id = themeOf(themeId)
 	local floorCount = math.clamp(math.floor(tonumber(floors) or 1), 1, Config.House.MaxFloors)
 	local unlocked = math.clamp(math.floor(tonumber(slotsUnlocked) or Config.Plot.StartSlots), 0, Config.Plot.TotalSlots)
@@ -1289,6 +1297,7 @@ function HouseBuilder.Build(plotModel: Model, origin: CFrame, themeId: string, f
 	house:SetAttribute("Theme", id)
 	house:SetAttribute("Floors", floorCount)
 	house:SetAttribute("Size", L.Size)
+	house:SetAttribute("HouseNo", houseNo)
 
 	local eaveY = HouseLayout.RoofY(floorCount)
 	local roofD = (L.Size + 2) / 2
@@ -1302,6 +1311,8 @@ function HouseBuilder.Build(plotModel: Model, origin: CFrame, themeId: string, f
 		count = 0,
 		L = L,
 		ownerId = tonumber(plotModel:GetAttribute("OwnerUserId")) or 0,
+		slotOffset = (houseNo - 1) * Config.House.MaxFloors * SLOTS_PER_FLOOR,
+		floorOffset = (houseNo - 1) * Config.House.MaxFloors,
 		eaveY = eaveY,
 		roofBase = eaveY + 0.3,
 		roofH = 4 + L.Size * 0.2,
@@ -1325,7 +1336,7 @@ function HouseBuilder.Build(plotModel: Model, origin: CFrame, themeId: string, f
 	buildTower(ctx)
 	local elevators: { [number]: BasePart } = {}
 	for f = 1, floorCount do
-		elevators[f] = buildElevator(ctx, f)
+		elevators[f + ctx.floorOffset] = buildElevator(ctx, f)
 	end
 	buildRoof(ctx)
 	local pedestals = buildPedestals(ctx, unlocked)
@@ -1348,10 +1359,11 @@ function HouseBuilder.Build(plotModel: Model, origin: CFrame, themeId: string, f
 	}
 end
 
--- 받침대 잠김/열림 색과 가격표만 갱신 (다시 짓지 않음). 층이 바뀌면 Build 를 다시 불러야 해요
+-- 받침대 잠김/열림 색과 가격표만 갱신 (다시 짓지 않음). 층이 바뀌면 Build 를 다시 불러야 해요.
+-- floors = 전체 층 수 (1..20, ★v8 2번 집 받침대도 전체 번호라 그대로 비교해요)
 function HouseBuilder.UpdatePedestals(handles: Handles, slotsUnlocked: number, floors: number)
 	local theme = themeOf(handles.House:GetAttribute("Theme"))
-	local floorCount = math.clamp(math.floor(tonumber(floors) or 1), 1, Config.House.MaxFloors)
+	local floorCount = math.clamp(math.floor(tonumber(floors) or 1), 1, Config.House.TotalFloors)
 	local unlocked = math.clamp(math.floor(tonumber(slotsUnlocked) or 0), 0, Config.Plot.TotalSlots)
 	for slot, top in handles.Pedestals do
 		local m = top.Parent

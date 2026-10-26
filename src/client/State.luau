@@ -27,7 +27,7 @@ export type Snapshot = {
 	Coins: number,
 	Pending: number,
 	SlotsUnlocked: number,
-	Floors: number, -- 1..Config.House.MaxFloors
+	Floors: number, -- 1..Config.House.TotalFloors (★v8 11~20 = 2번 집)
 	Theme: string,
 	Themes: { [string]: boolean },
 	Items: { [string]: Item },
@@ -477,22 +477,29 @@ function State.PlotOrigin(): CFrame?
 	return if idx then Config.Layout.Plots[idx] else nil
 end
 
--- 내 캐릭터가 내 집 안에 있으면 지금 층 (1..Floors), 아니면 nil
+-- 내 캐릭터가 내 집 안에 있으면 지금 층 (1..Floors, ★v8 2번 집이면 11~), 아니면 nil
 function State.CurrentFloor(): number?
-	local origin = State.PlotOrigin()
+	local idx = State.PlotIndex()
 	local character = player.Character
 	local root = if character then character:FindFirstChild("HumanoidRootPart") else nil
-	if not origin or not root or not root:IsA("BasePart") then
+	if not idx or not root or not root:IsA("BasePart") then
 		return nil
 	end
-	local p = origin:PointToObjectSpace(root.Position)
 	local half = Config.Layout.PlotSize / 2 + 1
-	if math.abs(p.X) > half or math.abs(p.Z) > half or p.Y < -4 then
-		return nil
+	local per = Config.House.MaxFloors
+	for house = 1, Config.House.Houses do
+		local origin = Config.PlotOrigin(idx, house)
+		local built = Config.HouseFloorCount(State.Floors(), house)
+		if origin and built > 0 then
+			local p = origin:PointToObjectSpace(root.Position)
+			if math.abs(p.X) <= half and math.abs(p.Z) <= half and p.Y >= -4 then
+				-- f 층 바닥 윗면 = 0.2 + (f - 1) × FloorHeight, 서 있으면 루트는 그보다 3 정도 위
+				local f = math.floor((p.Y - 0.7) / Config.House.FloorHeight) + 1
+				return (house - 1) * per + math.clamp(f, 1, built)
+			end
+		end
 	end
-	-- f 층 바닥 윗면 = 0.2 + (f - 1) × FloorHeight, 서 있으면 루트는 그보다 3 정도 위
-	local f = math.floor((p.Y - 0.7) / Config.House.FloorHeight) + 1
-	return math.clamp(f, 1, State.Floors())
+	return nil
 end
 
 ----------------------------------------------------------------------
@@ -583,7 +590,7 @@ function State.SetSnapshot(snap: any)
 	end
 	snap.Coins = math.max(0, num(snap.Coins) or 0)
 	snap.Pending = math.max(0, num(snap.Pending) or 0)
-	snap.Floors = math.clamp(math.floor(num(snap.Floors) or 1), 1, Config.House.MaxFloors)
+	snap.Floors = math.clamp(math.floor(num(snap.Floors) or 1), 1, Config.House.TotalFloors) -- ★v8 2번 집까지
 	snap.SlotsUnlocked = math.clamp(
 		math.floor(num(snap.SlotsUnlocked) or Config.Plot.StartSlots),
 		Config.Plot.StartSlots,

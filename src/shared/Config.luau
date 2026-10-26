@@ -23,7 +23,11 @@ Config.Settings = {
 	AutoSell = false, -- ★v7.1 🤖 자동 판매 (새로 태어난 펫이 아래 조건이면 바로 팔아요)
 	SellZoneMax = 1, -- ★v7.1 💰 한꺼번에 팔기·자동 판매: 이 테마(지역 번호) 이하 펫만
 	SellRarityMax = 2, -- ★v7.1 이 등급(희귀도 Order, 2 = 고급) 이하 펫만
+	Tutorial = 0, -- ★v7.6 📘 튜토리얼: 끝낸 단계 수 (0 .. Config.TutorialSteps, 다 끝내면 다시 안 나와요)
 }
+
+-- ★v7.6 📘 튜토리얼 단계 수 (클라이언트 Tutorial.luau 의 STEPS 와 같아야 해요)
+Config.TutorialSteps = 8
 
 -- ★v7 알 알림 단계: 한 칸 내려갈수록 더 꺼요 ("어디까지 받을지"). [n + 1] = 단계 n
 -- Normal: 보통 좋은 알 알림 ("All" = v6 규칙, "Top" = 내 최종 테마(열린 가장 먼 지역)만, "None" = 안 받기)
@@ -50,6 +54,8 @@ function Config.SettingRange(key: any): (number?, number?)
 		return 1, Config.MaxZone
 	elseif key == "SellRarityMax" then
 		return 1, Config.SellRarityTop
+	elseif key == "Tutorial" then
+		return 0, Config.TutorialSteps
 	end
 	return nil, nil
 end
@@ -121,7 +127,7 @@ end
 -- 서버가 UserId 로만 확인해요 (클라이언트가 보낸 건 안 믿어요). 관리자는 유료 기능 (🧲 ⚡ 🏦 ★v7.5 ♾) 을 늘 쓸 수 있어요
 Config.AdminUserIds = { 981565959 } -- 게임 만든 사람 (beragom)
 Config.Admin = {
-	CoinCap = 1e17, -- 선물로 이만큼 넘게는 안 줘요 (환생 25회 비용 1.6e16 도 넉넉)
+	CoinCap = 1e22, -- 선물로 이만큼 넘게는 안 줘요 (★v8 환생 30회 비용 9e19 도 넉넉)
 	CoinAdds = { 1e3, 1e6, 1e9, 1e12, 1e15 }, -- 💰 버튼 (+1K / +1M / +1B / +1T / +1Qa). 서버는 이 값만 받아요
 	TimesMinAdd = 1e3, -- ×10 인데 코인이 거의 없으면 적어도 이만큼
 	Gap = 0.2, -- 관리자 버튼 사이 최소 초 (연타 막기)
@@ -200,6 +206,10 @@ Config.BulkSell = {
 -- 로비(서쪽, 스폰이 +X 를 봐요)에서 보면 왼쪽 뒤부터 시계 방향으로 한 바퀴:
 --   2 호수 (서쪽 왼편) → 3 정글 (왼쪽) → 4 겨울 산 (왼쪽 앞) → 5 바다 (정면 끝) → 6 캔디 랜드 (오른쪽 앞)
 --   → 7 구름 왕국 (오른쪽) → 8 우주 (서쪽 오른편)
+-- ★v8 바깥 섬 8개 (9~16): 안쪽 섬 맨 끝에서 길이 하나 더 나가요 (Zone.Parent = 길이 시작하는 섬).
+--   9 벚꽃 정원 (호수 뒤) · 10 공룡 섬 (정글 뒤) · 11 보석 동굴 (겨울 산 뒤) · 12 사막 오아시스 (바다 뒤)
+--   · 13 장난감 나라 (캔디 랜드 뒤) · 14 꿈나라 (구름 왕국 뒤) · 15 불꽃 화산 (우주 뒤) · 16 황금 왕국 (사막 뒤)
+-- ★v8 숲 마을은 z ±200 으로 넓어졌어요 (집 줄 뒤에 2번 집 줄). 그래서 섬 3·4·6·7 은 75 더 바깥에 있어요
 -- 섬 안: 입구 → 스폰 → 큰길. 컨베이어는 큰길 옆으로 나란히 (입구 쪽에서 알이 나와요), 코인 들판은 큰길 둘레.
 ----------------------------------------------------------------------
 local TRAIL_LENGTH = 30 -- 숲 마을 가장자리 → 섬 입구
@@ -244,6 +254,8 @@ local function island(def: { [string]: any }, o: { [string]: any }): { [string]:
 	def.SpawnLook = dir -- 스폰/순간이동하면 섬 안쪽을 봐요
 	-- 길: From(숲 마을 가장자리) → To(섬 입구). Side/BeltSide 는 WorldBuilder 가 섬 안 길을 그릴 때 써요
 	def.Trail = { From = mouth, To = entry, Dir = dir, Side = side, BeltSide = beltSide }
+	-- ★v8 길이 시작하는 땅 (1 = 숲 마을, 바깥 섬 9~16 은 안쪽 섬 번호). 문 간판 뒷면·울타리 틈·큰길을 이걸로 그려요
+	def.Parent = o.Parent or 1
 	-- 입구 문: 길이 시작하는 곳 (숲 마을 쪽 끝). 환생이 모자란 사람만 클라이언트에서 막혀요
 	local gatePos = mouth + dir * 1.5 + V3(0, 8, 0)
 	def.Gate = { CFrame = CFrame.lookAt(gatePos, gatePos + dir), Size = V3(TRAIL_WIDTH + 4, 16, 2) }
@@ -260,7 +272,7 @@ Config.Zones = {
 		MinRebirth = 0,
 		CoinMult = 1,
 		Center = HOME_CENTER,
-		Size = V3(315, 4, 250), -- x -180..135, z -125..125 (집 6채 + 로비 + 컨베이어). 둘레에 섬 7개
+		Size = V3(315, 4, 400), -- x -180..135, z -200..200 (집 6채 + ★v8 뒤쪽 2번 집 6채 + 로비 + 컨베이어). 둘레에 섬 7개
 		Palette = {
 			Ground = RGB(125, 210, 105),
 			Path = RGB(250, 232, 198),
@@ -311,7 +323,7 @@ Config.Zones = {
 			Deco = { "PalmTree", "BigLeaf", "Vine", "Rock", "Flower" },
 		},
 		Eggs = { "Jungle", "Leaf", "Spotted", "Tropical", "Tiger" },
-	}, { Mouth = V3(-150, 0, -125), Dir = SOUTH, Center = V3(-105, 0, -235) }),
+	}, { Mouth = V3(-150, 0, -200), Dir = SOUTH, Center = V3(-105, 0, -310) }), -- ★v8 숲 마을이 넓어져서 75 더 바깥
 	island({
 		Id = "Snow",
 		Name = "겨울 산",
@@ -327,7 +339,7 @@ Config.Zones = {
 			Deco = { "PineTree", "SnowPile", "IceCrystal", "Snowman", "Rock" },
 		},
 		Eggs = { "Snow", "Ice", "Snowflake", "Aurora", "Twilight" },
-	}, { Mouth = V3(120, 0, -125), Dir = SOUTH, Center = V3(125, 0, -235) }),
+	}, { Mouth = V3(120, 0, -200), Dir = SOUTH, Center = V3(125, 0, -310) }), -- ★v8
 	island({
 		Id = "Ocean",
 		Name = "바다",
@@ -360,7 +372,7 @@ Config.Zones = {
 			Deco = { "Lollipop", "CandyCane", "Cupcake", "GumDrop", "Donut" },
 		},
 		Eggs = { "Candy", "Jelly", "Lollipop", "Cake", "Rainbow" },
-	}, { Mouth = V3(120, 0, 125), Dir = NORTH, Center = V3(125, 0, 235) }),
+	}, { Mouth = V3(120, 0, 200), Dir = NORTH, Center = V3(125, 0, 310) }), -- ★v8
 	island({
 		Id = "Cloud",
 		Name = "구름 왕국",
@@ -376,7 +388,7 @@ Config.Zones = {
 			Deco = { "Cloud", "Castle", "RainbowArch", "Star", "Pillar" },
 		},
 		Eggs = { "Cloud", "Breeze", "Feather", "Angel", "Golden" },
-	}, { Mouth = V3(-150, 0, 125), Dir = NORTH, Center = V3(-105, 0, 235) }),
+	}, { Mouth = V3(-150, 0, 200), Dir = NORTH, Center = V3(-105, 0, 310) }), -- ★v8
 	island({
 		Id = "Space",
 		Name = "우주",
@@ -393,6 +405,141 @@ Config.Zones = {
 		},
 		Eggs = { "Space", "Moon", "Planet", "Comet", "Starlight" },
 	}, { Mouth = V3(-180, 0, 80), Dir = WEST, Center = V3(-290, 0, 90) }),
+	-- ★v8 바깥 섬 8개 (지역 9~16): 안쪽 섬의 맨 끝(숲 마을 반대쪽) 가장자리에서 길이 시작해요 (Parent = 그 섬).
+	-- 9~15 는 섬 2~8 뒤에 하나씩, 16 은 12 (사막) 뒤. 환생 16, 18, … 30 회에 열려요
+	island({
+		Id = "Blossom",
+		Name = "벚꽃 정원",
+		Emoji = "🌸",
+		MinRebirth = 16,
+		CoinMult = 2.1,
+		Palette = {
+			Ground = RGB(175, 225, 145),
+			Path = RGB(255, 236, 242),
+			Accent = RGB(255, 150, 195),
+			Trim = RGB(175, 115, 95),
+			Water = RGB(150, 210, 245),
+			Sky = RGB(255, 225, 240),
+			Deco = { "CherryTree", "Lantern", "Flower", "Pond", "Butterfly" },
+		},
+		Eggs = { "Sakura", "Tulip", "HoneyPot", "Bloom", "SpringQueen" },
+	}, { Mouth = V3(-370, 0, -80), Dir = WEST, Center = V3(-480, 0, -90), Parent = 2 }),
+	island({
+		Id = "Dino",
+		Name = "공룡 섬",
+		Emoji = "🦕",
+		MinRebirth = 18,
+		CoinMult = 2.2,
+		Palette = {
+			Ground = RGB(125, 185, 90),
+			Path = RGB(215, 185, 140),
+			Accent = RGB(255, 170, 70),
+			Trim = RGB(130, 95, 65),
+			Water = RGB(90, 180, 200),
+			Sky = RGB(205, 235, 210),
+			Deco = { "Fern", "Bones", "DinoEgg", "PalmTree", "Rock" },
+		},
+		Eggs = { "Dino", "Fern", "Fossil", "Amber", "Jurassic" },
+	}, { Mouth = V3(-150, 0, -390), Dir = SOUTH, Center = V3(-105, 0, -500), Parent = 3 }),
+	island({
+		Id = "Crystal",
+		Name = "보석 동굴",
+		Emoji = "💎",
+		MinRebirth = 20,
+		CoinMult = 2.3,
+		Palette = {
+			Ground = RGB(105, 95, 140),
+			Path = RGB(185, 175, 215),
+			Accent = RGB(120, 240, 230),
+			Trim = RGB(80, 70, 105),
+			Sky = RGB(175, 165, 225),
+			Deco = { "BigCrystal", "Geode", "Mushroom", "Rock", "Lantern" },
+		},
+		Eggs = { "Cave", "Ruby", "Sapphire", "Amethyst", "DiamondEgg" },
+	}, { Mouth = V3(120, 0, -390), Dir = SOUTH, Center = V3(125, 0, -500), Parent = 4 }),
+	island({
+		Id = "Desert",
+		Name = "사막 오아시스",
+		Emoji = "🏜",
+		MinRebirth = 22,
+		CoinMult = 2.4,
+		Palette = {
+			Ground = RGB(245, 215, 155),
+			Path = RGB(255, 240, 210),
+			Accent = RGB(80, 190, 200),
+			Trim = RGB(190, 140, 80),
+			Water = RGB(80, 190, 220),
+			Sky = RGB(255, 235, 200),
+			Deco = { "Cactus", "Pyramid", "PalmTree", "Oasis", "Rock" },
+		},
+		Eggs = { "Sand", "Oasis", "CactusEgg", "Pyramid", "Pharaoh" },
+	}, { Mouth = V3(325, 0, 0), Dir = EAST, Center = V3(435, 0, 0), Parent = 5 }),
+	island({
+		Id = "Toy",
+		Name = "장난감 나라",
+		Emoji = "🧸",
+		MinRebirth = 24,
+		CoinMult = 2.5,
+		Palette = {
+			Ground = RGB(255, 232, 175),
+			Path = RGB(255, 255, 255),
+			Accent = RGB(255, 95, 115),
+			Trim = RGB(90, 160, 255),
+			Sky = RGB(220, 240, 255),
+			Deco = { "ToyBlock", "Balloon", "Ball", "SpinningTop", "Teddy" },
+		},
+		Eggs = { "ToyEgg", "Block", "Balloon", "MusicBox", "Carousel" },
+	}, { Mouth = V3(120, 0, 390), Dir = NORTH, Center = V3(125, 0, 500), Parent = 6 }),
+	island({
+		Id = "Dream",
+		Name = "꿈나라",
+		Emoji = "🌙",
+		MinRebirth = 26,
+		CoinMult = 2.6,
+		Palette = {
+			Ground = RGB(125, 125, 195),
+			Path = RGB(222, 216, 255),
+			Accent = RGB(255, 225, 120),
+			Trim = RGB(160, 150, 230),
+			Sky = RGB(45, 45, 100),
+			Night = true, -- ★v8 우주처럼 밤 하늘 (ZoneClient)
+			Deco = { "Moon", "Pillow", "Star", "Cloud", "Lamp" },
+		},
+		Eggs = { "DreamEgg", "Pillow", "Crescent", "Lullaby", "Starry" },
+	}, { Mouth = V3(-150, 0, 390), Dir = NORTH, Center = V3(-105, 0, 500), Parent = 7 }),
+	island({
+		Id = "Volcano",
+		Name = "불꽃 화산",
+		Emoji = "🌋",
+		MinRebirth = 28,
+		CoinMult = 2.7,
+		Palette = {
+			Ground = RGB(85, 70, 70),
+			Path = RGB(155, 125, 115),
+			Accent = RGB(255, 120, 50),
+			Trim = RGB(55, 45, 50),
+			Sky = RGB(255, 190, 150),
+			Deco = { "Volcano", "LavaPool", "Obsidian", "Rock", "Ember" },
+		},
+		Eggs = { "Lava", "Ember", "Magma", "Obsidian", "Blaze" },
+	}, { Mouth = V3(-370, 0, 80), Dir = WEST, Center = V3(-480, 0, 90), Parent = 8 }),
+	island({
+		Id = "Gold",
+		Name = "황금 왕국",
+		Emoji = "👑",
+		MinRebirth = 30,
+		CoinMult = 2.8,
+		Palette = {
+			Ground = RGB(250, 240, 205),
+			Path = RGB(255, 225, 125),
+			Accent = RGB(255, 200, 50),
+			Trim = RGB(200, 60, 80),
+			Water = RGB(90, 200, 240),
+			Sky = RGB(255, 245, 210),
+			Deco = { "GoldCastle", "CoinPile", "Treasure", "Fountain", "Pillar" },
+		},
+		Eggs = { "Coin", "Treasure", "Royal", "Jewel", "Emperor" },
+	}, { Mouth = V3(515, 0, 0), Dir = EAST, Center = V3(625, 0, 0), Parent = 12 }),
 }
 Config.MaxZone = #Config.Zones
 
@@ -510,6 +657,110 @@ Config.Pets = {
 	MeteorHamster = { Name = "운석 햄스터", Rarity = "Hidden", Zone = 8, Income = 26250000, Color = RGB(255, 160, 80) }, -- ★v6 ★v7 신화 ×25
 	GalaxyUnicorn = { Name = "은하 유니콘", Rarity = "Celestial", Zone = 8, Income = 63000000, Color = RGB(80, 90, 200) }, -- ★v6 ★v7 신화 ×60
 	CosmoDragon = { Name = "은하 용", Rarity = "Eternal", Zone = 8, Income = 157500000, Color = RGB(40, 50, 130) }, -- ★v6 ★v7 신화 ×150
+
+	-- 9. 벚꽃 ★v8
+	Ladybug = { Name = "무당벌레", Rarity = "Common", Zone = 9, Income = 750000, Color = RGB(235, 70, 70) }, -- ★v8
+	HoneyBee = { Name = "꿀벌", Rarity = "Common", Zone = 9, Income = 900000, Color = RGB(255, 210, 60) }, -- ★v8
+	Butterfly = { Name = "나비", Rarity = "Uncommon", Zone = 9, Income = 1.12e6, Color = RGB(255, 170, 220) }, -- ★v8
+	PetalHamster = { Name = "꽃잎 햄스터", Rarity = "Rare", Zone = 9, Income = 1.65e6, Color = RGB(255, 200, 215) }, -- ★v8
+	SakuraCat = { Name = "벚꽃 냥이", Rarity = "Epic", Zone = 9, Income = 2.4e6, Color = RGB(255, 185, 210) }, -- ★v8
+	FlowerFairy = { Name = "꽃 요정", Rarity = "Legendary", Zone = 9, Income = 3.38e6, Color = RGB(190, 240, 170) }, -- ★v8
+	SakuraSpirit = { Name = "벚꽃 정령", Rarity = "Mythic", Zone = 9, Income = 5.25e6, Color = RGB(255, 215, 235) }, -- ★v8
+	ButterflyQueen = { Name = "나비 여왕", Rarity = "Secret", Zone = 9, Income = 9e6, Color = RGB(200, 150, 255) }, -- ★v8
+	HoneyBear = { Name = "꿀단지 곰", Rarity = "Hidden", Zone = 9, Income = 1.3125e8, Color = RGB(240, 170, 70) }, -- ★v8 신화 ×25
+	SakuraCrane = { Name = "벚꽃 두루미", Rarity = "Celestial", Zone = 9, Income = 3.15e8, Color = RGB(255, 235, 245) }, -- ★v8 신화 ×60
+	BlossomDragon = { Name = "벚꽃 용", Rarity = "Eternal", Zone = 9, Income = 7.875e8, Color = RGB(255, 150, 200) }, -- ★v8 신화 ×150
+
+	-- 10. 공룡 ★v8
+	BabyDino = { Name = "아기 공룡", Rarity = "Common", Zone = 10, Income = 3.75e6, Color = RGB(130, 210, 110) }, -- ★v8
+	Ptero = { Name = "아기 익룡", Rarity = "Common", Zone = 10, Income = 4.5e6, Color = RGB(240, 160, 110) }, -- ★v8
+	Stego = { Name = "스테고", Rarity = "Uncommon", Zone = 10, Income = 5.62e6, Color = RGB(130, 190, 230) }, -- ★v8
+	Tricera = { Name = "트리케라", Rarity = "Rare", Zone = 10, Income = 8.25e6, Color = RGB(250, 190, 90) }, -- ★v8
+	Bronto = { Name = "브론토", Rarity = "Epic", Zone = 10, Income = 1.2e7, Color = RGB(170, 200, 140) }, -- ★v8
+	Ankylo = { Name = "안킬로", Rarity = "Legendary", Zone = 10, Income = 1.69e7, Color = RGB(190, 150, 110) }, -- ★v8
+	TRex = { Name = "꼬마 티렉스", Rarity = "Mythic", Zone = 10, Income = 2.62e7, Color = RGB(110, 180, 90) }, -- ★v8
+	AmberRaptor = { Name = "호박 랩터", Rarity = "Secret", Zone = 10, Income = 4.5e7, Color = RGB(255, 180, 60) }, -- ★v8
+	DinoPuppy = { Name = "공룡 옷 강아지", Rarity = "Hidden", Zone = 10, Income = 6.55e8, Color = RGB(120, 210, 120) }, -- ★v8 신화 ×25
+	SkyPtera = { Name = "하늘 익룡", Rarity = "Celestial", Zone = 10, Income = 1.572e9, Color = RGB(255, 210, 120) }, -- ★v8 신화 ×60
+	AncientDragon = { Name = "고대 용", Rarity = "Eternal", Zone = 10, Income = 3.93e9, Color = RGB(90, 150, 110) }, -- ★v8 신화 ×150
+
+	-- 11. 보석 ★v8
+	CaveBat = { Name = "동굴 박쥐", Rarity = "Common", Zone = 11, Income = 1.88e7, Color = RGB(150, 120, 200) }, -- ★v8
+	Mole = { Name = "광부 두더지", Rarity = "Common", Zone = 11, Income = 2.25e7, Color = RGB(150, 110, 90) }, -- ★v8
+	GemSnail = { Name = "보석 달팽이", Rarity = "Uncommon", Zone = 11, Income = 2.81e7, Color = RGB(150, 230, 255) }, -- ★v8
+	GeodeTurtle = { Name = "정동 거북", Rarity = "Rare", Zone = 11, Income = 4.12e7, Color = RGB(170, 140, 230) }, -- ★v8
+	RubyFox = { Name = "루비 여우", Rarity = "Epic", Zone = 11, Income = 6e7, Color = RGB(240, 60, 90) }, -- ★v8
+	SapphireWolf = { Name = "사파이어 늑대", Rarity = "Legendary", Zone = 11, Income = 8.44e7, Color = RGB(70, 120, 240) }, -- ★v8
+	AmethystOwl = { Name = "자수정 부엉이", Rarity = "Mythic", Zone = 11, Income = 1.31e8, Color = RGB(170, 100, 230) }, -- ★v8
+	GemGolem = { Name = "보석 골렘", Rarity = "Secret", Zone = 11, Income = 2.25e8, Color = RGB(120, 230, 220) }, -- ★v8
+	OpalBunny = { Name = "오팔 토끼", Rarity = "Hidden", Zone = 11, Income = 3.275e9, Color = RGB(230, 240, 255) }, -- ★v8 신화 ×25
+	CrystalDeer = { Name = "크리스탈 사슴", Rarity = "Celestial", Zone = 11, Income = 7.86e9, Color = RGB(170, 230, 255) }, -- ★v8 신화 ×60
+	DiamondDragon = { Name = "다이아몬드 용", Rarity = "Eternal", Zone = 11, Income = 1.965e10, Color = RGB(200, 240, 255) }, -- ★v8 신화 ×150
+
+	-- 12. 사막 ★v8
+	Fennec = { Name = "사막여우", Rarity = "Common", Zone = 12, Income = 9.38e7, Color = RGB(245, 205, 150) }, -- ★v8
+	BabyCamel = { Name = "아기 낙타", Rarity = "Common", Zone = 12, Income = 1.12e8, Color = RGB(215, 170, 110) }, -- ★v8
+	Meerkat = { Name = "미어캣", Rarity = "Uncommon", Zone = 12, Income = 1.41e8, Color = RGB(210, 175, 125) }, -- ★v8
+	CactusPal = { Name = "선인장 친구", Rarity = "Rare", Zone = 12, Income = 2.06e8, Color = RGB(110, 190, 100) }, -- ★v8
+	Armadillo = { Name = "아르마딜로", Rarity = "Epic", Zone = 12, Income = 3e8, Color = RGB(180, 150, 130) }, -- ★v8
+	SphinxCat = { Name = "스핑크스 냥이", Rarity = "Legendary", Zone = 12, Income = 4.22e8, Color = RGB(240, 200, 120) }, -- ★v8
+	PharaohPup = { Name = "파라오 강아지", Rarity = "Mythic", Zone = 12, Income = 6.56e8, Color = RGB(60, 60, 80) }, -- ★v8
+	SandDragon = { Name = "모래 용", Rarity = "Secret", Zone = 12, Income = 1.12e9, Color = RGB(230, 190, 120) }, -- ★v8
+	LampGenie = { Name = "램프 요정", Rarity = "Hidden", Zone = 12, Income = 1.64e10, Color = RGB(120, 170, 255) }, -- ★v8 신화 ×25
+	SunScarab = { Name = "태양 풍뎅이", Rarity = "Celestial", Zone = 12, Income = 3.936e10, Color = RGB(60, 200, 180) }, -- ★v8 신화 ×60
+	MirageDragon = { Name = "신기루 용", Rarity = "Eternal", Zone = 12, Income = 9.84e10, Color = RGB(255, 170, 110) }, -- ★v8 신화 ×150
+
+	-- 13. 장난감 ★v8
+	TeddyBear = { Name = "곰인형", Rarity = "Common", Zone = 13, Income = 4.69e8, Color = RGB(200, 140, 90) }, -- ★v8
+	RubberDuck = { Name = "고무 오리", Rarity = "Common", Zone = 13, Income = 5.62e8, Color = RGB(255, 220, 60) }, -- ★v8
+	WindUpMouse = { Name = "태엽 생쥐", Rarity = "Uncommon", Zone = 13, Income = 7.03e8, Color = RGB(190, 195, 210) }, -- ★v8
+	BlockPuppy = { Name = "블록 강아지", Rarity = "Rare", Zone = 13, Income = 1.03e9, Color = RGB(90, 170, 255) }, -- ★v8
+	BalloonDog = { Name = "풍선 강아지", Rarity = "Epic", Zone = 13, Income = 1.5e9, Color = RGB(255, 110, 160) }, -- ★v8
+	RockingHorse = { Name = "흔들 목마", Rarity = "Legendary", Zone = 13, Income = 2.11e9, Color = RGB(240, 120, 90) }, -- ★v8
+	MusicBoxCat = { Name = "오르골 냥이", Rarity = "Mythic", Zone = 13, Income = 3.28e9, Color = RGB(255, 200, 230) }, -- ★v8
+	ToyKing = { Name = "장난감 왕", Rarity = "Secret", Zone = 13, Income = 5.62e9, Color = RGB(230, 60, 70) }, -- ★v8
+	ClockworkFox = { Name = "태엽 여우", Rarity = "Hidden", Zone = 13, Income = 8.2e10, Color = RGB(230, 170, 80) }, -- ★v8 신화 ×25
+	CarouselUnicorn = { Name = "회전목마 유니콘", Rarity = "Celestial", Zone = 13, Income = 1.968e11, Color = RGB(255, 230, 245) }, -- ★v8 신화 ×60
+	MechaDragon = { Name = "메카 용", Rarity = "Eternal", Zone = 13, Income = 4.92e11, Color = RGB(120, 160, 220) }, -- ★v8 신화 ×150
+
+	-- 14. 꿈나라 ★v8
+	SleepySheep = { Name = "졸린 양", Rarity = "Common", Zone = 14, Income = 2.34e9, Color = RGB(240, 235, 255) }, -- ★v8
+	SnoozeHamster = { Name = "잠꾸러기 햄스터", Rarity = "Common", Zone = 14, Income = 2.81e9, Color = RGB(230, 200, 170) }, -- ★v8
+	PillowCat = { Name = "베개 냥이", Rarity = "Uncommon", Zone = 14, Income = 3.52e9, Color = RGB(200, 205, 255) }, -- ★v8
+	Firefly = { Name = "반딧불이", Rarity = "Rare", Zone = 14, Income = 5.16e9, Color = RGB(200, 255, 120) }, -- ★v8
+	MoonBear = { Name = "달곰", Rarity = "Epic", Zone = 14, Income = 7.5e9, Color = RGB(90, 90, 140) }, -- ★v8
+	Baku = { Name = "꿈먹는 맥", Rarity = "Legendary", Zone = 14, Income = 1.05e10, Color = RGB(180, 160, 230) }, -- ★v8
+	SandmanPup = { Name = "꿈 요정 강아지", Rarity = "Mythic", Zone = 14, Income = 1.64e10, Color = RGB(150, 170, 255) }, -- ★v8
+	StarlightLion = { Name = "별빛 사자", Rarity = "Secret", Zone = 14, Income = 2.81e10, Color = RGB(255, 230, 150) }, -- ★v8
+	SnoozePanda = { Name = "낮잠 판다", Rarity = "Hidden", Zone = 14, Income = 4.1e11, Color = RGB(245, 245, 255) }, -- ★v8 신화 ×25
+	CrescentFox = { Name = "초승달 여우", Rarity = "Celestial", Zone = 14, Income = 9.84e11, Color = RGB(255, 240, 180) }, -- ★v8 신화 ×60
+	DreamDragon = { Name = "꿈의 용", Rarity = "Eternal", Zone = 14, Income = 2.46e12, Color = RGB(160, 140, 255) }, -- ★v8 신화 ×150
+
+	-- 15. 화산 ★v8
+	MagmaSlime = { Name = "용암 슬라임", Rarity = "Common", Zone = 15, Income = 1.17e10, Color = RGB(255, 120, 50) }, -- ★v8
+	Salamander = { Name = "불도롱뇽", Rarity = "Common", Zone = 15, Income = 1.41e10, Color = RGB(255, 90, 70) }, -- ★v8
+	EmberPup = { Name = "불씨 강아지", Rarity = "Uncommon", Zone = 15, Income = 1.76e10, Color = RGB(90, 80, 85) }, -- ★v8
+	FlameFox = { Name = "불꽃 여우", Rarity = "Rare", Zone = 15, Income = 2.58e10, Color = RGB(255, 110, 40) }, -- ★v8
+	LavaTurtle = { Name = "용암 거북", Rarity = "Epic", Zone = 15, Income = 3.75e10, Color = RGB(110, 90, 90) }, -- ★v8
+	MagmaRhino = { Name = "마그마 코뿔소", Rarity = "Legendary", Zone = 15, Income = 5.27e10, Color = RGB(120, 100, 105) }, -- ★v8
+	FlameLion = { Name = "불꽃 사자", Rarity = "Mythic", Zone = 15, Income = 8.2e10, Color = RGB(255, 150, 60) }, -- ★v8
+	Haetae = { Name = "불꽃 해태", Rarity = "Secret", Zone = 15, Income = 1.41e11, Color = RGB(255, 200, 90) }, -- ★v8
+	CinderCat = { Name = "불씨 냥이", Rarity = "Hidden", Zone = 15, Income = 2.05e12, Color = RGB(70, 60, 70) }, -- ★v8 신화 ×25
+	MagmaWyvern = { Name = "마그마 와이번", Rarity = "Celestial", Zone = 15, Income = 4.92e12, Color = RGB(230, 80, 50) }, -- ★v8 신화 ×60
+	InfernoDragon = { Name = "불꽃 용", Rarity = "Eternal", Zone = 15, Income = 1.23e13, Color = RGB(255, 90, 40) }, -- ★v8 신화 ×150
+
+	-- 16. 황금 ★v8
+	CoinPig = { Name = "동전 돼지", Rarity = "Common", Zone = 16, Income = 5.86e10, Color = RGB(255, 190, 200) }, -- ★v8
+	GoldHamster = { Name = "금빛 햄스터", Rarity = "Common", Zone = 16, Income = 7.03e10, Color = RGB(255, 215, 110) }, -- ★v8
+	RoyalCorgi = { Name = "왕실 코기", Rarity = "Uncommon", Zone = 16, Income = 8.79e10, Color = RGB(245, 175, 95) }, -- ★v8
+	CrownFrog = { Name = "왕관 개구리", Rarity = "Rare", Zone = 16, Income = 1.29e11, Color = RGB(120, 210, 110) }, -- ★v8
+	KnightCat = { Name = "기사 냥이", Rarity = "Epic", Zone = 16, Income = 1.88e11, Color = RGB(200, 205, 220) }, -- ★v8
+	RoyalLion = { Name = "왕실 사자", Rarity = "Legendary", Zone = 16, Income = 2.64e11, Color = RGB(250, 200, 100) }, -- ★v8
+	GoldenPegasus = { Name = "황금 페가수스", Rarity = "Mythic", Zone = 16, Income = 4.1e11, Color = RGB(255, 220, 120) }, -- ★v8
+	KingPenguin = { Name = "임금 펭귄", Rarity = "Secret", Zone = 16, Income = 7.03e11, Color = RGB(60, 70, 110) }, -- ★v8
+	TreasureMimic = { Name = "보물상자 친구", Rarity = "Hidden", Zone = 16, Income = 1.025e13, Color = RGB(190, 120, 60) }, -- ★v8 신화 ×25
+	CrownGriffin = { Name = "왕관 그리핀", Rarity = "Celestial", Zone = 16, Income = 2.46e13, Color = RGB(255, 215, 90) }, -- ★v8 신화 ×60
+	EmperorDragon = { Name = "황제 용", Rarity = "Eternal", Zone = 16, Income = 6.15e13, Color = RGB(255, 200, 60) }, -- ★v8 신화 ×150
 }
 
 -- Boost (데리고 다닐 때 들판 코인 보너스, 0.1 = +10%) = 희귀도 Boost × (1 + 0.15 × (지역 - 1))
@@ -530,6 +781,14 @@ Config.PetOrder = {
 	"CottonSheep", "DonutPuppy", "JellyBear", "CupcakeCat", "MacaronBunny", "GummyDragon", "CandyUnicorn", "CookieKing", "LollipopPanda", "MarshmallowBear", "SweetQueenCat",
 	"Sheep", "CloudPuppy", "BabyCloud", "Dragon", "Unicorn", "Pegasus", "Phoenix", "AngelBunny", "ThunderPup", "SunGriffin", "NineTailFox",
 	"Alien", "RobotPuppy", "MoonBunny", "SpaceCat", "AstroBear", "CometFox", "StarSlime", "CosmicWhale", "MeteorHamster", "GalaxyUnicorn", "CosmoDragon",
+	"Ladybug", "HoneyBee", "Butterfly", "PetalHamster", "SakuraCat", "FlowerFairy", "SakuraSpirit", "ButterflyQueen", "HoneyBear", "SakuraCrane", "BlossomDragon",
+	"BabyDino", "Ptero", "Stego", "Tricera", "Bronto", "Ankylo", "TRex", "AmberRaptor", "DinoPuppy", "SkyPtera", "AncientDragon",
+	"CaveBat", "Mole", "GemSnail", "GeodeTurtle", "RubyFox", "SapphireWolf", "AmethystOwl", "GemGolem", "OpalBunny", "CrystalDeer", "DiamondDragon",
+	"Fennec", "BabyCamel", "Meerkat", "CactusPal", "Armadillo", "SphinxCat", "PharaohPup", "SandDragon", "LampGenie", "SunScarab", "MirageDragon",
+	"TeddyBear", "RubberDuck", "WindUpMouse", "BlockPuppy", "BalloonDog", "RockingHorse", "MusicBoxCat", "ToyKing", "ClockworkFox", "CarouselUnicorn", "MechaDragon",
+	"SleepySheep", "SnoozeHamster", "PillowCat", "Firefly", "MoonBear", "Baku", "SandmanPup", "StarlightLion", "SnoozePanda", "CrescentFox", "DreamDragon",
+	"MagmaSlime", "Salamander", "EmberPup", "FlameFox", "LavaTurtle", "MagmaRhino", "FlameLion", "Haetae", "CinderCat", "MagmaWyvern", "InfernoDragon",
+	"CoinPig", "GoldHamster", "RoyalCorgi", "CrownFrog", "KnightCat", "RoyalLion", "GoldenPegasus", "KingPenguin", "TreasureMimic", "CrownGriffin", "EmperorDragon",
 }
 
 ----------------------------------------------------------------------
@@ -745,6 +1004,214 @@ Config.Eggs = {
 		Name = "별빛 알", Rarity = "Mythic", Zone = 8, Price = 1.5e11, HatchTime = 105, SpawnWeight = 2,
 		Pets = { AstroBear = 24, CometFox = 42, StarSlime = 33.75, CosmicWhale = 0.25 },
 	},
+	-- 9. 벚꽃 ★v8
+	Sakura = { -- ★v8
+		Name = "벚꽃 알", Rarity = "Common", Zone = 9, Price = 2e10, HatchTime = 40, SpawnWeight = 40,
+		Pets = { Ladybug = 35, HoneyBee = 31, Butterfly = 28, PetalHamster = 6 },
+		Look = { Base = RGB(255, 225, 235), Accent = RGB(255, 140, 185), Accent2 = RGB(255, 250, 250), Pattern = "Dots" },
+	},
+	Tulip = { -- ★v8
+		Name = "튤립 알", Rarity = "Rare", Zone = 9, Price = 6e10, HatchTime = 54, SpawnWeight = 24,
+		Pets = { Ladybug = 12, HoneyBee = 12, Butterfly = 32, PetalHamster = 28, SakuraCat = 13, FlowerFairy = 3 },
+		Look = { Base = RGB(255, 245, 210), Accent = RGB(255, 100, 120), Accent2 = RGB(120, 200, 100), Pattern = "Hearts" },
+	},
+	HoneyPot = { -- ★v8
+		Name = "꿀단지 알", Rarity = "Epic", Zone = 9, Price = 1.5e11, HatchTime = 72, SpawnWeight = 11,
+		Pets = { Butterfly = 16, PetalHamster = 34, SakuraCat = 32, FlowerFairy = 15, SakuraSpirit = 3 },
+		Look = { Base = RGB(255, 205, 80), Accent = RGB(200, 120, 40), Accent2 = RGB(255, 245, 200), Pattern = "Zigzag" },
+	},
+	Bloom = { -- ★v8
+		Name = "만개 알", Rarity = "Legendary", Zone = 9, Price = 4e11, HatchTime = 96, SpawnWeight = 5,
+		Pets = { PetalHamster = 16, SakuraCat = 36, FlowerFairy = 32, SakuraSpirit = 15.7, ButterflyQueen = 0.3 },
+		Look = { Base = RGB(250, 210, 255), Accent = RGB(255, 120, 190), Accent2 = RGB(130, 220, 140), Pattern = "Leaves", Shine = true },
+	},
+	SpringQueen = { -- ★v8
+		Name = "봄의 여왕 알", Rarity = "Mythic", Zone = 9, Price = 1e12, HatchTime = 120, SpawnWeight = 2,
+		Pets = { SakuraCat = 24, FlowerFairy = 42, SakuraSpirit = 33, ButterflyQueen = 1 },
+		Look = { Base = RGB(255, 240, 248), Accent = RGB(255, 120, 180), Accent2 = RGB(255, 215, 90), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	-- 10. 공룡 ★v8
+	Dino = { -- ★v8
+		Name = "공룡 알", Rarity = "Common", Zone = 10, Price = 1.2e11, HatchTime = 45, SpawnWeight = 40,
+		Pets = { BabyDino = 35, Ptero = 31, Stego = 28, Tricera = 6 },
+		Look = { Base = RGB(205, 235, 175), Accent = RGB(90, 160, 80), Accent2 = RGB(250, 245, 220), Pattern = "Spots" },
+	},
+	Fern = { -- ★v8
+		Name = "고사리 알", Rarity = "Rare", Zone = 10, Price = 4e11, HatchTime = 61, SpawnWeight = 24,
+		Pets = { BabyDino = 12, Ptero = 12, Stego = 32, Tricera = 28, Bronto = 13, Ankylo = 3 },
+		Look = { Base = RGB(170, 220, 140), Accent = RGB(60, 140, 70), Accent2 = RGB(230, 210, 150), Pattern = "Leaves" },
+	},
+	Fossil = { -- ★v8
+		Name = "화석 알", Rarity = "Epic", Zone = 10, Price = 1e12, HatchTime = 81, SpawnWeight = 11,
+		Pets = { Stego = 16, Tricera = 34, Bronto = 32, Ankylo = 15, TRex = 3 },
+		Look = { Base = RGB(230, 215, 190), Accent = RGB(150, 120, 90), Accent2 = RGB(255, 250, 235), Pattern = "Swirl" },
+	},
+	Amber = { -- ★v8
+		Name = "호박 알", Rarity = "Legendary", Zone = 10, Price = 2.5e12, HatchTime = 108, SpawnWeight = 5,
+		Pets = { Tricera = 16, Bronto = 36, Ankylo = 32, TRex = 15.7, AmberRaptor = 0.3 },
+		Look = { Base = RGB(255, 185, 70), Accent = RGB(200, 110, 30), Accent2 = RGB(255, 240, 180), Pattern = "Gems", Shine = true },
+	},
+	Jurassic = { -- ★v8
+		Name = "쥬라기 알", Rarity = "Mythic", Zone = 10, Price = 6e12, HatchTime = 135, SpawnWeight = 2,
+		Pets = { Bronto = 24, Ankylo = 42, TRex = 33, AmberRaptor = 1 },
+		Look = { Base = RGB(90, 140, 80), Accent = RGB(255, 140, 60), Accent2 = RGB(250, 230, 150), Pattern = "Zigzag", Shine = true, Glow = true },
+	},
+	-- 11. 보석 ★v8
+	Cave = { -- ★v8
+		Name = "동굴 알", Rarity = "Common", Zone = 11, Price = 7.5e11, HatchTime = 50, SpawnWeight = 40,
+		Pets = { CaveBat = 35, Mole = 31, GemSnail = 28, GeodeTurtle = 6 },
+		Look = { Base = RGB(120, 110, 140), Accent = RGB(180, 160, 230), Accent2 = RGB(230, 225, 245), Pattern = "Spots" },
+	},
+	Ruby = { -- ★v8
+		Name = "루비 알", Rarity = "Rare", Zone = 11, Price = 2.5e12, HatchTime = 67, SpawnWeight = 24,
+		Pets = { CaveBat = 12, Mole = 12, GemSnail = 32, GeodeTurtle = 28, RubyFox = 13, SapphireWolf = 3 },
+		Look = { Base = RGB(255, 120, 140), Accent = RGB(200, 30, 70), Accent2 = RGB(255, 230, 235), Pattern = "Gems" },
+	},
+	Sapphire = { -- ★v8
+		Name = "사파이어 알", Rarity = "Epic", Zone = 11, Price = 6e12, HatchTime = 90, SpawnWeight = 11,
+		Pets = { GemSnail = 16, GeodeTurtle = 34, RubyFox = 32, SapphireWolf = 15, AmethystOwl = 3 },
+		Look = { Base = RGB(120, 160, 255), Accent = RGB(40, 70, 200), Accent2 = RGB(220, 235, 255), Pattern = "Gems" },
+	},
+	Amethyst = { -- ★v8
+		Name = "자수정 알", Rarity = "Legendary", Zone = 11, Price = 1.5e13, HatchTime = 120, SpawnWeight = 5,
+		Pets = { GeodeTurtle = 16, RubyFox = 36, SapphireWolf = 32, AmethystOwl = 15.7, GemGolem = 0.3 },
+		Look = { Base = RGB(190, 140, 245), Accent = RGB(120, 60, 190), Accent2 = RGB(245, 230, 255), Pattern = "Stars", Shine = true },
+	},
+	DiamondEgg = { -- ★v8
+		Name = "다이아몬드 알", Rarity = "Mythic", Zone = 11, Price = 4e13, HatchTime = 150, SpawnWeight = 2,
+		Pets = { RubyFox = 24, SapphireWolf = 42, AmethystOwl = 33, GemGolem = 1 },
+		Look = { Base = RGB(230, 248, 255), Accent = RGB(130, 220, 255), Accent2 = RGB(255, 255, 255), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	-- 12. 사막 ★v8
+	Sand = { -- ★v8
+		Name = "모래 알", Rarity = "Common", Zone = 12, Price = 4e12, HatchTime = 55, SpawnWeight = 40,
+		Pets = { Fennec = 35, BabyCamel = 31, Meerkat = 28, CactusPal = 6 },
+		Look = { Base = RGB(245, 225, 170), Accent = RGB(210, 170, 100), Accent2 = RGB(255, 245, 220), Pattern = "Dots" },
+	},
+	Oasis = { -- ★v8
+		Name = "오아시스 알", Rarity = "Rare", Zone = 12, Price = 1.5e13, HatchTime = 74, SpawnWeight = 24,
+		Pets = { Fennec = 12, BabyCamel = 12, Meerkat = 32, CactusPal = 28, Armadillo = 13, SphinxCat = 3 },
+		Look = { Base = RGB(130, 210, 220), Accent = RGB(80, 170, 110), Accent2 = RGB(250, 240, 200), Pattern = "Bubbles" },
+	},
+	CactusEgg = { -- ★v8
+		Name = "선인장 알", Rarity = "Epic", Zone = 12, Price = 4e13, HatchTime = 99, SpawnWeight = 11,
+		Pets = { Meerkat = 16, CactusPal = 34, Armadillo = 32, SphinxCat = 15, PharaohPup = 3 },
+		Look = { Base = RGB(130, 200, 110), Accent = RGB(70, 140, 70), Accent2 = RGB(255, 140, 180), Pattern = "Stripes" },
+	},
+	Pyramid = { -- ★v8
+		Name = "피라미드 알", Rarity = "Legendary", Zone = 12, Price = 1e14, HatchTime = 132, SpawnWeight = 5,
+		Pets = { CactusPal = 16, Armadillo = 36, SphinxCat = 32, PharaohPup = 15.7, SandDragon = 0.3 },
+		Look = { Base = RGB(240, 205, 120), Accent = RGB(170, 120, 60), Accent2 = RGB(60, 160, 200), Pattern = "Zigzag", Shine = true },
+	},
+	Pharaoh = { -- ★v8
+		Name = "파라오 알", Rarity = "Mythic", Zone = 12, Price = 2e14, HatchTime = 165, SpawnWeight = 2,
+		Pets = { Armadillo = 24, SphinxCat = 42, PharaohPup = 33, SandDragon = 1 },
+		Look = { Base = RGB(40, 70, 140), Accent = RGB(255, 200, 60), Accent2 = RGB(250, 245, 230), Pattern = "Stripes", Shine = true, Glow = true },
+	},
+	-- 13. 장난감 ★v8
+	ToyEgg = { -- ★v8
+		Name = "장난감 알", Rarity = "Common", Zone = 13, Price = 2.5e13, HatchTime = 60, SpawnWeight = 40,
+		Pets = { TeddyBear = 35, RubberDuck = 31, WindUpMouse = 28, BlockPuppy = 6 },
+		Look = { Base = RGB(255, 240, 200), Accent = RGB(255, 90, 90), Accent2 = RGB(90, 170, 255), Pattern = "Dots" },
+	},
+	Block = { -- ★v8
+		Name = "블록 알", Rarity = "Rare", Zone = 13, Price = 1e14, HatchTime = 81, SpawnWeight = 24,
+		Pets = { TeddyBear = 12, RubberDuck = 12, WindUpMouse = 32, BlockPuppy = 28, BalloonDog = 13, RockingHorse = 3 },
+		Look = { Base = RGB(120, 190, 255), Accent = RGB(255, 210, 60), Accent2 = RGB(255, 100, 100), Pattern = "Stripes" },
+	},
+	Balloon = { -- ★v8
+		Name = "풍선 알", Rarity = "Epic", Zone = 13, Price = 2e14, HatchTime = 108, SpawnWeight = 11,
+		Pets = { WindUpMouse = 16, BlockPuppy = 34, BalloonDog = 32, RockingHorse = 15, MusicBoxCat = 3 },
+		Look = { Base = RGB(255, 160, 200), Accent = RGB(255, 90, 150), Accent2 = RGB(255, 255, 255), Pattern = "Hearts" },
+	},
+	MusicBox = { -- ★v8
+		Name = "오르골 알", Rarity = "Legendary", Zone = 13, Price = 5e14, HatchTime = 144, SpawnWeight = 5,
+		Pets = { BlockPuppy = 16, BalloonDog = 36, RockingHorse = 32, MusicBoxCat = 15.7, ToyKing = 0.3 },
+		Look = { Base = RGB(255, 225, 240), Accent = RGB(200, 140, 255), Accent2 = RGB(255, 215, 90), Pattern = "Stars", Shine = true },
+	},
+	Carousel = { -- ★v8
+		Name = "회전목마 알", Rarity = "Mythic", Zone = 13, Price = 1.2e15, HatchTime = 180, SpawnWeight = 2,
+		Pets = { BalloonDog = 24, RockingHorse = 42, MusicBoxCat = 33, ToyKing = 1 },
+		Look = { Base = RGB(255, 250, 245), Accent = RGB(255, 110, 160), Accent2 = RGB(100, 200, 255), Pattern = "Candy", Shine = true, Glow = true },
+	},
+	-- 14. 꿈나라 ★v8
+	DreamEgg = { -- ★v8
+		Name = "꿈 알", Rarity = "Common", Zone = 14, Price = 1.5e14, HatchTime = 65, SpawnWeight = 40,
+		Pets = { SleepySheep = 35, SnoozeHamster = 31, PillowCat = 28, Firefly = 6 },
+		Look = { Base = RGB(60, 60, 130), Accent = RGB(255, 240, 160), Accent2 = RGB(190, 200, 255), Pattern = "Stars" },
+	},
+	Pillow = { -- ★v8
+		Name = "베개 알", Rarity = "Rare", Zone = 14, Price = 5e14, HatchTime = 88, SpawnWeight = 24,
+		Pets = { SleepySheep = 12, SnoozeHamster = 12, PillowCat = 32, Firefly = 28, MoonBear = 13, Baku = 3 },
+		Look = { Base = RGB(220, 225, 255), Accent = RGB(160, 170, 240), Accent2 = RGB(255, 255, 255), Pattern = "Dots" },
+	},
+	Crescent = { -- ★v8
+		Name = "초승달 알", Rarity = "Epic", Zone = 14, Price = 1.2e15, HatchTime = 117, SpawnWeight = 11,
+		Pets = { PillowCat = 16, Firefly = 34, MoonBear = 32, Baku = 15, SandmanPup = 3 },
+		Look = { Base = RGB(40, 50, 110), Accent = RGB(255, 230, 120), Accent2 = RGB(160, 190, 255), Pattern = "Stars" },
+	},
+	Lullaby = { -- ★v8
+		Name = "자장가 알", Rarity = "Legendary", Zone = 14, Price = 3e15, HatchTime = 156, SpawnWeight = 5,
+		Pets = { Firefly = 16, MoonBear = 36, Baku = 32, SandmanPup = 15.7, StarlightLion = 0.3 },
+		Look = { Base = RGB(200, 180, 255), Accent = RGB(255, 200, 240), Accent2 = RGB(255, 255, 255), Pattern = "Swirl", Shine = true },
+	},
+	Starry = { -- ★v8
+		Name = "별밤 알", Rarity = "Mythic", Zone = 14, Price = 7.5e15, HatchTime = 195, SpawnWeight = 2,
+		Pets = { MoonBear = 24, Baku = 42, SandmanPup = 33, StarlightLion = 1 },
+		Look = { Base = RGB(25, 25, 80), Accent = RGB(255, 240, 150), Accent2 = RGB(150, 220, 255), Pattern = "Stars", Shine = true, Glow = true },
+	},
+	-- 15. 화산 ★v8
+	Lava = { -- ★v8
+		Name = "용암 알", Rarity = "Common", Zone = 15, Price = 1e15, HatchTime = 70, SpawnWeight = 40,
+		Pets = { MagmaSlime = 35, Salamander = 31, EmberPup = 28, FlameFox = 6 },
+		Look = { Base = RGB(90, 70, 70), Accent = RGB(255, 120, 40), Accent2 = RGB(255, 210, 80), Pattern = "Flames" },
+	},
+	Ember = { -- ★v8
+		Name = "불씨 알", Rarity = "Rare", Zone = 15, Price = 3e15, HatchTime = 94, SpawnWeight = 24,
+		Pets = { MagmaSlime = 12, Salamander = 12, EmberPup = 32, FlameFox = 28, LavaTurtle = 13, MagmaRhino = 3 },
+		Look = { Base = RGB(60, 55, 60), Accent = RGB(255, 140, 60), Accent2 = RGB(255, 220, 120), Pattern = "Dots" },
+	},
+	Magma = { -- ★v8
+		Name = "마그마 알", Rarity = "Epic", Zone = 15, Price = 7.5e15, HatchTime = 126, SpawnWeight = 11,
+		Pets = { EmberPup = 16, FlameFox = 34, LavaTurtle = 32, MagmaRhino = 15, FlameLion = 3 },
+		Look = { Base = RGB(200, 60, 40), Accent = RGB(255, 190, 70), Accent2 = RGB(80, 60, 60), Pattern = "Zigzag" },
+	},
+	Obsidian = { -- ★v8
+		Name = "흑요석 알", Rarity = "Legendary", Zone = 15, Price = 2e16, HatchTime = 168, SpawnWeight = 5,
+		Pets = { FlameFox = 16, LavaTurtle = 36, MagmaRhino = 32, FlameLion = 15.7, Haetae = 0.3 },
+		Look = { Base = RGB(30, 25, 40), Accent = RGB(180, 120, 255), Accent2 = RGB(255, 120, 60), Pattern = "Gems", Shine = true },
+	},
+	Blaze = { -- ★v8
+		Name = "불꽃 알", Rarity = "Mythic", Zone = 15, Price = 5e16, HatchTime = 210, SpawnWeight = 2,
+		Pets = { LavaTurtle = 24, MagmaRhino = 42, FlameLion = 33, Haetae = 1 },
+		Look = { Base = RGB(255, 90, 40), Accent = RGB(255, 230, 100), Accent2 = RGB(255, 255, 230), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 16. 황금 ★v8
+	Coin = { -- ★v8
+		Name = "동전 알", Rarity = "Common", Zone = 16, Price = 6e15, HatchTime = 75, SpawnWeight = 40,
+		Pets = { CoinPig = 35, GoldHamster = 31, RoyalCorgi = 28, CrownFrog = 6 },
+		Look = { Base = RGB(255, 220, 110), Accent = RGB(220, 160, 40), Accent2 = RGB(255, 250, 220), Pattern = "Dots" },
+	},
+	Treasure = { -- ★v8
+		Name = "보물 알", Rarity = "Rare", Zone = 16, Price = 2e16, HatchTime = 101, SpawnWeight = 24,
+		Pets = { CoinPig = 12, GoldHamster = 12, RoyalCorgi = 32, CrownFrog = 28, KnightCat = 13, RoyalLion = 3 },
+		Look = { Base = RGB(170, 110, 60), Accent = RGB(255, 210, 70), Accent2 = RGB(120, 220, 255), Pattern = "Gems" },
+	},
+	Royal = { -- ★v8
+		Name = "왕실 알", Rarity = "Epic", Zone = 16, Price = 5e16, HatchTime = 135, SpawnWeight = 11,
+		Pets = { RoyalCorgi = 16, CrownFrog = 34, KnightCat = 32, RoyalLion = 15, GoldenPegasus = 3 },
+		Look = { Base = RGB(180, 40, 70), Accent = RGB(255, 210, 70), Accent2 = RGB(255, 250, 240), Pattern = "Crown" },
+	},
+	Jewel = { -- ★v8
+		Name = "보석함 알", Rarity = "Legendary", Zone = 16, Price = 1.2e17, HatchTime = 180, SpawnWeight = 5,
+		Pets = { CrownFrog = 16, KnightCat = 36, RoyalLion = 32, GoldenPegasus = 15.7, KingPenguin = 0.3 },
+		Look = { Base = RGB(255, 240, 200), Accent = RGB(255, 90, 160), Accent2 = RGB(100, 220, 255), Pattern = "Gems", Shine = true },
+	},
+	Emperor = { -- ★v8
+		Name = "황제 알", Rarity = "Mythic", Zone = 16, Price = 3e17, HatchTime = 225, SpawnWeight = 2,
+		Pets = { KnightCat = 24, RoyalLion = 42, GoldenPegasus = 33, KingPenguin = 1 },
+		Look = { Base = RGB(255, 215, 80), Accent = RGB(255, 255, 240), Accent2 = RGB(200, 60, 90), Pattern = "Crown", Shine = true, Glow = true },
+	},
 	-- ★v6 아주 희귀한 알 (지역마다 3개: 시크릿 → 천상 → 이터널). 사다리(ZoneEggOrder)에 없어요.
 	-- 보통 알이 나올 때마다 따로 굴려서 아주 가끔 나와요 (Config.SpecialEggs). 까면 Pet 이 꼭 나와요 (Pets = { Pet = 100 }).
 	-- 1. 숲
@@ -875,6 +1342,134 @@ Config.Eggs = {
 		Pet = "CosmoDragon", Pets = { CosmoDragon = 100 },
 		Look = { Base = RGB(15, 15, 45), Accent = RGB(180, 110, 255), Accent2 = RGB(120, 240, 255), Pattern = "Flames", Shine = true, Glow = true },
 	},
+	-- 9. 벚꽃 ★v8
+	BlossomHidden = { -- ★v8
+		Name = "벚꽃 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 9, Price = 5e13, HatchTime = 150, SpawnWeight = 0,
+		Pet = "HoneyBear", Pets = { HoneyBear = 100 },
+		Look = { Base = RGB(80, 30, 60), Accent = RGB(255, 160, 210), Accent2 = RGB(255, 230, 120), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	BlossomCelestial = { -- ★v8
+		Name = "벚꽃 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 9, Price = 4e14, HatchTime = 195, SpawnWeight = 0,
+		Pet = "SakuraCrane", Pets = { SakuraCrane = 100 },
+		Look = { Base = RGB(255, 245, 250), Accent = RGB(255, 190, 220), Accent2 = RGB(255, 215, 90), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	BlossomEternal = { -- ★v8
+		Name = "벚꽃 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 9, Price = 1.5e15, HatchTime = 260, SpawnWeight = 0,
+		Pet = "BlossomDragon", Pets = { BlossomDragon = 100 },
+		Look = { Base = RGB(150, 40, 100), Accent = RGB(255, 200, 230), Accent2 = RGB(120, 230, 160), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 10. 공룡 ★v8
+	DinoHidden = { -- ★v8
+		Name = "공룡 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 10, Price = 3e14, HatchTime = 170, SpawnWeight = 0,
+		Pet = "DinoPuppy", Pets = { DinoPuppy = 100 },
+		Look = { Base = RGB(40, 70, 40), Accent = RGB(140, 255, 140), Accent2 = RGB(255, 200, 80), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	DinoCelestial = { -- ★v8
+		Name = "공룡 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 10, Price = 2.5e15, HatchTime = 220, SpawnWeight = 0,
+		Pet = "SkyPtera", Pets = { SkyPtera = 100 },
+		Look = { Base = RGB(255, 245, 225), Accent = RGB(255, 200, 90), Accent2 = RGB(120, 200, 255), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	DinoEternal = { -- ★v8
+		Name = "공룡 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 10, Price = 1e16, HatchTime = 290, SpawnWeight = 0,
+		Pet = "AncientDragon", Pets = { AncientDragon = 100 },
+		Look = { Base = RGB(40, 90, 60), Accent = RGB(255, 190, 80), Accent2 = RGB(170, 255, 170), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 11. 보석 ★v8
+	CrystalHidden = { -- ★v8
+		Name = "보석 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 11, Price = 2e15, HatchTime = 190, SpawnWeight = 0,
+		Pet = "OpalBunny", Pets = { OpalBunny = 100 },
+		Look = { Base = RGB(30, 30, 60), Accent = RGB(150, 255, 240), Accent2 = RGB(255, 200, 255), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	CrystalCelestial = { -- ★v8
+		Name = "보석 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 11, Price = 2e16, HatchTime = 245, SpawnWeight = 0,
+		Pet = "CrystalDeer", Pets = { CrystalDeer = 100 },
+		Look = { Base = RGB(240, 250, 255), Accent = RGB(170, 230, 255), Accent2 = RGB(255, 215, 90), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	CrystalEternal = { -- ★v8
+		Name = "보석 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 11, Price = 6e16, HatchTime = 320, SpawnWeight = 0,
+		Pet = "DiamondDragon", Pets = { DiamondDragon = 100 },
+		Look = { Base = RGB(40, 60, 110), Accent = RGB(220, 250, 255), Accent2 = RGB(180, 140, 255), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 12. 사막 ★v8
+	DesertHidden = { -- ★v8
+		Name = "사막 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 12, Price = 1e16, HatchTime = 210, SpawnWeight = 0,
+		Pet = "LampGenie", Pets = { LampGenie = 100 },
+		Look = { Base = RGB(60, 40, 20), Accent = RGB(255, 210, 120), Accent2 = RGB(110, 230, 230), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	DesertCelestial = { -- ★v8
+		Name = "사막 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 12, Price = 1e17, HatchTime = 270, SpawnWeight = 0,
+		Pet = "SunScarab", Pets = { SunScarab = 100 },
+		Look = { Base = RGB(255, 245, 220), Accent = RGB(255, 200, 60), Accent2 = RGB(60, 200, 180), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	DesertEternal = { -- ★v8
+		Name = "사막 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 12, Price = 3e17, HatchTime = 350, SpawnWeight = 0,
+		Pet = "MirageDragon", Pets = { MirageDragon = 100 },
+		Look = { Base = RGB(140, 60, 30), Accent = RGB(255, 220, 140), Accent2 = RGB(255, 140, 90), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 13. 장난감 ★v8
+	ToyHidden = { -- ★v8
+		Name = "장난감 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 13, Price = 6e16, HatchTime = 230, SpawnWeight = 0,
+		Pet = "ClockworkFox", Pets = { ClockworkFox = 100 },
+		Look = { Base = RGB(60, 40, 80), Accent = RGB(255, 210, 90), Accent2 = RGB(120, 200, 255), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	ToyCelestial = { -- ★v8
+		Name = "장난감 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 13, Price = 5e17, HatchTime = 295, SpawnWeight = 0,
+		Pet = "CarouselUnicorn", Pets = { CarouselUnicorn = 100 },
+		Look = { Base = RGB(255, 245, 250), Accent = RGB(255, 150, 200), Accent2 = RGB(255, 215, 90), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	ToyEternal = { -- ★v8
+		Name = "장난감 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 13, Price = 2e18, HatchTime = 380, SpawnWeight = 0,
+		Pet = "MechaDragon", Pets = { MechaDragon = 100 },
+		Look = { Base = RGB(40, 60, 110), Accent = RGB(130, 220, 255), Accent2 = RGB(255, 120, 120), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 14. 꿈나라 ★v8
+	DreamHidden = { -- ★v8
+		Name = "꿈나라 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 14, Price = 4e17, HatchTime = 250, SpawnWeight = 0,
+		Pet = "SnoozePanda", Pets = { SnoozePanda = 100 },
+		Look = { Base = RGB(20, 20, 55), Accent = RGB(190, 170, 255), Accent2 = RGB(255, 240, 160), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	DreamCelestial = { -- ★v8
+		Name = "꿈나라 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 14, Price = 3e18, HatchTime = 320, SpawnWeight = 0,
+		Pet = "CrescentFox", Pets = { CrescentFox = 100 },
+		Look = { Base = RGB(240, 240, 255), Accent = RGB(255, 230, 120), Accent2 = RGB(160, 180, 255), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	DreamEternal = { -- ★v8
+		Name = "꿈나라 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 14, Price = 1e19, HatchTime = 410, SpawnWeight = 0,
+		Pet = "DreamDragon", Pets = { DreamDragon = 100 },
+		Look = { Base = RGB(30, 20, 80), Accent = RGB(255, 210, 120), Accent2 = RGB(170, 150, 255), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 15. 화산 ★v8
+	VolcanoHidden = { -- ★v8
+		Name = "화산 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 15, Price = 2.5e18, HatchTime = 270, SpawnWeight = 0,
+		Pet = "CinderCat", Pets = { CinderCat = 100 },
+		Look = { Base = RGB(30, 15, 15), Accent = RGB(255, 120, 60), Accent2 = RGB(255, 220, 120), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	VolcanoCelestial = { -- ★v8
+		Name = "화산 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 15, Price = 2e19, HatchTime = 345, SpawnWeight = 0,
+		Pet = "MagmaWyvern", Pets = { MagmaWyvern = 100 },
+		Look = { Base = RGB(255, 235, 210), Accent = RGB(255, 140, 60), Accent2 = RGB(255, 220, 90), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	VolcanoEternal = { -- ★v8
+		Name = "화산 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 15, Price = 7.5e19, HatchTime = 440, SpawnWeight = 0,
+		Pet = "InfernoDragon", Pets = { InfernoDragon = 100 },
+		Look = { Base = RGB(70, 15, 10), Accent = RGB(255, 200, 80), Accent2 = RGB(255, 100, 40), Pattern = "Flames", Shine = true, Glow = true },
+	},
+	-- 16. 황금 ★v8
+	GoldHidden = { -- ★v8
+		Name = "황금 시크릿 알", Rarity = "Hidden", Special = "Hidden", Zone = 16, Price = 1.5e19, HatchTime = 290, SpawnWeight = 0,
+		Pet = "TreasureMimic", Pets = { TreasureMimic = 100 },
+		Look = { Base = RGB(70, 45, 15), Accent = RGB(255, 220, 100), Accent2 = RGB(255, 120, 180), Pattern = "Gems", Shine = true, Glow = true },
+	},
+	GoldCelestial = { -- ★v8
+		Name = "황금 천상 알", Rarity = "Celestial", Special = "Celestial", Zone = 16, Price = 1.2e20, HatchTime = 370, SpawnWeight = 0,
+		Pet = "CrownGriffin", Pets = { CrownGriffin = 100 },
+		Look = { Base = RGB(255, 250, 230), Accent = RGB(255, 215, 80), Accent2 = RGB(120, 220, 255), Pattern = "Crown", Shine = true, Glow = true },
+	},
+	GoldEternal = { -- ★v8
+		Name = "황금 이터널 알", Rarity = "Eternal", Special = "Eternal", Zone = 16, Price = 4e20, HatchTime = 470, SpawnWeight = 0,
+		Pet = "EmperorDragon", Pets = { EmperorDragon = 100 },
+		Look = { Base = RGB(90, 60, 10), Accent = RGB(255, 235, 140), Accent2 = RGB(255, 90, 120), Pattern = "Flames", Shine = true, Glow = true },
+	},
 }
 
 -- 지역 순, 지역 안에서는 사다리 순 (싼 알 → 비싼 알)
@@ -887,6 +1482,14 @@ Config.EggOrder = {
 	"Candy", "Jelly", "Lollipop", "Cake", "Rainbow",
 	"Cloud", "Breeze", "Feather", "Angel", "Golden",
 	"Space", "Moon", "Planet", "Comet", "Starlight",
+	"Sakura", "Tulip", "HoneyPot", "Bloom", "SpringQueen",
+	"Dino", "Fern", "Fossil", "Amber", "Jurassic",
+	"Cave", "Ruby", "Sapphire", "Amethyst", "DiamondEgg",
+	"Sand", "Oasis", "CactusEgg", "Pyramid", "Pharaoh",
+	"ToyEgg", "Block", "Balloon", "MusicBox", "Carousel",
+	"DreamEgg", "Pillow", "Crescent", "Lullaby", "Starry",
+	"Lava", "Ember", "Magma", "Obsidian", "Blaze",
+	"Coin", "Treasure", "Royal", "Jewel", "Emperor",
 }
 
 -- 지역별 알 목록 (사다리 순) + 자동으로 채우는 값
@@ -924,6 +1527,14 @@ Config.SpecialEggOrder = {
 	"CandyHidden", "CandyCelestial", "CandyEternal",
 	"CloudHidden", "CloudCelestial", "CloudEternal",
 	"SpaceHidden", "SpaceCelestial", "SpaceEternal",
+	"BlossomHidden", "BlossomCelestial", "BlossomEternal",
+	"DinoHidden", "DinoCelestial", "DinoEternal",
+	"CrystalHidden", "CrystalCelestial", "CrystalEternal",
+	"DesertHidden", "DesertCelestial", "DesertEternal",
+	"ToyHidden", "ToyCelestial", "ToyEternal",
+	"DreamHidden", "DreamCelestial", "DreamEternal",
+	"VolcanoHidden", "VolcanoCelestial", "VolcanoEternal",
+	"GoldHidden", "GoldCelestial", "GoldEternal",
 }
 Config.ZoneSpecialEggOrder = {} :: { [number]: { string } } -- [지역] = { 시크릿 알, 천상 알, 이터널 알 }
 for _, id in Config.SpecialEggOrder do
@@ -947,10 +1558,13 @@ end
 Config.Rebirth = {
 	Costs = {
 		8e5, 1.2e7, 2.4e8, 2e9, 8e9, 4e10, 1.2e11, 5e11, 1.2e12, 3e12, -- 1~10 (지역 2,3,4 는 환생 1,2,3)
-		6e12, 2e13, 3e13, 6e13, 1.2e14, 2.4e14, 5e14, 1e15, 1.5e15, 2.4e15, -- 11~20 (지역 5,6,7,8 은 환생 5,7,10,14)
-		4e15, 6e15, 8e15, 1.2e16, 1.6e16, -- 21~25
+		6e12, 2e13, 3e13, 6e13, 1.2e14, -- 11~15 (지역 5,6,7,8 은 환생 5,7,10,14)
+		-- ★v8 16~30: 새 지역 (9~16 = 환생 16, 18, …, 30) 수익에 맞춰 한 번에 ×2.45 쯤 (지역 하나 = 환생 2번 = ×6, 알 가격도 지역마다 ×6)
+		3e14, 7.5e14, 1.8e15, 4.5e15, 1.1e16, -- 16~20
+		2.7e16, 6.5e16, 1.6e17, 4e17, 1e18, -- 21~25
+		2.4e18, 6e18, 1.5e19, 3.6e19, 9e19, -- 26~30
 	},
-	MaxRebirths = 25,
+	MaxRebirths = 30, -- ★v8 25 → 30
 	IncomePerRebirth = 0.5, -- 집 수익 ×(1 + 0.5 × 환생 수)
 	CoinPerRebirth = 0.1, -- 들판 코인 값 ×(1 + 0.1 × 환생 수) (수익이 이미 환생 배율을 받아서 작게)
 	SpeedPerRebirth = 0.03, -- 이동 속도 ×(1 + 0.03 × 환생 수)
@@ -1163,7 +1777,7 @@ Config.EggAlert = {
 -- 1층: 1~6 무료, 7~12 구매. 새 층을 올리면 그 층 첫 6개는 바로 열리고 나머지 6개는 구매.
 ----------------------------------------------------------------------
 Config.Plot = {
-	TotalSlots = 120,
+	TotalSlots = 240, -- ★v8 1번 집 120 + 2번 집 120 (받침대 121~240 = 2번 집, Config.SlotHouse)
 	SlotsPerFloor = 12,
 	FreeSlotsPerFloor = 6, -- 층을 올리면 바로 열리는 받침대 수
 	StartSlots = 6, -- 처음 열려 있는 받침대
@@ -1185,6 +1799,17 @@ Config.FloorInfo = {
 	{ Price = 2.4e12, MinRebirth = 10 },
 	{ Price = 2.4e13, MinRebirth = 13 },
 	{ Price = 2e14, MinRebirth = 16 },
+	-- ★v8 11~20층 = 2번 집 1~10층 (1번 집 옆에 지어요). 11층 = 2번 집 짓기: 1번 집 받침대 120개를 다 열고 환생 18회
+	{ Price = 1.5e15, MinRebirth = 18 },
+	{ Price = 4e15, MinRebirth = 19 },
+	{ Price = 1e16, MinRebirth = 20 },
+	{ Price = 2e16, MinRebirth = 21 },
+	{ Price = 5e16, MinRebirth = 22 },
+	{ Price = 1.2e17, MinRebirth = 23 },
+	{ Price = 3e17, MinRebirth = 24 },
+	{ Price = 2e18, MinRebirth = 26 },
+	{ Price = 1.2e19, MinRebirth = 28 },
+	{ Price = 7.5e19, MinRebirth = 30 },
 }
 
 -- 받침대 가격표: 1층 7~12 는 손으로, 2층부터는 층 가격 × 8% × 1.5^(k-1) (k = 그 층에서 몇 번째 구매)
@@ -1216,7 +1841,10 @@ end
 -- 집 꾸미기. 테마가 비쌀수록 집이 크고(Size = 집 한 변) 수익 보너스(IncomeBonus)가 있어요.
 -- 보너스는 집 받침대 수익에만: 초당 수익 = Σ ItemIncome × RebirthIncomeMult × (1 + IncomeBonus)
 Config.House = {
-	MaxFloors = 10,
+	MaxFloors = 10, -- 집 한 채의 층 (1번 집도 2번 집도 10층까지)
+	-- ★v8 저장되는 층 수 (data.Floors) 는 1~20: 11~20 = 2번 집 1~10층. 2번 집은 1번 집 테마를 같이 써요
+	Houses = 2,
+	TotalFloors = 20,
 	FloorHeight = 12, -- 층 사이 높이 (f 층 바닥 윗면 = 0.2 + (f - 1) × 12, 슬래브 두께 1 → 천장 아래 11)
 	FloorPrice = 300000, -- (예전 이름) = FloorInfo[2].Price
 	Themes = {
@@ -1355,8 +1983,10 @@ Config.FieldCoins = {
 ----------------------------------------------------------------------
 local PLOT_SIZE = 64
 local PLOT_ROW_Z = 80
-local function plotCFrame(x: number, north: boolean): CFrame
-	local z = if north then PLOT_ROW_Z else -PLOT_ROW_Z
+local PLOT2_ROW_Z = 160 -- ★v8 2번 집 줄: 1번 집 바로 뒤 (1번 집 뒤 z 112 ~ 2번 집 앞 z 128 = 뒷골목 길)
+local function plotCFrame(x: number, north: boolean, rowZ: number?): CFrame
+	local row = rowZ or PLOT_ROW_Z
+	local z = if north then row else -row
 	local pos = V3(x, 0, z)
 	return CFrame.lookAt(pos, V3(x, 0, 0))
 end
@@ -1371,6 +2001,15 @@ Config.Layout = {
 		plotCFrame(-72, false),
 		plotCFrame(0, false),
 		plotCFrame(72, false),
+	},
+	-- ★v8 2번 집 자리 (Plots[i] 바로 뒤, 같은 쪽을 봐요). 2번 집이 없으면 빈 땅 + 간판
+	Plots2 = {
+		plotCFrame(-72, true, PLOT2_ROW_Z),
+		plotCFrame(0, true, PLOT2_ROW_Z),
+		plotCFrame(72, true, PLOT2_ROW_Z),
+		plotCFrame(-72, false, PLOT2_ROW_Z),
+		plotCFrame(0, false, PLOT2_ROW_Z),
+		plotCFrame(72, false, PLOT2_ROW_Z),
 	},
 	-- (예전 이름) 지역 1 값과 같아요. 새 코드는 Config.Zones[i] 를 쓰세요
 	ConveyorStart = Config.Zones[1].ConveyorStart,
@@ -1936,9 +2575,49 @@ function Config.IncomeMultiplier(rebirths: number, themeId: any): number
 	return Config.RebirthIncomeMult(rebirths) * (1 + Config.ThemeIncomeBonus(themeId))
 end
 
--- 받침대가 몇 층에 있는지 (1..MaxFloors)
+-- 받침대가 몇 층에 있는지 (1..TotalFloors. ★v8 11~20 = 2번 집)
 function Config.SlotFloor(slot: number): number
 	return math.max(1, math.ceil(slot / Config.Plot.SlotsPerFloor))
+end
+
+-- ★v8 2번 집 도우미 ---------------------------------------------------
+-- 층 번호(1..20)는 집 두 채를 이어서 세요: 1~10 = 1번 집, 11~20 = 2번 집 1~10층. 받침대도 1~120 / 121~240
+
+-- 이 층이 몇 번 집 몇 층인지 (집 번호, 그 집 안 층)
+function Config.FloorHouse(floor: number): (number, number)
+	local per = Config.House.MaxFloors
+	local f = math.max(1, math.floor(tonumber(floor) or 1))
+	local house = math.min(math.ceil(f / per), Config.House.Houses)
+	return house, f - (house - 1) * per
+end
+
+-- 이 받침대가 몇 번 집에 있는지 (집 번호, 그 집 안 받침대 번호 1..120)
+function Config.SlotHouse(slot: number): (number, number)
+	local perHouse = Config.House.MaxFloors * Config.Plot.SlotsPerFloor
+	local s = math.max(1, math.floor(tonumber(slot) or 1))
+	local house = math.min(math.ceil(s / perHouse), Config.House.Houses)
+	return house, s - (house - 1) * perHouse
+end
+
+-- 층 수(data.Floors) 중 house 번 집에 지어진 층 수 (0 = 아직 없음)
+function Config.HouseFloorCount(floors: number, house: number): number
+	local per = Config.House.MaxFloors
+	return math.clamp(math.floor(tonumber(floors) or 1) - (house - 1) * per, 0, per)
+end
+
+-- 화면에 보여 줄 층 이름: "3층" / "2번 집 3층"
+function Config.FloorName(floor: number): string
+	local house, f = Config.FloorHouse(floor)
+	if house <= 1 then
+		return f .. "층"
+	end
+	return house .. "번 집 " .. f .. "층"
+end
+
+-- 집 자리 (집 로컬 원점, 입구 = -Z). house 2 = 2번 집 자리 (없는 번호면 nil)
+function Config.PlotOrigin(plotIndex: number, house: number?): CFrame?
+	local list = if house == 2 then Config.Layout.Plots2 else Config.Layout.Plots
+	return list[plotIndex]
 end
 
 -- floor 층을 올리자마자 열려 있는 받침대 수 (그 층 첫 6개까지)
@@ -1959,7 +2638,7 @@ end
 function Config.CanBuyFloor(floors: number, slotsUnlocked: number, rebirths: number): (boolean, string?)
 	local nextFloor = floors + 1
 	local info = Config.FloorInfo[nextFloor]
-	if not info or nextFloor > Config.House.MaxFloors then
+	if not info or nextFloor > Config.House.TotalFloors then -- ★v8 2번 집까지 20층
 		return false, "Max"
 	end
 	if slotsUnlocked < floors * Config.Plot.SlotsPerFloor then
@@ -2004,8 +2683,12 @@ end
 
 -- 숫자 ----------------------------------------------------------------
 
--- 1234567 -> "1.2M" 같은 짧은 표기 (K, M, B, T, Qa, Qi)
-local SUFFIXES = { { 1e18, "Qi" }, { 1e15, "Qa" }, { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e4, "K" } }
+-- 1234567 -> "1.2M" 같은 짧은 표기 (K, M, B, T, Qa, Qi, ★v8 Sx, Sp, Oc, No, Dc)
+-- ★v8 Sx (1e21) · Sp (1e24) · Oc (1e27) · No (1e30) · Dc (1e33) 까지
+local SUFFIXES = {
+	{ 1e33, "Dc" }, { 1e30, "No" }, { 1e27, "Oc" }, { 1e24, "Sp" }, { 1e21, "Sx" },
+	{ 1e18, "Qi" }, { 1e15, "Qa" }, { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e4, "K" },
+}
 function Config.FormatNumber(n: number): string
 	n = math.floor(tonumber(n) or 0)
 	for _, s in SUFFIXES do

@@ -1,9 +1,10 @@
 -- 펫 월드 (v4): 클라이언트 시작점
 -- 화면(UI)과 효과를 만들고 서버 이벤트를 연결해요. 창은 한 번에 하나만 열려요.
--- 단축키: B 가방 / N 도감 / H 집 / P 상점 / M 지도 / L 순위 / R 환생
+-- 단축키: B 가방 / N 도감 / H 집 / P 상점 / M 지도 / L 순위 / R 환생 / ★v7.6 G 집으로 가기
 -- (꾸미기 모드 중에는 단축키를 쉬어요. R 회전 · X 치우기 · Esc/Q 끝내기는 DecorateMode 가 직접 받아요)
 -- ✨ 좋은 알 알림 (EggAlert): 오른쪽 아래 알림 줄의 배너 + "🗺 바로 가기" (꾸미기 중에는 쉬어요, 희귀 알은 끝나고 보여 줘요)
 -- 🏠 HUD "집" 버튼의 빨간 "!": 아직 없는 더 좋은 집을 지금 살 수 있을 때
+-- ★v7.6 📘 튜토리얼 (Tutorial): 처음 온 친구에게 한 단계씩 (도움말 줄은 그동안 쉬어요)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
@@ -47,6 +48,7 @@ local DecorateMode = optionalRequire("DecorateMode") -- Init(gui?), Enter(floor?
 local ZoneClient = optionalRequire("ZoneClient") -- Init()
 local RideFly = optionalRequire("RideFly") -- Init(gui): 펫 타고 날기 ✈
 local OptionsWindow = optionalRequire("OptionsWindow") -- ★v7.2 Init(gui), Open, Close, IsOpen: ⚙️ 게임 옵션 (🙈 부화 숨기기 · 🔔 알 알림)
+local Tutorial = optionalRequire("Tutorial") -- ★v7.6 Init(gui, hooks), OnSync, Notice(what), SetSuppressed: 📘 튜토리얼
 local AdminWindow = optionalRequire("AdminWindow") -- ★v7.4 Init(gui, onToggle), Open, Close, IsOpen, SetHudVisible: 🛠 관리자 (IsAdmin 일 때만)
 
 -- 모듈 함수 안전하게 부르기 (없으면 nil, 오류는 경고만)
@@ -149,6 +151,9 @@ local function openOnly(target: WindowApi, ...: any)
 	end
 	closeAll(target)
 	target.Open(...)
+	if target == Bag then
+		safeCall(Tutorial, "Notice", "Bag") -- ★v7.6 튜토리얼 "가방을 열어 봐요"
+	end
 end
 
 local function toggle(target: WindowApi)
@@ -161,6 +166,19 @@ end
 
 local function openShop(tab: string?)
 	openOnly(Shop, tab)
+end
+
+-- ★v7.6 🏡 집으로 가기 (HUD 버튼 · G 키). 창은 닫고, 서버가 다시 확인해요
+local lastHome = -10
+local function goHome()
+	if os.clock() - lastHome < 1.6 then
+		Toasts.Show("잠깐만요! ⏳", "info")
+		return
+	end
+	lastHome = os.clock()
+	closeAll()
+	Remotes.Teleport:FireServer("Home")
+	Toasts.Show("🏡 집으로 가요!", "good")
 end
 
 ----------------------------------------------------------------------
@@ -191,6 +209,7 @@ Hud.Init(gui, {
 	ToggleOptions = function()
 		toggle(Options) -- ★v7.2 ⚙️ 옵션 버튼
 	end,
+	GoHome = goHome, -- ★v7.6 🏡 집으로 가기
 })
 BagWindow.Init(gui, { OpenShop = openShop })
 IndexWindow.Init(gui)
@@ -222,6 +241,15 @@ safeCall(AdminWindow, "Init", gui, function()
 end)
 safeCall(DecorateMode, "Init", gui)
 Tips.Init(gui)
+-- ★v7.6 📘 튜토리얼: 손가락이 가리킬 HUD 버튼들, 켜져 있는 동안 도움말 줄은 쉬어요
+safeCall(Tutorial, "Init", gui, {
+	HomeButton = Hud.HomeButton,
+	SideButton = Hud.SideButton,
+	Tools = Hud.ToolsFrame,
+	OnActive = function(on: boolean)
+		Tips.SetTutorial(on)
+	end,
+})
 HatchFx.Init(playerGui)
 pcall(UiKit.PreloadRareSounds) -- ★v7 희귀 알 알림 소리를 미리 불러 둬요
 WorldFx.Init()
@@ -253,6 +281,7 @@ safeCall(DecorateMode, "OnChanged", function(on: boolean)
 	Hud.SetSideVisible(not on)
 	safeCall(AdminWindow, "SetHudVisible", not on) -- ★v7.4 🛠 도 같이 숨어요
 	Tips.SetSuppressed(on)
+	safeCall(Tutorial, "SetSuppressed", on) -- ★v7.6
 	Toasts.SetBannerSuppressed(on)
 end)
 
@@ -282,6 +311,7 @@ State.OnSync(function(snap)
 	for _, mod in optionalSync do
 		safeCall(mod, "OnSync")
 	end
+	safeCall(Tutorial, "OnSync") -- ★v7.6 처음 한 번: 튜토리얼을 이어서 할지
 end)
 
 State.OnCoins(function(coins, pending, income)
@@ -421,6 +451,10 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	end
 	if decorating() then
 		return -- 꾸미기 모드가 R / X / Esc / Q 를 써요
+	end
+	if input.KeyCode == Enum.KeyCode.G then
+		goHome() -- ★v7.6 🏡
+		return
 	end
 	local target = HOTKEYS[input.KeyCode]
 	if target then

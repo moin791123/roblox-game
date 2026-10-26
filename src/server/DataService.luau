@@ -28,7 +28,7 @@ export type Data = {
 	Coins: number,
 	Pending: number,
 	SlotsUnlocked: number, -- Config.Plot.StartSlots .. Floors × 12
-	Floors: number, -- 1..Config.House.MaxFloors
+	Floors: number, -- 1..Config.House.TotalFloors (★v8 11~20 = 2번 집 1~10층)
 	Theme: string, -- 현재 집 테마 id
 	Themes: { [string]: boolean }, -- 가진 테마 (Basic 은 항상)
 	Items: { [string]: Item },
@@ -195,7 +195,7 @@ local function sanitize(raw: any): Data
 
 	data.Coins = math.floor(num(raw.Coins, Config.StartCoins, 0))
 	data.Pending = math.floor(num(raw.Pending, 0, 0))
-	data.Floors = math.floor(num(raw.Floors, 1, 1, Config.House.MaxFloors))
+	data.Floors = math.floor(num(raw.Floors, 1, 1, Config.House.TotalFloors)) -- ★v8 11~20 = 2번 집
 	-- 받침대: 지금 층까지만, 그리고 맨 위층의 무료 받침대(첫 6개)는 항상 열려 있어요
 	data.SlotsUnlocked = math.floor(
 		num(raw.SlotsUnlocked, Config.Plot.StartSlots, Config.Plot.StartSlots, data.Floors * perFloor)
@@ -466,7 +466,8 @@ local function makeLeaderstats(player: Player)
 	local folder = Instance.new("Folder")
 	folder.Name = "leaderstats"
 	for _, name in { STAT_COINS, STAT_INCOME, STAT_REBIRTHS } do
-		local v = Instance.new("IntValue")
+		-- ★v8 코인/초당은 2^53 을 훌쩍 넘어서 글자로 ("1.2Qa"). 환생만 숫자
+		local v = Instance.new(if name == STAT_REBIRTHS then "IntValue" else "StringValue")
 		v.Name = name
 		v.Parent = folder
 	end
@@ -477,6 +478,8 @@ local function setStat(folder: Instance, name: string, value: number)
 	local v = folder:FindFirstChild(name)
 	if v and v:IsA("IntValue") then
 		v.Value = math.clamp(math.floor(value), 0, INT_MAX)
+	elseif v and v:IsA("StringValue") then
+		v.Value = Config.FormatNumber(math.max(math.floor(value), 0))
 	end
 end
 

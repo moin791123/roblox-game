@@ -1226,6 +1226,8 @@ end
 -- 옆 칸 상자(부화 연출 · 오른쪽 아래 알림 줄)가 피해야 하는 것: 위 코인 줄, 왼쪽 큰 버튼, 팁 줄, 꾸미기 버튼 줄·아래 판,
 -- 열린 창의 ✖ 버튼, 그 밖에 메인 GUI 에 새로 생긴 HUD 조각 (속성 SideIgnore = true 면 빼요),
 -- 폰이면 점프 버튼(오른쪽 아래)과 조이스틱 칸(왼쪽 아래)
+-- ★v7.6 속성 SideSoft = true (튜토리얼 카드) 도 빼요: 알림 줄은 UiKit.SoftRects 로 따로 보고 자리가 모자라면 그 위에 놓아요
+--   (카드가 비켜요). 부화 연출·펫 타기 버튼도 카드 때문에 자리를 잃지 않아요
 function UiKit.SideObstacles(mainGui: Instance?): { Rect }
 	local out: { Rect } = {}
 	local main: Instance? = mainGui
@@ -1243,14 +1245,16 @@ function UiKit.SideObstacles(mainGui: Instance?): { Rect }
 			if name == "TopBar" or name == "SideButtons" then
 				addTree(out, child, name)
 			elseif name == "Tips" then
-				table.insert(out, UiKit.RectOf(child, 4, name))
+				if child:GetAttribute("SideSoft") ~= true then -- ★v7.6 작은 폰에서 위로 올라간 도움말은 비켜 줘요
+					table.insert(out, UiKit.RectOf(child, 4, name))
+				end
 			elseif name == "DecorateMode" then
 				for _, part in child:GetChildren() do
 					if part:IsA("GuiObject") and part.Visible then
 						table.insert(out, UiKit.RectOf(part, 6, "Decorate"))
 					end
 				end
-			elseif child:GetAttribute("SideIgnore") ~= true then
+			elseif child:GetAttribute("SideIgnore") ~= true and child:GetAttribute("SideSoft") ~= true then
 				local header = child:FindFirstChild("Header")
 				local close = header and header:FindFirstChild("Close")
 				if not header then
@@ -1296,6 +1300,32 @@ function UiKit.SideObstacles(mainGui: Instance?): { Rect }
 			table.insert(out, { X0 = gw - 180, Y0 = gh - 220, X1 = gw - 40, Y1 = gh - 80, Tag = "Jump" })
 		end
 		table.insert(out, { X0 = 0, Y0 = gh / 3, X1 = gw * 0.4, Y1 = gh, Tag = "Stick" })
+	end
+	return out
+end
+
+-- ★v7.6 비켜 줄 수 있는 HUD 조각 (속성 SideSoft = true) 의 상자들 (+ 밖으로 나온 알약·버튼).
+-- 비키느라 잠깐 숨어 있어도 (속성 SideYield = true) 원래 자리를 돌려줘요
+function UiKit.SoftRects(mainGui: Instance?): { Rect }
+	local out: { Rect } = {}
+	if not mainGui then
+		return out
+	end
+	for _, child in mainGui:GetChildren() do
+		if child:IsA("GuiObject") and child:GetAttribute("SideSoft") == true then
+			if child.Visible or child:GetAttribute("SideYield") == true then
+				local r = UiKit.RectOf(child, 4, "Soft")
+				table.insert(out, r)
+				for _, d in child:GetChildren() do
+					if d:IsA("GuiObject") and d.Visible and d.BackgroundTransparency < 1 then
+						local q = UiKit.RectOf(d, 4, "Soft")
+						if q.X0 < r.X0 or q.Y0 < r.Y0 or q.X1 > r.X1 or q.Y1 > r.Y1 then
+							table.insert(out, q)
+						end
+					end
+				end
+			end
+		end
 	end
 	return out
 end

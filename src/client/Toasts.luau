@@ -139,6 +139,7 @@ local bannerHeight = 100
 local bannerWidth = 320
 local bannerX, bannerY = 0, 0
 local bannerFits = false -- 이번 자리 계산에서 자리를 받았나
+local softCovered = false -- ★v7.6 알림이 비켜 줄 수 있는 HUD (튜토리얼 카드) 자리까지 썼나
 local bannerOut = false -- 보이는 중 (미끄러져 나가는 중이면 false)
 local bannerQueue: { BannerEntry } = {}
 local bannerCurrent: BannerEntry? = nil
@@ -460,94 +461,130 @@ local function layoutStack()
 		table.insert(items, it)
 	end
 
-	local avoid = UiKit.SideObstacles(mainGui())
+	local hard = UiKit.SideObstacles(mainGui())
 	local hatch = UiKit.SideRect("Hatch")
 	if hatch then
-		table.insert(avoid, { X0 = hatch.X0, Y0 = hatch.Y0, X1 = hatch.X1, Y1 = hatch.Y1, Tag = "Hatch" })
+		table.insert(hard, { X0 = hatch.X0, Y0 = hatch.Y0, X1 = hatch.X1, Y1 = hatch.Y1, Tag = "Hatch" })
 	end
 	local centre: UiKit.Rect = { X0 = gw / 3, Y0 = gh / 3, X1 = gw * 2 / 3, Y1 = gh * 2 / 3, Tag = "Centre" }
-
-	-- 줄 (오른쪽 끝이 먼저): 오른쪽 끝, 그다음 오른쪽 끝을 막는 것 (부화 연출 · 점프 버튼 · 오른쪽 HUD 버튼)
-	-- 바로 왼쪽에 맞춘 줄들. 오른쪽 끝이 아닌 줄은 화면 가운데를 (조금만) 피해요
-	local xs: { number } = { gw - m }
-	for _, o in avoid do
-		if o.Tag ~= "Stick" and o.X1 > gw - m - W / 2 and o.X0 > gw / 2 and o.X0 - gap < gw - m then
-			table.insert(xs, math.floor(o.X0 - gap))
-		end
-	end
-	table.sort(xs, function(a, b)
-		return a > b
-	end)
-	local colXs: { number } = {}
-	for _, x in xs do
-		local prev = colXs[#colXs]
-		if #colXs < 4 and (not prev or prev - x > 4) and x - W >= 8 then
-			table.insert(colXs, x)
-		end
+	-- ★v7.6 비켜 줄 수 있는 HUD (튜토리얼 카드, 속성 SideSoft): 먼저 그것도 피해서 놓아 보고,
+	-- 알림이 못 놓이면 그건 빼고 다시 놓아요 (알림이 먼저, 카드는 SoftCovered() 를 보고 잠깐 숨어요)
+	local soft = UiKit.SoftRects(mainGui())
+	local withSoft = table.clone(hard)
+	for _, r in soft do
+		table.insert(withSoft, r)
 	end
 
-	-- 차례로 놓아 보기 (skipDocks / skipBanner 면 그건 빼고). 돌려주는 값: 못 놓인 말풍선 수
-	local function place(skipDocks: boolean, skipBanner: boolean): number
-		local cols: { Column } = {}
-		for i, x in colXs do
-			table.insert(cols, { X1 = x, Cursor = gh - m, Closed = false, Centre = i > 1 })
-		end
-		local blocked = table.clone(avoid)
-		local left = 0
-		for _, it in items do
-			it.X, it.Y = nil, nil
-			if (skipBanner and it.Kind == "Banner") or (skipDocks and it.Kind == "Dock") then
-				continue
-			end
-			for i, col in cols do
-				local y = fitIn(col, it.W, it.H, blocked, centre, gap)
-				if y then
-					it.X, it.Y = col.X1 - it.W, y
-					col.Cursor = y - gap
-					-- 다른 줄의 상자도 이걸 비켜요
-					table.insert(blocked, { X0 = col.X1 - it.W - gap, Y0 = y - gap, X1 = col.X1 + gap, Y1 = y + it.H + gap, Tag = "Placed" })
-					-- 앞 줄은 더 안 써요 (위아래 순서가 뒤섞이지 않게). 아무 데도 못 놓인 상자는 줄을 안 막아요
-					for j = 1, i - 1 do
-						cols[j].Closed = true
-					end
-					break
-				end
-			end
-			if it.Kind == "Toast" and it.X == nil then
-				left += 1
+	-- 한 번 놓아 보기 (avoid 를 피해서). 돌려주는 값: 못 놓인 말풍선 + 배너 수
+	local function solve(avoid: { UiKit.Rect }): number
+		-- 줄 (오른쪽 끝이 먼저): 오른쪽 끝, 그다음 오른쪽 끝을 막는 것 (부화 연출 · 점프 버튼 · 오른쪽 HUD 버튼)
+		-- 바로 왼쪽에 맞춘 줄들. 오른쪽 끝이 아닌 줄은 화면 가운데를 (조금만) 피해요
+		local xs: { number } = { gw - m }
+		for _, o in avoid do
+			if o.Tag ~= "Stick" and o.X1 > gw - m - W / 2 and o.X0 > gw / 2 and o.X0 - gap < gw - m then
+				table.insert(xs, math.floor(o.X0 - gap))
 			end
 		end
-		return left
-	end
-	-- 말풍선(누른 것에 대한 대답)이 먼저예요: 자리가 모자라면 (폰) 지역 배너가 먼저, 그래도 안 되면 좋은 알 배너가
-	-- 잠깐 쉬어요 (좋은 알 배너는 시간이 멈춰요). 빼도 나아지지 않으면 그대로
-	local best = place(false, false)
-	if best > 0 then
-		local pick = { false, false }
-		local options = { { true, false }, { false, true }, { true, true } }
-		-- ★v6 희귀 알 배너는 보통 말풍선 때문에 숨지 않아요 (못 놓인 말풍선 중 중요한 것이 있을 때만 잠깐)
-		if current and current.Rare and not current.Closed then
-			local importantWaiting = false
+		table.sort(xs, function(a, b)
+			return a > b
+		end)
+		local colXs: { number } = {}
+		for _, x in xs do
+			local prev = colXs[#colXs]
+			if #colXs < 4 and (not prev or prev - x > 4) and x - W >= 8 then
+				table.insert(colXs, x)
+			end
+		end
+
+		-- 차례로 놓아 보기 (skipDocks / skipBanner 면 그건 빼고). 돌려주는 값: 못 놓인 말풍선 수
+		local function place(skipDocks: boolean, skipBanner: boolean): number
+			local cols: { Column } = {}
+			for i, x in colXs do
+				table.insert(cols, { X1 = x, Cursor = gh - m, Closed = false, Centre = i > 1 })
+			end
+			local blocked = table.clone(avoid)
+			local left = 0
 			for _, it in items do
-				if it.Toast and it.X == nil and it.Toast.Important then
-					importantWaiting = true
+				it.X, it.Y = nil, nil
+				if (skipBanner and it.Kind == "Banner") or (skipDocks and it.Kind == "Dock") then
+					continue
+				end
+				for i, col in cols do
+					local y = fitIn(col, it.W, it.H, blocked, centre, gap)
+					if y then
+						it.X, it.Y = col.X1 - it.W, y
+						col.Cursor = y - gap
+						-- 다른 줄의 상자도 이걸 비켜요
+						table.insert(blocked, { X0 = col.X1 - it.W - gap, Y0 = y - gap, X1 = col.X1 + gap, Y1 = y + it.H + gap, Tag = "Placed" })
+						-- 앞 줄은 더 안 써요 (위아래 순서가 뒤섞이지 않게). 아무 데도 못 놓인 상자는 줄을 안 막아요
+						for j = 1, i - 1 do
+							cols[j].Closed = true
+						end
+						break
+					end
+				end
+				if it.Kind == "Toast" and it.X == nil then
+					left += 1
+				end
+			end
+			return left
+		end
+		-- 말풍선(누른 것에 대한 대답)이 먼저예요: 자리가 모자라면 (폰) 지역 배너가 먼저, 그래도 안 되면 좋은 알 배너가
+		-- 잠깐 쉬어요 (좋은 알 배너는 시간이 멈춰요). 빼도 나아지지 않으면 그대로
+		local best = place(false, false)
+		if best > 0 then
+			local pick = { false, false }
+			local options = { { true, false }, { false, true }, { true, true } }
+			-- ★v6 희귀 알 배너는 보통 말풍선 때문에 숨지 않아요 (못 놓인 말풍선 중 중요한 것이 있을 때만 잠깐)
+			if current and current.Rare and not current.Closed then
+				local importantWaiting = false
+				for _, it in items do
+					if it.Toast and it.X == nil and it.Toast.Important then
+						importantWaiting = true
+						break
+					end
+				end
+				if not importantWaiting then
+					options = { { true, false } }
+				end
+			end
+			for _, opt in options do
+				local n = place(opt[1], opt[2])
+				if n < best then
+					best, pick = n, opt
+				end
+				if best == 0 then
 					break
 				end
 			end
-			if not importantWaiting then
-				options = { { true, false } }
+			place(pick[1], pick[2])
+		end
+		local unplaced = 0
+		for _, it in items do
+			if it.X == nil and it.Kind ~= "Dock" then
+				unplaced += 1
 			end
 		end
-		for _, opt in options do
-			local n = place(opt[1], opt[2])
-			if n < best then
-				best, pick = n, opt
+		return unplaced
+	end
+	local missed = solve(withSoft)
+	softCovered = false
+	if missed > 0 and #soft > 0 then
+		if solve(hard) < missed then
+			for _, it in items do
+				local x, y = it.X, it.Y
+				if x and y then
+					local r: UiKit.Rect = { X0 = x, Y0 = y, X1 = x + it.W, Y1 = y + it.H }
+					for _, q in soft do
+						if UiKit.RectsHit(r, q) then
+							softCovered = true
+						end
+					end
+				end
 			end
-			if best == 0 then
-				break
-			end
+		else
+			solve(withSoft)
 		end
-		place(pick[1], pick[2])
 	end
 
 	-- 놓기
@@ -1505,6 +1542,11 @@ function Toasts.SetBannerGuard(obj: GuiObject?)
 end
 
 -- 지금 화면에 놓인 알림 상자들 (배너 · 지역 배너 · 말풍선, 화면 픽셀). 아무것도 없으면 빈 표
+-- ★v7.6 알림 줄이 자리가 모자라서 비켜 줄 수 있는 HUD (속성 SideSoft, 튜토리얼 카드) 자리를 쓰고 있나 (그럼 카드가 잠깐 숨어요)
+function Toasts.SoftCovered(): boolean
+	return softCovered and #placedRects > 0
+end
+
 function Toasts.AlertRects(): { UiKit.Rect }
 	local out: { UiKit.Rect } = {}
 	for _, r in placedRects do
